@@ -12,11 +12,13 @@ import { StatusPill } from '@/components/report/StatusPill';
 import { SectionCard, DataRow } from '@/components/report/SectionCard';
 import { ComingSoonSection } from '@/components/report/ComingSoonSection';
 
+const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED === 'true';
+
 export default function ReportePage() {
   const params = useParams<{ placa: string }>();
   const placa = (params.placa ?? '').toUpperCase();
   const [refreshToken, setRefreshToken] = useState(0);
-  const state = useConsulta(placa, refreshToken);
+  const state = useConsulta(placa, refreshToken, PRO_ENABLED);
   const actualizar = () => setRefreshToken((n) => n + 1);
 
   return (
@@ -26,7 +28,7 @@ export default function ReportePage() {
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Nueva consulta
         </Link>
-        {state.phase === 'done' && (
+        {PRO_ENABLED && state.phase === 'done' && (
           <button
             onClick={actualizar}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground transition-colors duration-200 hover:bg-background cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
@@ -37,14 +39,16 @@ export default function ReportePage() {
         )}
       </div>
 
-      {state.phase === 'loading' && <LoadingSkeleton placa={placa} />}
-      {state.phase === 'error' && state.needsPro && <ProRequired placa={placa} />}
-      {state.phase === 'error' && !state.needsPro && (
+      {!PRO_ENABLED && <ProComingSoon placa={placa} />}
+      {PRO_ENABLED && state.phase === 'loading' && <LoadingSkeleton placa={placa} />}
+      {PRO_ENABLED && state.phase === 'error' && state.needsPro && <ProRequired placa={placa} />}
+      {PRO_ENABLED && state.phase === 'error' && !state.needsPro && (
         <div className="rounded-xl border border-warning bg-warning-bg p-5 text-warning-fg" role="alert">
           {state.error}
         </div>
       )}
-      {state.phase === 'done' &&
+      {PRO_ENABLED &&
+        state.phase === 'done' &&
         (state.report ? (
           <ReportView report={state.report} cached={state.cached} onRetry={actualizar} />
         ) : (
@@ -207,6 +211,26 @@ function Unavailable({ status, onRetry }: { status: string; onRetry?: () => void
           Reintentar
         </button>
       )}
+    </div>
+  );
+}
+
+function ProComingSoon({ placa }: { placa: string }) {
+  return (
+    <div className="rounded-xl border border-primary/30 bg-primary/5 p-6">
+      <h2 className="font-heading font-semibold text-lg text-foreground">Reporte automático · PRO</h2>
+      <p className="mt-2 text-sm text-muted">
+        El reporte consolidado automático estará disponible próximamente. Mientras tanto, consulta
+        gratis en los portales oficiales con la consulta guiada.
+      </p>
+      <div className="mt-4">
+        <Link
+          href={`/guiada/${placa}`}
+          className="inline-flex items-center rounded-lg bg-primary px-5 py-2.5 font-medium text-white transition-colors duration-200 hover:bg-primary-600 cursor-pointer"
+        >
+          Consulta guiada · Gratis
+        </Link>
+      </div>
     </div>
   );
 }

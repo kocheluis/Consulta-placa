@@ -14,11 +14,12 @@ type State =
  * `refreshToken` permite re-disparar la consulta (Actualizar/Reintentar);
  * cuando es > 0 se fuerza el refresco ignorando la caché.
  */
-export function useConsulta(placa: string, refreshToken = 0): State {
+export function useConsulta(placa: string, refreshToken = 0, enabled = true): State {
   const forceRefresh = refreshToken > 0;
   const [state, setState] = useState<State>({ phase: 'loading', report: null, error: null });
 
   useEffect(() => {
+    if (!enabled) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
@@ -56,7 +57,7 @@ export function useConsulta(placa: string, refreshToken = 0): State {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [placa, forceRefresh, refreshToken]);
+  }, [placa, forceRefresh, refreshToken, enabled]);
 
   return state;
 }
