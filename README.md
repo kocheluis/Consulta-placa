@@ -58,6 +58,41 @@ npm run -w @app/web build     # build de producción de la web
 Los scrapers se prueban contra **fixtures HTML** (`packages/scrapers/src/**/__fixtures__/`), nunca
 contra los portales en vivo, para mantener CI determinista.
 
+## Puesta en marcha real de los scrapers (pasos 4 y 5)
+
+El código de scraping está completo; para que devuelva datos reales (en vez de degradar a
+"no disponible") faltan dos cosas que dependen de tu entorno:
+
+### 4. Clave del servicio de CAPTCHA — **integración ya implementada**
+
+Los solvers de **CapSolver** y **2Captcha** están implementados en
+`packages/scrapers/src/captcha/`. Solo necesitas una cuenta y su clave:
+
+```bash
+# en .env
+CAPTCHA_PROVIDER=capsolver   # o "2captcha"
+CAPTCHA_API_KEY=tu_clave
+```
+
+Sin clave, `createCaptchaSolver` devuelve un Noop y los scrapers degradan a reporte parcial.
+
+### 5. Selectores reales de los portales — **descubrimiento asistido**
+
+Los portales (SUNARP/SBS/APESEG) son SPAs con JS y protegidos; su DOM real no es público.
+Los selectores viven centralizados en
+[`packages/scrapers/src/selectors.ts`](packages/scrapers/src/selectors.ts) con valores
+**tentativos**. Para capturar los reales, ejecuta una vez:
+
+```bash
+npx playwright install chromium
+npm run -w @app/worker discover-selectors
+```
+
+Esto abre cada portal en un navegador real y vuelca por consola sus inputs, botones, iframes y el
+`data-sitekey` del reCAPTCHA. Copia los selectores verdaderos a `selectors.ts` (un solo lugar) y
+los tres scrapers los toman automáticamente. Tras eso, ajusta los parsers
+(`packages/scrapers/src/*/parser.ts`) si la estructura del resultado difiere de los fixtures.
+
 ## Cumplimiento de datos
 
 El nombre del titular es dato registral público de SUNARP pero también dato personal (Ley 29733 /

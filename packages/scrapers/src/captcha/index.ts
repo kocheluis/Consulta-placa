@@ -1,3 +1,6 @@
+import { CapSolverSolver } from './capsolver.js';
+import { TwoCaptchaSolver } from './twocaptcha.js';
+
 /**
  * Cliente intercambiable de resolución de CAPTCHA. Soporta reCAPTCHA v2 (SBS)
  * y CAPTCHA de imagen (SUNARP). El proveedor concreto (2Captcha/CapSolver) se
@@ -26,11 +29,18 @@ export class NoopCaptchaSolver implements CaptchaSolver {
 }
 
 /**
- * Crea el solver según configuración. La integración HTTP real con el proveedor
- * (CapSolver/2Captcha) se implementa aquí; se deja la estructura lista.
+ * Crea el solver según configuración. Soporta CapSolver (por defecto) y 2Captcha.
+ * Sin clave (`apiKey` vacío) devuelve el Noop, que hace que los scrapers degraden
+ * a "no disponible" en lugar de fallar (FR-034).
  */
 export function createCaptchaSolver(cfg: CaptchaConfig): CaptchaSolver {
   if (!cfg.apiKey) return new NoopCaptchaSolver();
-  // TODO(impl): integración HTTP con el proveedor configurado.
-  return new NoopCaptchaSolver();
+  switch (cfg.provider.toLowerCase()) {
+    case '2captcha':
+    case 'twocaptcha':
+      return new TwoCaptchaSolver(cfg.apiKey);
+    case 'capsolver':
+    default:
+      return new CapSolverSolver(cfg.apiKey);
+  }
 }

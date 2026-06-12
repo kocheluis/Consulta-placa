@@ -8,7 +8,8 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "purge": "tsx src/jobs/purge-owners.ts"
+    "purge": "tsx src/jobs/purge-owners.ts",
+    "discover-selectors": "tsx ../../packages/scrapers/src/discover.ts"
   },
   "dependencies": {
     "@app/db": "*",

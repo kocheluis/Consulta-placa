@@ -1,13 +1,14 @@
 import { SectionKind, SectionStatus, SourceId, type SourceResult } from '@app/shared';
 import type { Scraper, ScraperContext } from '../types.js';
+import { PORTAL_SELECTORS } from '../selectors.js';
 import { parseSbs } from './parser.js';
 
-const SBS_URL = 'https://servicios.sbs.gob.pe/reportesoat/';
+const S = PORTAL_SELECTORS.sbs;
 
 /**
  * Scraper del reporte SOAT/siniestralidad de la SBS. El portal usa Google
- * reCAPTCHA v2, resuelto vía el solver inyectado. Ante fallo degrada a
- * secciones UNAVAILABLE para permitir el reporte parcial (FR-034).
+ * reCAPTCHA v2, resuelto vía el solver inyectado. Selectores en `../selectors.ts`.
+ * Ante fallo degrada a UNAVAILABLE para permitir el reporte parcial (FR-034).
  */
 export const sbsScraper: Scraper = {
   id: SourceId.SBS,
@@ -21,26 +22,32 @@ export const sbsScraper: Scraper = {
     try {
       const { page, timeoutMs } = ctx;
       page.setDefaultTimeout(timeoutMs);
-      await page.goto(SBS_URL, { waitUntil: 'domcontentloaded' });
+      await page.goto(S.url, { waitUntil: 'domcontentloaded' });
 
-      await page.locator('input[name="placa"], #placa, input[type="text"]').first().fill(plateNormalized);
+      await page.locator(S.plateInput).first().fill(plateNormalized);
 
       // reCAPTCHA v2: obtener sitekey y resolver vía el servicio externo.
-      const sitekey = await page
-        .locator('.g-recaptcha, [data-sitekey]')
-        .first()
-        .getAttribute('data-sitekey')
-        .catch(() => null);
-      if (sitekey) {
-        const token = await ctx.captcha.solveRecaptchaV2(sitekey, SBS_URL);
-        await page.evaluate((t) => {
-          const el = document.querySelector<HTMLTextAreaElement>('#g-recaptcha-response');
-          if (el) el.value = t;
-        }, token);
+      if (S.recaptchaSitekeyEl) {
+        const sitekey = await page
+          .locator(S.recaptchaSitekeyEl)
+          .first()
+          .getAttribute('data-sitekey')
+          .catch(() => null);
+        if (sitekey) {
+          const token = await ctx.captcha.solveRecaptchaV2(sitekey, S.url);
+          await page.evaluate((t) => {
+            const el = document.querySelector<HTMLTextAreaElement>('#g-recaptcha-response');
+            if (el) el.value = t;
+          }, token);
+        }
       }
 
-      await page.locator('button[type="submit"], #btnConsultar').first().click();
-      await page.waitForLoadState('networkidle');
+      await page.locator(S.submit).first().click();
+      if (S.resultReady) {
+        await page.locator(S.resultReady).first().waitFor({ state: 'visible' }).catch(() => {});
+      } else {
+        await page.waitForLoadState('networkidle');
+      }
 
       return parseSbs(await page.content());
     } catch (err) {

@@ -1,12 +1,13 @@
 import { SectionKind, SectionStatus, SourceId, type SourceResult } from '@app/shared';
 import type { Scraper, ScraperContext } from '../types.js';
+import { PORTAL_SELECTORS } from '../selectors.js';
 import { parseApeseg } from './parser.js';
 
-const APESEG_URL = 'https://www.apeseg.org.pe/consultas-soat/';
+const S = PORTAL_SELECTORS.apeseg;
 
 /**
  * Scraper de la consulta SOAT de APESEG (fuente complementaria de SBS para el
- * estado del SOAT). Degrada a UNAVAILABLE ante fallo.
+ * estado del SOAT). Selectores en `../selectors.ts`. Degrada a UNAVAILABLE ante fallo.
  */
 export const apesegScraper: Scraper = {
   id: SourceId.APESEG,
@@ -15,10 +16,14 @@ export const apesegScraper: Scraper = {
     try {
       const { page, timeoutMs } = ctx;
       page.setDefaultTimeout(timeoutMs);
-      await page.goto(APESEG_URL, { waitUntil: 'domcontentloaded' });
-      await page.locator('input[name="placa"], #placa, input[type="text"]').first().fill(plateNormalized);
-      await page.locator('button[type="submit"], #btnBuscar').first().click();
-      await page.waitForLoadState('networkidle');
+      await page.goto(S.url, { waitUntil: 'domcontentloaded' });
+      await page.locator(S.plateInput).first().fill(plateNormalized);
+      await page.locator(S.submit).first().click();
+      if (S.resultReady) {
+        await page.locator(S.resultReady).first().waitFor({ state: 'visible' }).catch(() => {});
+      } else {
+        await page.waitForLoadState('networkidle');
+      }
       return parseApeseg(await page.content());
     } catch (err) {
       return [
