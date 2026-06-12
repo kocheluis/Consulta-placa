@@ -3,7 +3,7 @@ import { PlateSearch } from '@/components/PlateSearch';
 
 export default function HomePage() {
   return (
-    <div className="mx-auto max-w-5xl px-4">
+    <div className="mx-auto max-w-7xl px-4">
       <section className="py-12 sm:py-16 text-center">
         <h1 className="text-3xl sm:text-4xl font-semibold text-foreground">
           Conoce el historial de un vehículo antes de comprarlo

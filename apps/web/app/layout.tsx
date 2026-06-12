@@ -14,7 +14,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="es">
       <body className="min-h-screen flex flex-col">
         <header className="sticky top-0 z-10 bg-primary text-white">
-          <div className="mx-auto max-w-5xl px-4 py-3 flex items-center justify-between">
+          <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
             <Link href="/" className="flex items-center gap-2 font-heading font-semibold">
               <ShieldCheck className="h-6 w-6" aria-hidden="true" />
               <span>ConsultaPlaca</span>
@@ -31,7 +31,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         </header>
         <main className="flex-1">{children}</main>
         <footer className="border-t border-border bg-surface">
-          <div className="mx-auto max-w-5xl px-4 py-6 text-sm text-muted">
+          <div className="mx-auto max-w-7xl px-4 py-6 text-sm text-muted">
             <p>
               Información referencial obtenida de portales públicos oficiales (SUNARP, SBS, APESEG).
               No constituye un certificado oficial.

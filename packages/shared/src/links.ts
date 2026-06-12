@@ -14,6 +14,7 @@ export type LinkCategory =
   | 'GNV'
   | 'PAPELETAS'
   | 'IMPUESTO_VEHICULAR'
+  | 'CAPTURA'
   | 'INFRACCIONES';
 
 export interface OfficialLink {
@@ -229,6 +230,18 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     note: 'Requiere placa y DNI.',
   },
 
+  // ── Orden de captura / internamiento por deuda ─────────────────────────────
+  {
+    id: 'sat-lima-captura',
+    name: 'Orden de Captura',
+    entity: 'SAT de Lima',
+    category: 'CAPTURA',
+    url: 'https://www.sat.gob.pe/VirtualSAT/modulos/Capturas.aspx',
+    description:
+      'Verifica si el vehículo tiene orden de captura o internamiento por deuda impaga (papeletas o impuesto vehicular).',
+    scope: 'Lima',
+  },
+
   // ── Infracciones / récord ──────────────────────────────────────────────────
   {
     id: 'sutran',
@@ -258,6 +271,7 @@ export const CATEGORY_LABELS: Record<LinkCategory, string> = {
   GNV: 'GNV (gas vehicular)',
   PAPELETAS: 'Papeletas (por región)',
   IMPUESTO_VEHICULAR: 'Impuesto vehicular',
+  CAPTURA: 'Orden de captura',
   INFRACCIONES: 'Infracciones y récord',
 };
 
@@ -269,5 +283,6 @@ export const CATEGORY_ORDER: LinkCategory[] = [
   'GNV',
   'PAPELETAS',
   'IMPUESTO_VEHICULAR',
+  'CAPTURA',
   'INFRACCIONES',
 ];
