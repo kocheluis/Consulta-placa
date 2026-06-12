@@ -11,8 +11,9 @@ export type LinkCategory =
   | 'REGISTRAL'
   | 'SEGUROS'
   | 'REVISION_TECNICA'
-  | 'INFRACCIONES'
-  | 'PAPELETAS';
+  | 'GNV'
+  | 'PAPELETAS'
+  | 'INFRACCIONES';
 
 export interface OfficialLink {
   id: string;
@@ -21,20 +22,36 @@ export interface OfficialLink {
   category: LinkCategory;
   url: string;
   description: string;
-  /** Cobertura: nacional o solo una jurisdicción. */
-  scope: 'Nacional' | 'Lima';
+  /** Cobertura: 'Nacional', 'Lima', 'Callao', 'La Libertad', etc. */
+  scope: string;
+  /** Nota especial (p. ej. requiere cuenta/pago, se consulta por DNI/brevete). */
+  note?: string;
 }
 
 export const OFFICIAL_LINKS: OfficialLink[] = [
+  // ── Datos registrales (SUNARP) ─────────────────────────────────────────────
   {
     id: 'sunarp',
     name: 'Consulta Vehicular',
     entity: 'SUNARP',
     category: 'REGISTRAL',
     url: 'https://consultavehicular.sunarp.gob.pe/',
-    description: 'Titular, marca, modelo, año, color, serie/VIN/motor y alerta de robo.',
+    description: 'Titular actual, marca, modelo, año, color, serie/VIN/motor y alerta de robo.',
     scope: 'Nacional',
   },
+  {
+    id: 'sunarp-sprl',
+    name: 'Publicidad Registral en Línea (SPRL)',
+    entity: 'SUNARP',
+    category: 'REGISTRAL',
+    url: 'https://sprl.sunarp.gob.pe/',
+    description:
+      'Partida registral completa con el historial de TODAS las transferencias (tracto sucesivo), cargas y gravámenes.',
+    scope: 'Nacional',
+    note: 'Requiere crear una cuenta SPRL y un pago (≈ S/ 5 por página). La consulta vehicular gratuita solo muestra el titular actual.',
+  },
+
+  // ── Seguro (SOAT) y siniestralidad ─────────────────────────────────────────
   {
     id: 'sbs',
     name: 'Reporte SOAT y Siniestralidad',
@@ -53,6 +70,8 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     description: 'Estado del SOAT (aseguradora y vigencia).',
     scope: 'Nacional',
   },
+
+  // ── Revisión técnica ───────────────────────────────────────────────────────
   {
     id: 'mtc-citv',
     name: 'Récord de Revisión Técnica (CITV)',
@@ -62,13 +81,26 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     description: 'Certificados de inspección técnica vehicular y su vigencia.',
     scope: 'Nacional',
   },
+
+  // ── GNV (gas natural vehicular) ────────────────────────────────────────────
   {
-    id: 'sutran',
-    name: 'Consulta de Infracciones',
-    entity: 'SUTRAN',
-    category: 'INFRACCIONES',
-    url: 'https://www.sutran.gob.pe/registro-de-infracciones/',
-    description: 'Infracciones de tránsito en la red vial nacional (carreteras).',
+    id: 'infogas',
+    name: 'Consulta de Placa GNV',
+    entity: 'Infogas',
+    category: 'GNV',
+    url: 'https://vh.infogas.com.pe/',
+    description: 'Estado de la conversión a GNV, certificación, cilindros y carga del vehículo.',
+    scope: 'Nacional',
+  },
+
+  // ── Papeletas (por jurisdicción) ───────────────────────────────────────────
+  {
+    id: 'mtc-papeletas',
+    name: 'Consulta de Papeletas del Ciudadano',
+    entity: 'MTC',
+    category: 'PAPELETAS',
+    url: 'https://scppp.mtc.gob.pe/',
+    description: 'Papeletas a nivel nacional registradas en el sistema del MTC.',
     scope: 'Nacional',
   },
   {
@@ -76,16 +108,67 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     name: 'Consulta de Papeletas',
     entity: 'SAT de Lima',
     category: 'PAPELETAS',
-    url: 'https://www.sat.gob.pe/VirtualSAT/modulos/ConsultaPapeletas.aspx',
+    url: 'https://www.sat.gob.pe/websitev9/TributosMultas/Papeletas/ConsultasPapeletas',
     description: 'Papeletas de tránsito impuestas en Lima Metropolitana.',
     scope: 'Lima',
+  },
+  {
+    id: 'sat-callao',
+    name: 'Papeletas del Callao',
+    entity: 'Callao',
+    category: 'PAPELETAS',
+    url: 'https://pagopapeletascallao.pe/',
+    description: 'Consulta y pago de papeletas impuestas en la Provincia Constitucional del Callao.',
+    scope: 'Callao',
+    note: 'Requiere placa y DNI.',
+  },
+  {
+    id: 'satt-trujillo',
+    name: 'Papeletas SATT',
+    entity: 'SATT Trujillo',
+    category: 'PAPELETAS',
+    url: 'https://satt.gob.pe/servicios/papeletas-transito-y-transporte/',
+    description: 'Papeletas de tránsito en Trujillo (La Libertad).',
+    scope: 'La Libertad',
+  },
+
+  // ── Infracciones / récord ──────────────────────────────────────────────────
+  {
+    id: 'sutran',
+    name: 'Récord de Infracciones',
+    entity: 'SUTRAN',
+    category: 'INFRACCIONES',
+    url: 'http://www.sutran.gob.pe/consultas/record-de-infracciones/record-de-infracciones/',
+    description: 'Infracciones en la red vial nacional (carreteras y transporte interprovincial).',
+    scope: 'Nacional',
+  },
+  {
+    id: 'mtc-record-conductor',
+    name: 'Récord de Conductor',
+    entity: 'MTC',
+    category: 'INFRACCIONES',
+    url: 'https://recordconductor.mtc.gob.pe/',
+    description: 'Historial de infracciones asociadas a la licencia de conducir.',
+    scope: 'Nacional',
+    note: 'Se consulta por número de licencia (brevete) o DNI, no por placa.',
   },
 ];
 
 export const CATEGORY_LABELS: Record<LinkCategory, string> = {
-  REGISTRAL: 'Datos registrales',
+  REGISTRAL: 'Datos registrales y transferencias',
   SEGUROS: 'Seguro (SOAT) y siniestros',
   REVISION_TECNICA: 'Revisión técnica',
-  INFRACCIONES: 'Infracciones',
-  PAPELETAS: 'Papeletas',
+  GNV: 'GNV (gas vehicular)',
+  PAPELETAS: 'Papeletas (por región)',
+  INFRACCIONES: 'Infracciones y récord',
 };
+
+/** Orden de aparición de las categorías en la consulta guiada. */
+export const CATEGORY_ORDER: LinkCategory[] = [
+  'REGISTRAL',
+  'SEGUROS',
+  'REVISION_TECNICA',
+  'GNV',
+  'PAPELETAS',
+  'INFRACCIONES',
+];

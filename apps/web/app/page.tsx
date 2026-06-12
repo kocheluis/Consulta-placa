@@ -25,8 +25,9 @@ export default function HomePage() {
             <h2 className="font-heading font-semibold text-foreground">Consulta guiada · Gratis</h2>
           </div>
           <p className="text-sm text-muted">
-            Te damos los enlaces oficiales (SUNARP, SBS, SOAT, MTC, SUTRAN, SAT). Abres cada uno y
-            consultas tú mismo en la fuente. Sin costo, 100% oficial.
+            Te damos los enlaces oficiales: SUNARP (titular y transferencias), SOAT/siniestros,
+            revisión técnica, GNV, papeletas (Lima, Callao y regiones) e infracciones. Abres cada uno
+            y consultas tú mismo. Sin costo, 100% oficial.
           </p>
         </div>
         <div className="rounded-xl border border-primary/30 bg-primary/5 p-6 shadow-sm">

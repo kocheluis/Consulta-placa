@@ -1,10 +1,10 @@
 import Link from 'next/link';
-import { ArrowLeft, ExternalLink, Info } from 'lucide-react';
+import { ArrowLeft, ExternalLink, Info, KeyRound } from 'lucide-react';
 import {
   OFFICIAL_LINKS,
   CATEGORY_LABELS,
+  CATEGORY_ORDER,
   formatPlateDisplay,
-  type LinkCategory,
 } from '@app/shared';
 import { CopyButton } from '@/components/CopyButton';
 
@@ -12,11 +12,11 @@ export default async function GuiadaPage({ params }: { params: Promise<{ placa: 
   const { placa } = await params;
   const display = formatPlateDisplay(placa);
 
-  // Agrupar por categoría.
-  const byCategory = OFFICIAL_LINKS.reduce<Record<string, typeof OFFICIAL_LINKS>>((acc, link) => {
-    (acc[link.category] ??= []).push(link);
-    return acc;
-  }, {});
+  // Categorías en orden, solo las que tienen enlaces.
+  const categories = CATEGORY_ORDER.map((cat) => ({
+    cat,
+    links: OFFICIAL_LINKS.filter((l) => l.category === cat),
+  })).filter((g) => g.links.length > 0);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
@@ -48,10 +48,10 @@ export default async function GuiadaPage({ params }: { params: Promise<{ placa: 
       </div>
 
       <div className="mt-6 space-y-6">
-        {Object.entries(byCategory).map(([cat, links]) => (
+        {categories.map(({ cat, links }) => (
           <section key={cat}>
             <h2 className="font-heading font-semibold text-foreground mb-2">
-              {CATEGORY_LABELS[cat as LinkCategory]}
+              {CATEGORY_LABELS[cat]}
             </h2>
             <div className="grid gap-3">
               {links.map((link) => (
@@ -69,11 +69,19 @@ export default async function GuiadaPage({ params }: { params: Promise<{ placa: 
                         <span className="text-xs font-normal text-muted">· {link.entity}</span>
                       </p>
                       <p className="mt-0.5 text-sm text-muted">{link.description}</p>
-                      {link.scope === 'Lima' && (
-                        <span className="mt-1 inline-block rounded-full bg-warning-bg px-2 py-0.5 text-xs text-warning-fg">
-                          Solo Lima
-                        </span>
-                      )}
+                      <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                        {link.scope !== 'Nacional' && (
+                          <span className="inline-block rounded-full bg-warning-bg px-2 py-0.5 text-xs text-warning-fg">
+                            {link.scope}
+                          </span>
+                        )}
+                        {link.note && (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted">
+                            <KeyRound className="h-3 w-3" aria-hidden="true" />
+                            {link.note}
+                          </span>
+                        )}
+                      </div>
                     </div>
                     <ExternalLink
                       className="h-5 w-5 text-muted group-hover:text-primary shrink-0"
