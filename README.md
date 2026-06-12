@@ -63,18 +63,30 @@ contra los portales en vivo, para mantener CI determinista.
 El código de scraping está completo; para que devuelva datos reales (en vez de degradar a
 "no disponible") faltan dos cosas que dependen de tu entorno:
 
-### 4. Clave del servicio de CAPTCHA — **integración ya implementada**
+### 4. Resolución de CAPTCHA — **gratis para SUNARP, de pago para SBS**
 
-Los solvers de **CapSolver** y **2Captcha** están implementados en
-`packages/scrapers/src/captcha/`. Solo necesitas una cuenta y su clave:
+Tres proveedores implementados en `packages/scrapers/src/captcha/`:
+
+| `CAPTCHA_PROVIDER` | Costo | Resuelve | Cubre |
+|--------------------|-------|----------|-------|
+| `local` (Tesseract.js) | **Gratis**, sin clave | CAPTCHA de imagen | **SUNARP** (registral) |
+| `capsolver` | De pago | Imagen + reCAPTCHA v2 | SUNARP + **SBS** |
+| `2captcha` | De pago | Imagen + reCAPTCHA v2 | SUNARP + **SBS** |
 
 ```bash
-# en .env
-CAPTCHA_PROVIDER=capsolver   # o "2captcha"
+# Opción gratuita (registral funciona; seguros/siniestros de SBS quedan "no disponible"):
+CAPTCHA_PROVIDER=local
+
+# Opción de pago (todo):
+CAPTCHA_PROVIDER=capsolver
 CAPTCHA_API_KEY=tu_clave
 ```
 
-Sin clave, `createCaptchaSolver` devuelve un Noop y los scrapers degradan a reporte parcial.
+> **Sobre reCAPTCHA v2 (SBS)**: no existe un solver gratuito y confiable para producción.
+> Evita los repos "free reCAPTCHA API" no verificados (riesgo de seguridad/abandono). Para SBS,
+> usa CapSolver/2Captcha, o deja que esa sección degrade a parcial usando `local`.
+
+Sin proveedor válido, `createCaptchaSolver` devuelve un Noop y los scrapers degradan a parcial.
 
 ### 5. Selectores reales de los portales — **descubrimiento asistido**
 

@@ -1,5 +1,6 @@
 import { CapSolverSolver } from './capsolver.js';
 import { TwoCaptchaSolver } from './twocaptcha.js';
+import { LocalImageSolver } from './local.js';
 
 /**
  * Cliente intercambiable de resolución de CAPTCHA. Soporta reCAPTCHA v2 (SBS)
@@ -29,13 +30,17 @@ export class NoopCaptchaSolver implements CaptchaSolver {
 }
 
 /**
- * Crea el solver según configuración. Soporta CapSolver (por defecto) y 2Captcha.
- * Sin clave (`apiKey` vacío) devuelve el Noop, que hace que los scrapers degraden
- * a "no disponible" en lugar de fallar (FR-034).
+ * Crea el solver según configuración:
+ *  - `local` / `tesseract`: OCR local gratuito (imágenes; resuelve SUNARP, no SBS).
+ *  - `capsolver` (por defecto con clave) / `2captcha`: servicios de pago (imágenes + reCAPTCHA v2).
+ * Sin clave y sin proveedor local, devuelve el Noop → los scrapers degradan a
+ * "no disponible" en lugar de fallar (FR-034).
  */
 export function createCaptchaSolver(cfg: CaptchaConfig): CaptchaSolver {
+  const provider = cfg.provider.toLowerCase();
+  if (provider === 'local' || provider === 'tesseract') return new LocalImageSolver();
   if (!cfg.apiKey) return new NoopCaptchaSolver();
-  switch (cfg.provider.toLowerCase()) {
+  switch (provider) {
     case '2captcha':
     case 'twocaptcha':
       return new TwoCaptchaSolver(cfg.apiKey);
