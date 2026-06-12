@@ -1,0 +1,183 @@
+openapi: 3.1.0
+info:
+  title: Consulta de Historial Vehicular por Placa (Perú)
+  version: 1.0.0
+  description: >
+    API REST para consultar el historial de un vehículo peruano por placa.
+    Fuentes MVP: SUNARP (registral), SBS (seguros/siniestralidad), APESEG (SOAT).
+    Datos obtenidos por scraping de portales públicos; respuesta asíncrona vía cola.
+servers:
+  - url: /api/v1
+paths:
+  /consultas:
+    post:
+      summary: Crear una consulta por placa (o devolver reporte cacheado)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ConsultaRequest'
+      responses:
+        '200':
+          description: Cache hit — reporte devuelto directamente
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsultaResponse' }
+        '202':
+          description: Encolado — usar jobId para polling
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsultaResponse' }
+        '400':
+          description: Placa inválida
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '429':
+          description: Rate limit excedido
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+  /consultas/{jobId}:
+    get:
+      summary: Estado/resultado de un job de consulta
+      parameters:
+        - name: jobId
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        '200':
+          description: Estado actual del job
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/ConsultaResponse' }
+        '404':
+          description: Job inexistente o expirado
+  /reportes/{placa}:
+    get:
+      summary: Último reporte cacheado/persistido de una placa (sin scraping)
+      parameters:
+        - name: placa
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        '200':
+          description: Reporte encontrado
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  report: { $ref: '#/components/schemas/Report' }
+                  ageSeconds: { type: integer }
+        '404':
+          description: Sin reporte previo
+  /solicitudes-datos:
+    post:
+      summary: Registrar solicitud de datos personales del titular
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/DataSubjectRequest' }
+      responses:
+        '201':
+          description: Solicitud registrada
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  id: { type: string, format: uuid }
+                  status: { type: string, enum: [RECEIVED] }
+  /legal/{doc}:
+    get:
+      summary: Términos de Uso o Política de Privacidad
+      parameters:
+        - name: doc
+          in: path
+          required: true
+          schema: { type: string, enum: [terms, privacy] }
+      responses:
+        '200': { description: Documento legal }
+        '404': { description: Documento inválido }
+  /health:
+    get:
+      summary: Health check (servicio + estado de scrapers)
+      responses:
+        '200': { description: OK }
+components:
+  schemas:
+    ConsultaRequest:
+      type: object
+      required: [placa]
+      properties:
+        placa: { type: string, example: "ABC123" }
+        forceRefresh: { type: boolean, default: false }
+    ConsultaResponse:
+      type: object
+      properties:
+        jobId: { type: [string, "null"], format: uuid }
+        status: { type: string, enum: [PENDING, RUNNING, PARTIAL, COMPLETED, FAILED] }
+        cached: { type: boolean }
+        report:
+          oneOf:
+            - { $ref: '#/components/schemas/Report' }
+            - { type: "null" }
+    Report:
+      type: object
+      properties:
+        id: { type: string, format: uuid }
+        placa: { type: string }
+        status: { type: string, enum: [COMPLETE, PARTIAL] }
+        generatedAt: { type: string, format: date-time }
+        disclaimer: { type: string }
+        vehicle: { $ref: '#/components/schemas/Vehicle' }
+        sections:
+          type: array
+          items: { $ref: '#/components/schemas/SectionResult' }
+    Vehicle:
+      type: object
+      properties:
+        brand: { type: [string, "null"] }
+        model: { type: [string, "null"] }
+        year: { type: [integer, "null"] }
+        color: { type: [string, "null"] }
+        serie: { type: [string, "null"] }
+        vin: { type: [string, "null"] }
+        engineNumber: { type: [string, "null"] }
+        plateDisplay: { type: string }
+        platePrevious: { type: [string, "null"] }
+        stolenAlert: { type: boolean }
+        owner:
+          type: [object, "null"]
+          properties:
+            name: { type: string }
+            note: { type: string }
+    SectionResult:
+      type: object
+      required: [kind, status]
+      properties:
+        kind: { type: string, enum: [REGISTRAL, SEGUROS, SINIESTRALIDAD, PAPELETAS, GNV, DEUDA_BANCARIA, PNP] }
+        source: { type: [string, "null"], enum: [SUNARP, SBS, APESEG, null] }
+        status: { type: string, enum: [AVAILABLE, UNAVAILABLE, COMING_SOON, NOT_FOUND] }
+        fetchedAt: { type: [string, "null"], format: date-time }
+        errorReason: { type: [string, "null"] }
+        payload: { type: [object, "null"] }
+    DataSubjectRequest:
+      type: object
+      required: [type, contactEmail]
+      properties:
+        type: { type: string, enum: [ACCESS, DELETION, RECTIFICATION, OPPOSITION] }
+        contactEmail: { type: string, format: email }
+        plateOrSubject: { type: [string, "null"] }
+        details: { type: [string, "null"] }
+    Error:
+      type: object
+      properties:
+        error: { type: string }
+        message: { type: string }
+        retryAfter: { type: [integer, "null"] }
