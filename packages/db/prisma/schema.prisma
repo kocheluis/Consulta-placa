@@ -1,0 +1,164 @@
+// Esquema de datos — Consulta de Historial Vehicular por Placa (Perú)
+// Ver specs/001-consulta-placa-vehicular/data-model.md
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum SectionKind {
+  REGISTRAL
+  SEGUROS
+  SINIESTRALIDAD
+  PAPELETAS
+  GNV
+  DEUDA_BANCARIA
+  PNP
+}
+
+enum SourceId {
+  SUNARP
+  SBS
+  APESEG
+}
+
+enum SectionStatus {
+  AVAILABLE
+  UNAVAILABLE
+  COMING_SOON
+  NOT_FOUND
+}
+
+enum JobStatus {
+  PENDING
+  RUNNING
+  PARTIAL
+  COMPLETED
+  FAILED
+}
+
+enum ReportStatus {
+  COMPLETE
+  PARTIAL
+}
+
+enum DataRequestType {
+  ACCESS
+  DELETION
+  RECTIFICATION
+  OPPOSITION
+}
+
+enum DataRequestStatus {
+  RECEIVED
+  IN_REVIEW
+  RESOLVED
+  REJECTED
+}
+
+/// Datos registrales no personales del vehículo (cacheables).
+model Vehicle {
+  id              String        @id @default(uuid())
+  plateNormalized String        @unique
+  plateDisplay    String
+  platePrevious   String?
+  brand           String?
+  model           String?
+  year            Int?
+  color           String?
+  serie           String?
+  vin             String?
+  engineNumber    String?
+  stolenAlert     Boolean       @default(false)
+  updatedAt       DateTime      @updatedAt
+  createdAt       DateTime      @default(now())
+  owners          OwnerRecord[]
+  reports         Report[]
+}
+
+/// Nombre del titular — dato personal, retención minimizada (FR-050).
+/// Sin índice por ownerName: prohibida la búsqueda inversa por nombre.
+model OwnerRecord {
+  id         String   @id @default(uuid())
+  vehicleId  String
+  vehicle    Vehicle  @relation(fields: [vehicleId], references: [id], onDelete: Cascade)
+  ownerName  String
+  capturedAt DateTime @default(now())
+  expiresAt  DateTime
+
+  @@index([vehicleId])
+  @@index([expiresAt])
+}
+
+/// Reporte consolidado de una placa en un momento dado.
+model Report {
+  id              String          @id @default(uuid())
+  vehicleId       String?
+  vehicle         Vehicle?        @relation(fields: [vehicleId], references: [id])
+  plateNormalized String
+  status          ReportStatus
+  generatedAt     DateTime        @default(now())
+  sections        SectionResult[]
+  job             QueryJob?
+
+  @@index([plateNormalized])
+}
+
+/// Bloque de datos atribuido a una fuente (FR-031).
+model SectionResult {
+  id          String        @id @default(uuid())
+  reportId    String
+  report      Report        @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  kind        SectionKind
+  source      SourceId?
+  status      SectionStatus
+  fetchedAt   DateTime?
+  errorReason String?
+  payload     Json?
+
+  @@index([reportId])
+}
+
+/// Unidad de trabajo de la cola (productor API ↔ worker).
+model QueryJob {
+  id              String    @id @default(uuid())
+  plateNormalized String
+  status          JobStatus @default(PENDING)
+  attempts        Int       @default(0)
+  forceRefresh    Boolean   @default(false)
+  origin          String
+  reportId        String?   @unique
+  report          Report?   @relation(fields: [reportId], references: [id])
+  createdAt       DateTime  @default(now())
+  completedAt     DateTime?
+
+  @@index([plateNormalized])
+}
+
+/// Registro de tratamiento de datos personales (FR-053).
+model AuditLog {
+  id                String   @id @default(uuid())
+  plateNormalized   String
+  origin            String
+  purpose           String
+  accessedOwnerData Boolean  @default(false)
+  createdAt         DateTime @default(now())
+
+  @@index([plateNormalized])
+}
+
+/// Solicitud relacionada con datos personales (FR-052).
+model DataSubjectRequest {
+  id             String            @id @default(uuid())
+  type           DataRequestType
+  status         DataRequestStatus @default(RECEIVED)
+  contactEmail   String
+  plateOrSubject String?
+  details        String?
+  createdAt      DateTime          @default(now())
+  resolvedAt     DateTime?
+}

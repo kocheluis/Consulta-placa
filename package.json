@@ -1,0 +1,30 @@
+{
+  "name": "consulta-placa",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Consulta de historial vehicular por placa (Perú) — web + API + worker",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --build",
+    "lint": "eslint .",
+    "format": "prettier --write ."
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "prettier": "^3.4.2"
+  },
+  "overrides": {
+    "ioredis": "^5.4.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

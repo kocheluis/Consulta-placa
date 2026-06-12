@@ -1,0 +1,50 @@
+import Fastify from 'fastify';
+import cors from '@fastify/cors';
+import rateLimit from '@fastify/rate-limit';
+import { config } from './config.js';
+import {
+  ConsultaService,
+  createQueue,
+  createRedis,
+} from './services/consulta.js';
+import { registerConsultaRoutes } from './routes/consultas.js';
+import { registerHealthRoute } from './routes/health.js';
+
+export async function buildServer() {
+  const app = Fastify({ logger: true });
+
+  await app.register(cors, { origin: true });
+  await app.register(rateLimit, {
+    max: config.rateLimitPerMinute,
+    timeWindow: '1 minute',
+    errorResponseBuilder: (_req, ctx) => ({
+      error: 'RATE_LIMITED',
+      message: 'Demasiadas consultas. Intenta nuevamente más tarde.',
+      retryAfter: Math.ceil(ctx.ttl / 1000),
+    }),
+  });
+
+  const redis = createRedis();
+  const queue = createQueue();
+  const service = new ConsultaService(redis, queue);
+
+  registerHealthRoute(app);
+  registerConsultaRoutes(app, service);
+
+  app.addHook('onClose', async () => {
+    await queue.close();
+    redis.disconnect();
+  });
+
+  return app;
+}
+
+// Arranque directo (no en tests).
+if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
+  buildServer()
+    .then((app) => app.listen({ port: config.port, host: '0.0.0.0' }))
+    .catch((err) => {
+      console.error(err);
+      process.exit(1);
+    });
+}

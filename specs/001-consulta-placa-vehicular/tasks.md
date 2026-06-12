@@ -28,15 +28,15 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 
 **Purpose**: Inicialización del monorepo y estructura base.
 
-- [ ] T001 Inicializar monorepo con pnpm workspaces + Turborepo en la raíz (`package.json`, `pnpm-workspace.yaml`, `turbo.json`)
-- [ ] T002 [P] Crear `packages/config` con tsconfig base, ESLint y Prettier compartidos
-- [ ] T003 [P] Crear `docker-compose.yml` con servicios PostgreSQL y Redis para desarrollo local
-- [ ] T004 [P] Scaffold de `apps/web` (Next.js 15 App Router + TypeScript)
-- [ ] T005 [P] Scaffold de `apps/api` (Fastify 5 + TypeScript) con entrypoint `apps/api/src/server.ts`
-- [ ] T006 [P] Scaffold de `apps/worker` (TypeScript) con entrypoint `apps/worker/src/index.ts`
-- [ ] T007 [P] Inicializar paquetes vacíos `packages/shared`, `packages/scrapers`, `packages/db` con sus `package.json` y `tsconfig`
-- [ ] T008 [P] Configurar Vitest en la raíz del workspace para todos los paquetes/apps
-- [ ] T009 Crear `.env.example` con las variables de [quickstart.md](./quickstart.md) (DATABASE_URL, REDIS_URL, CAPTCHA_*, TTLs, RATE_LIMIT_*)
+- [X] T001 Inicializar monorepo con pnpm workspaces + Turborepo en la raíz (`package.json`, `pnpm-workspace.yaml`, `turbo.json`)
+- [X] T002 [P] Crear `packages/config` con tsconfig base, ESLint y Prettier compartidos
+- [X] T003 [P] Crear `docker-compose.yml` con servicios PostgreSQL y Redis para desarrollo local
+- [X] T004 [P] Scaffold de `apps/web` (Next.js 15 App Router + TypeScript)
+- [X] T005 [P] Scaffold de `apps/api` (Fastify 5 + TypeScript) con entrypoint `apps/api/src/server.ts`
+- [X] T006 [P] Scaffold de `apps/worker` (TypeScript) con entrypoint `apps/worker/src/index.ts`
+- [X] T007 [P] Inicializar paquetes vacíos `packages/shared`, `packages/scrapers`, `packages/db` con sus `package.json` y `tsconfig`
+- [X] T008 [P] Configurar Vitest en la raíz del workspace para todos los paquetes/apps
+- [X] T009 Crear `.env.example` con las variables de [quickstart.md](./quickstart.md) (DATABASE_URL, REDIS_URL, CAPTCHA_*, TTLs, RATE_LIMIT_*)
 
 **Checkpoint**: Monorepo instalable (`pnpm install`) y servicios locales arriba.
 
@@ -49,39 +49,39 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 **⚠️ CRITICAL**: Ninguna historia puede comenzar hasta completar esta fase.
 
 ### Tipos, validación y dominio compartido (`packages/shared`)
-- [ ] T010 [P] Implementar normalización y validación de placa peruana (formatos vigentes e históricos) en `packages/shared/src/plate.ts`
-- [ ] T011 [P] Test unitario de normalización/validación de placa en `packages/shared/src/plate.test.ts` (casos válidos, históricos, inválidos)
-- [ ] T012 [P] Definir enums (`SourceId`, `SectionKind`, `SectionStatus`, `JobStatus`, `ReportStatus`, `DataRequestType/Status`) en `packages/shared/src/enums.ts` per [data-model.md](./data-model.md)
-- [ ] T013 [P] Definir tipos `Report`, `SectionResult`, `Vehicle`, `SourceResult`, payloads (`InsurancePolicy`, `SiniestroIndicator`) en `packages/shared/src/report.ts`
-- [ ] T014 Definir esquemas Zod de request/response (ConsultaRequest, ConsultaResponse, Report, DataSubjectRequest) en `packages/shared/src/schemas.ts` per [contracts/api.md](./contracts/api.md) (depende de T012, T013)
+- [X] T010 [P] Implementar normalización y validación de placa peruana (formatos vigentes e históricos) en `packages/shared/src/plate.ts`
+- [X] T011 [P] Test unitario de normalización/validación de placa en `packages/shared/src/plate.test.ts` (casos válidos, históricos, inválidos)
+- [X] T012 [P] Definir enums (`SourceId`, `SectionKind`, `SectionStatus`, `JobStatus`, `ReportStatus`, `DataRequestType/Status`) en `packages/shared/src/enums.ts` per [data-model.md](./data-model.md)
+- [X] T013 [P] Definir tipos `Report`, `SectionResult`, `Vehicle`, `SourceResult`, payloads (`InsurancePolicy`, `SiniestroIndicator`) en `packages/shared/src/report.ts`
+- [X] T014 Definir esquemas Zod de request/response (ConsultaRequest, ConsultaResponse, Report, DataSubjectRequest) en `packages/shared/src/schemas.ts` per [contracts/api.md](./contracts/api.md) (depende de T012, T013)
 
 ### Persistencia (`packages/db`)
-- [ ] T015 Definir el esquema Prisma completo (Vehicle, OwnerRecord, Report, SectionResult, QueryJob, AuditLog, DataSubjectRequest) en `packages/db/prisma/schema.prisma` per [data-model.md](./data-model.md)
-- [ ] T016 Generar el cliente Prisma y crear la migración inicial; exportar cliente en `packages/db/src/index.ts` (depende de T015)
+- [X] T015 Definir el esquema Prisma completo (Vehicle, OwnerRecord, Report, SectionResult, QueryJob, AuditLog, DataSubjectRequest) en `packages/db/prisma/schema.prisma` per [data-model.md](./data-model.md)
+- [X] T016 Generar el cliente Prisma y crear la migración inicial; exportar cliente en `packages/db/src/index.ts` (depende de T015)
 
 ### Scrapers e infraestructura externa (`packages/scrapers`)
-- [ ] T017 [P] Definir la interfaz `Scraper<Input, SourceResult>` y el contrato de resultado en `packages/scrapers/src/types.ts`
-- [ ] T018 [P] Implementar cliente intercambiable de CAPTCHA (proveedor 2Captcha/CapSolver, soporta reCAPTCHA v2 e imagen) en `packages/scrapers/src/captcha/index.ts` con interfaz mockeable
-- [ ] T019 Implementar pool de navegadores Playwright (Chromium headless) reutilizable en `packages/scrapers/src/browser/pool.ts`
+- [X] T017 [P] Definir la interfaz `Scraper<Input, SourceResult>` y el contrato de resultado en `packages/scrapers/src/types.ts`
+- [X] T018 [P] Implementar cliente intercambiable de CAPTCHA (proveedor 2Captcha/CapSolver, soporta reCAPTCHA v2 e imagen) en `packages/scrapers/src/captcha/index.ts` con interfaz mockeable
+- [X] T019 Implementar pool de navegadores Playwright (Chromium headless) reutilizable en `packages/scrapers/src/browser/pool.ts`
 
 ### Cola y caché (api ↔ worker)
-- [ ] T020 [P] Configurar conexión Redis y definir la cola BullMQ (`consultas`) compartida en `packages/shared/src/queue.ts`
-- [ ] T021 [P] Implementar utilidades de caché Redis con TTL por sección (claves `report:` / `section:`) en `apps/api/src/services/cache.ts` per [data-model.md](./data-model.md)
+- [X] T020 [P] Configurar conexión Redis y definir la cola BullMQ (`consultas`) compartida en `packages/shared/src/queue.ts`
+- [X] T021 [P] Implementar utilidades de caché Redis con TTL por sección (claves `report:` / `section:`) en `apps/api/src/services/cache.ts` per [data-model.md](./data-model.md)
 
 ### API base (`apps/api`)
-- [ ] T022 Configurar servidor Fastify con plugins: validación Zod, manejo de errores uniforme, y rate-limiting por origen (FR-003) en `apps/api/src/server.ts` y `apps/api/src/plugins/`
-- [ ] T023 [P] Implementar endpoint `GET /api/v1/health` (servicio + estado de scrapers) en `apps/api/src/routes/health.ts`
-- [ ] T024 Implementar servicio de orquestación base (recibe placa validada → encola job → persiste `QueryJob`; SIN caché todavía, siempre scrapea) en `apps/api/src/services/consulta.ts` (depende de T014, T016, T020)
-- [ ] T025 Implementar `POST /api/v1/consultas` y `GET /api/v1/consultas/{jobId}` (modelo encolar + polling) en `apps/api/src/routes/consultas.ts` (depende de T024)
+- [X] T022 Configurar servidor Fastify con plugins: validación Zod, manejo de errores uniforme, y rate-limiting por origen (FR-003) en `apps/api/src/server.ts` y `apps/api/src/plugins/`
+- [X] T023 [P] Implementar endpoint `GET /api/v1/health` (servicio + estado de scrapers) en `apps/api/src/routes/health.ts`
+- [X] T024 Implementar servicio de orquestación base (recibe placa validada → encola job → persiste `QueryJob`; SIN caché todavía, siempre scrapea) en `apps/api/src/services/consulta.ts` (depende de T014, T016, T020)
+- [X] T025 Implementar `POST /api/v1/consultas` y `GET /api/v1/consultas/{jobId}` (modelo encolar + polling) en `apps/api/src/routes/consultas.ts` (depende de T024)
 
 ### Worker base (`apps/worker`)
-- [ ] T026 Configurar el consumidor BullMQ con reintentos/backoff y ensamblado de `Report` a partir de los `SourceResult` de los processors registrados, en `apps/worker/src/index.ts` y `apps/worker/src/assemble.ts` (depende de T013, T016, T020)
+- [X] T026 Configurar el consumidor BullMQ con reintentos/backoff y ensamblado de `Report` a partir de los `SourceResult` de los processors registrados, en `apps/worker/src/index.ts` y `apps/worker/src/assemble.ts` (depende de T013, T016, T020)
 
 ### Web base (`apps/web`)
-- [ ] T027 [P] Configurar Tailwind con los tokens de [design-system.md](./design-system.md) (paleta navy+semánticos, fuentes Lexend/Source Sans 3/JetBrains Mono) en `apps/web/tailwind.config.ts` y `apps/web/app/globals.css`
-- [ ] T028 [P] Inicializar shadcn/ui y crear layout base con header/footer institucional en `apps/web/app/layout.tsx` y `apps/web/components/layout/`
-- [ ] T029 [P] Implementar cliente de API y hook de polling de job (TanStack Query) en `apps/web/lib/api.ts` y `apps/web/lib/use-consulta.ts`
-- [ ] T030 [P] Implementar componentes UI compartidos del design system: `SourceBadge`, `StatusPill`, `SectionCard` (estados AVAILABLE/UNAVAILABLE), skeletons, en `apps/web/components/report/`
+- [X] T027 [P] Configurar Tailwind con los tokens de [design-system.md](./design-system.md) (paleta navy+semánticos, fuentes Lexend/Source Sans 3/JetBrains Mono) en `apps/web/tailwind.config.ts` y `apps/web/app/globals.css`
+- [X] T028 [P] Inicializar shadcn/ui y crear layout base con header/footer institucional en `apps/web/app/layout.tsx` y `apps/web/components/layout/`
+- [X] T029 [P] Implementar cliente de API y hook de polling de job (TanStack Query) en `apps/web/lib/api.ts` y `apps/web/lib/use-consulta.ts`
+- [X] T030 [P] Implementar componentes UI compartidos del design system: `SourceBadge`, `StatusPill`, `SectionCard` (estados AVAILABLE/UNAVAILABLE), skeletons, en `apps/web/components/report/`
 
 **Checkpoint**: Pipeline encolar→worker→reporte funciona end-to-end con un processor dummy; la web puede buscar y hacer polling. Listo para historias.
 
@@ -94,21 +94,21 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 **Independent Test**: Ingresar una placa válida y verificar que la web muestra los campos registrales y la alerta de robo cuando aplica; placa inválida → 400; placa sin registro → "sin resultados".
 
 ### Tests for User Story 1 ⚠️
-- [ ] T031 [P] [US1] Test unitario del parser SUNARP contra fixtures HTML en `packages/scrapers/src/sunarp/parser.test.ts` (incluye fixture con anotación de robo)
-- [ ] T032 [P] [US1] Contract test de `POST /consultas` + `GET /consultas/{jobId}` devolviendo sección REGISTRAL en `apps/api/tests/consultas.registral.test.ts`
+- [X] T031 [P] [US1] Test unitario del parser SUNARP contra fixtures HTML en `packages/scrapers/src/sunarp/parser.test.ts` (incluye fixture con anotación de robo)
+- [X] T032 [P] [US1] Contract test de `POST /consultas` + `GET /consultas/{jobId}` devolviendo sección REGISTRAL en `apps/api/tests/consultas.registral.test.ts`
 - [ ] T033 [P] [US1] e2e Playwright: búsqueda → reporte registral en `apps/web/tests/registral.spec.ts`
 
 ### Implementation for User Story 1
-- [ ] T034 [US1] Guardar fixtures HTML de SUNARP (resultado normal y con robo) en `packages/scrapers/src/sunarp/__fixtures__/`
-- [ ] T035 [US1] Implementar parser SUNARP (HTML → `SourceResult` registral + `stolenAlert`) en `packages/scrapers/src/sunarp/parser.ts` (depende de T017, T013)
-- [ ] T036 [US1] Implementar navegación/scraper SUNARP (ViewState + resolución de CAPTCHA de imagen) en `packages/scrapers/src/sunarp/index.ts` (depende de T018, T019, T035)
-- [ ] T037 [US1] Implementar processor `sunarp` en el worker en `apps/worker/src/processors/sunarp.ts` y registrarlo en el ensamblado (depende de T026, T036)
-- [ ] T038 [US1] Persistir `Vehicle` y `OwnerRecord` con `expiresAt` (retención corta, sin índice por nombre) al ensamblar el reporte, en `apps/worker/src/assemble.ts` (FR-050) (depende de T016)
-- [ ] T039 [US1] Registrar entrada en `AuditLog` cuando el reporte expone el nombre del titular, en `apps/api/src/services/consulta.ts` (FR-053)
-- [ ] T040 [P] [US1] Implementar `PlateInput` con validación cliente y página de búsqueda en `apps/web/app/page.tsx` y `apps/web/components/PlateInput.tsx` (FR-002)
-- [ ] T041 [P] [US1] Implementar `StolenAlert` (banner danger, `role="alert"`) en `apps/web/components/report/StolenAlert.tsx`
-- [ ] T042 [US1] Implementar página de reporte con la sección registral (DataRows, identificadores en mono, titular minimizado) en `apps/web/app/reporte/[placa]/page.tsx` (depende de T030, T041)
-- [ ] T043 [US1] Manejar estados vacío ("sin resultados en SUNARP") y de error en la página de reporte
+- [X] T034 [US1] Guardar fixtures HTML de SUNARP (resultado normal y con robo) en `packages/scrapers/src/sunarp/__fixtures__/`
+- [X] T035 [US1] Implementar parser SUNARP (HTML → `SourceResult` registral + `stolenAlert`) en `packages/scrapers/src/sunarp/parser.ts` (depende de T017, T013)
+- [X] T036 [US1] Implementar navegación/scraper SUNARP (ViewState + resolución de CAPTCHA de imagen) en `packages/scrapers/src/sunarp/index.ts` (depende de T018, T019, T035)
+- [X] T037 [US1] Implementar processor `sunarp` en el worker en `apps/worker/src/processors/sunarp.ts` y registrarlo en el ensamblado (depende de T026, T036)
+- [X] T038 [US1] Persistir `Vehicle` y `OwnerRecord` con `expiresAt` (retención corta, sin índice por nombre) al ensamblar el reporte, en `apps/worker/src/assemble.ts` (FR-050) (depende de T016)
+- [X] T039 [US1] Registrar entrada en `AuditLog` cuando el reporte expone el nombre del titular, en `apps/api/src/services/consulta.ts` (FR-053)
+- [X] T040 [P] [US1] Implementar `PlateInput` con validación cliente y página de búsqueda en `apps/web/app/page.tsx` y `apps/web/components/PlateInput.tsx` (FR-002)
+- [X] T041 [P] [US1] Implementar `StolenAlert` (banner danger, `role="alert"`) en `apps/web/components/report/StolenAlert.tsx`
+- [X] T042 [US1] Implementar página de reporte con la sección registral (DataRows, identificadores en mono, titular minimizado) en `apps/web/app/reporte/[placa]/page.tsx` (depende de T030, T041)
+- [X] T043 [US1] Manejar estados vacío ("sin resultados en SUNARP") y de error en la página de reporte
 
 **Checkpoint**: US1 funcional — MVP demostrable de consulta registral con alerta de robo.
 
@@ -151,8 +151,8 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 - [ ] T057 [P] [US3] e2e Playwright: reporte muestra "Próximamente", disclaimer y degradación parcial en `apps/web/tests/consolidado.spec.ts`
 
 ### Implementation for User Story 3
-- [ ] T058 [US3] Asegurar que el ensamblado del reporte añade siempre las secciones COMING_SOON (PAPELETAS, GNV, DEUDA_BANCARIA, PNP) y marca `status=PARTIAL` si alguna sección MVP queda UNAVAILABLE, en `apps/worker/src/assemble.ts` (FR-032, FR-034)
-- [ ] T059 [US3] Incluir el texto de `disclaimer` en la respuesta del reporte en `apps/api/src/services/consulta.ts` (FR-033)
+- [X] T058 [US3] Asegurar que el ensamblado del reporte añade siempre las secciones COMING_SOON (PAPELETAS, GNV, DEUDA_BANCARIA, PNP) y marca `status=PARTIAL` si alguna sección MVP queda UNAVAILABLE, en `apps/worker/src/assemble.ts` (FR-032, FR-034)
+- [X] T059 [US3] Incluir el texto de `disclaimer` en la respuesta del reporte en `apps/api/src/services/consulta.ts` (FR-033)
 - [ ] T060 [P] [US3] Implementar `ComingSoonSection` (tarjeta atenuada) y la grilla de "Próximamente" en `apps/web/components/report/ComingSoonSection.tsx`
 - [ ] T061 [P] [US3] Implementar `Disclaimer` y el encabezado de estado del reporte (COMPLETE/PARTIAL) en `apps/web/components/report/Disclaimer.tsx` y el header de la página
 - [ ] T062 [US3] Implementar el botón "Reintentar" en secciones UNAVAILABLE en la página de reporte (FR-034)
@@ -188,7 +188,7 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 
 **Purpose**: Cumplimiento, robustez y validación final.
 
-- [ ] T072 [P] Implementar job programado de purga de `OwnerRecord` vencidos (`expiresAt < now()`) en `apps/worker/src/jobs/purge-owners.ts` (FR-050, SC-007)
+- [X] T072 [P] Implementar job programado de purga de `OwnerRecord` vencidos (`expiresAt < now()`) en `apps/worker/src/jobs/purge-owners.ts` (FR-050, SC-007)
 - [ ] T073 [P] Implementar health-check periódico por scraper que detecta cambios/caídas de portales y lo refleja en `GET /health`
 - [ ] T074 [P] Endurecer rate-limiting (límites diferenciados cache-hit vs scraping) y cabeceras de seguridad en `apps/api/src/plugins/`
 - [ ] T075 [P] Auditoría de accesibilidad del design system (contraste, foco, `prefers-reduced-motion`, responsive 375/768/1024/1440) en `apps/web`
