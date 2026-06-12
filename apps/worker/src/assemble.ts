@@ -8,6 +8,7 @@ import {
   type SourceResult,
   type Report,
   type ConsultaJobData,
+  type ScraperHealth,
 } from '@app/shared';
 import { prisma } from '@app/db';
 import { config } from './config.js';
@@ -25,6 +26,19 @@ export async function assembleAndPersist(
   sources: SourceResult[],
 ): Promise<Report> {
   const generatedAt = new Date().toISOString();
+
+  // Registrar salud por fuente: "up" si devolvió algo (AVAILABLE/NOT_FOUND),
+  // "down" si todas sus secciones quedaron UNAVAILABLE (T073).
+  const bySource = new Map<string, boolean>();
+  for (const s of sources) {
+    const ok = s.status !== SectionStatus.UNAVAILABLE;
+    bySource.set(s.source, (bySource.get(s.source) ?? false) || ok);
+  }
+  for (const [source, ok] of bySource) {
+    const health: ScraperHealth = { source, status: ok ? 'up' : 'down', at: generatedAt };
+    await redis.set(cacheKeys.scraperHealth(source), JSON.stringify(health), 'EX', 86400);
+  }
+
   const report = buildReport({
     id: job.jobId,
     plateDisplay: job.plateDisplay,

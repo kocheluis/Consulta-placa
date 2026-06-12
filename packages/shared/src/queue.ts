@@ -15,7 +15,15 @@ export const cacheKeys = {
   report: (plate: string) => `report:${plate}`,
   section: (plate: string, kind: string) => `section:${plate}:${kind}`,
   rateLimit: (origin: string) => `ratelimit:${origin}`,
+  scraperHealth: (source: string) => `scraper:health:${source}`,
 };
+
+/** Estado de salud de un scraper, registrado por el worker y leído por la API. */
+export interface ScraperHealth {
+  source: string;
+  status: 'up' | 'down' | 'unknown';
+  at: string;
+}
 
 /** TTL (segundos) por tipo de sección, configurable por entorno. */
 export interface CacheTtlConfig {

@@ -1,0 +1,12 @@
+**/node_modules
+**/dist
+**/.next
+**/.turbo
+**/coverage
+**/*.log
+.git
+.env
+.env.local
+**/__pycache__
+.claude
+specs

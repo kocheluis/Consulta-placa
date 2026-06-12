@@ -1,5 +1,6 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
+import helmet from '@fastify/helmet';
 import rateLimit from '@fastify/rate-limit';
 import { config } from './config.js';
 import {
@@ -16,6 +17,7 @@ import { registerLegalRoutes } from './routes/legal.js';
 export async function buildServer() {
   const app = Fastify({ logger: true });
 
+  await app.register(helmet);
   await app.register(cors, { origin: true });
   await app.register(rateLimit, {
     max: config.rateLimitPerMinute,
@@ -31,7 +33,7 @@ export async function buildServer() {
   const queue = createQueue();
   const service = new ConsultaService(redis, queue);
 
-  registerHealthRoute(app);
+  registerHealthRoute(app, redis);
   registerConsultaRoutes(app, service);
   registerReporteRoutes(app, service);
   registerSolicitudRoutes(app);

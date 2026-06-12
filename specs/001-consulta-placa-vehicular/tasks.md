@@ -96,7 +96,7 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 ### Tests for User Story 1 ⚠️
 - [X] T031 [P] [US1] Test unitario del parser SUNARP contra fixtures HTML en `packages/scrapers/src/sunarp/parser.test.ts` (incluye fixture con anotación de robo)
 - [X] T032 [P] [US1] Contract test de `POST /consultas` + `GET /consultas/{jobId}` devolviendo sección REGISTRAL en `apps/api/tests/consultas.registral.test.ts`
-- [ ] T033 [P] [US1] e2e Playwright: búsqueda → reporte registral en `apps/web/tests/registral.spec.ts`
+- [X] T033 [P] [US1] e2e Playwright: búsqueda → reporte registral en `apps/web/tests/registral.spec.ts`
 
 ### Implementation for User Story 1
 - [X] T034 [US1] Guardar fixtures HTML de SUNARP (resultado normal y con robo) en `packages/scrapers/src/sunarp/__fixtures__/`
@@ -148,7 +148,7 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 
 ### Tests for User Story 3 ⚠️
 - [X] T056 [P] [US3] Contract test: el reporte siempre incluye secciones COMING_SOON + disclaimer, y `status=PARTIAL` ante sección UNAVAILABLE, en `apps/api/tests/consultas.consolidado.test.ts`
-- [ ] T057 [P] [US3] e2e Playwright: reporte muestra "Próximamente", disclaimer y degradación parcial en `apps/web/tests/consolidado.spec.ts`
+- [X] T057 [P] [US3] e2e Playwright: reporte muestra "Próximamente", disclaimer y degradación parcial en `apps/web/tests/consolidado.spec.ts`
 
 ### Implementation for User Story 3
 - [X] T058 [US3] Asegurar que el ensamblado del reporte añade siempre las secciones COMING_SOON (PAPELETAS, GNV, DEUDA_BANCARIA, PNP) y marca `status=PARTIAL` si alguna sección MVP queda UNAVAILABLE, en `apps/worker/src/assemble.ts` (FR-032, FR-034)
@@ -189,11 +189,11 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 **Purpose**: Cumplimiento, robustez y validación final.
 
 - [X] T072 [P] Implementar job programado de purga de `OwnerRecord` vencidos (`expiresAt < now()`) en `apps/worker/src/jobs/purge-owners.ts` (FR-050, SC-007)
-- [ ] T073 [P] Implementar health-check periódico por scraper que detecta cambios/caídas de portales y lo refleja en `GET /health`
-- [ ] T074 [P] Endurecer rate-limiting (límites diferenciados cache-hit vs scraping) y cabeceras de seguridad en `apps/api/src/plugins/`
-- [ ] T075 [P] Auditoría de accesibilidad del design system (contraste, foco, `prefers-reduced-motion`, responsive 375/768/1024/1440) en `apps/web`
-- [ ] T076 [P] Configurar Dockerfiles de `apps/api` y `apps/worker` (con Chromium) para despliegue
-- [ ] T077 [P] Documentar el scaffolding de `apps/mobile` (Expo) que reutiliza la API, en `docs/mobile.md` (FR-061, fuera de alcance de implementación)
+- [X] T073 [P] Implementar health-check periódico por scraper que detecta cambios/caídas de portales y lo refleja en `GET /health`
+- [X] T074 [P] Endurecer rate-limiting (límites diferenciados cache-hit vs scraping) y cabeceras de seguridad en `apps/api/src/plugins/`
+- [X] T075 [P] Auditoría de accesibilidad del design system (contraste, foco, `prefers-reduced-motion`, responsive 375/768/1024/1440) en `apps/web`
+- [X] T076 [P] Configurar Dockerfiles de `apps/api` y `apps/worker` (con Chromium) para despliegue
+- [X] T077 [P] Documentar el scaffolding de `apps/mobile` (Expo) que reutiliza la API, en `docs/mobile.md` (FR-061, fuera de alcance de implementación)
 - [ ] T078 Ejecutar la validación completa de [quickstart.md](./quickstart.md) (escenarios V1–V8)
 - [X] T079 [P] README raíz con setup, arquitectura y comandos
 

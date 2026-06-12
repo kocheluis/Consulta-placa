@@ -1,9 +1,18 @@
 import type { FastifyInstance } from 'fastify';
 import { ConsultaRequestSchema, InvalidPlateError } from '@app/shared';
+import { config } from '../config.js';
 import type { ConsultaService } from '../services/consulta.js';
 
 export function registerConsultaRoutes(app: FastifyInstance, service: ConsultaService): void {
-  app.post('/api/v1/consultas', async (request, reply) => {
+  app.post(
+    '/api/v1/consultas',
+    {
+      config: {
+        // Límite más estricto: crear una consulta puede disparar scraping (FR-003).
+        rateLimit: { max: config.rateLimitScrapingPerMinute, timeWindow: '1 minute' },
+      },
+    },
+    async (request, reply) => {
     const parsed = ConsultaRequestSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({
