@@ -13,6 +13,7 @@ export type LinkCategory =
   | 'REVISION_TECNICA'
   | 'GNV'
   | 'PAPELETAS'
+  | 'IMPUESTO_VEHICULAR'
   | 'INFRACCIONES';
 
 export interface OfficialLink {
@@ -108,9 +109,10 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     name: 'Consulta de Papeletas',
     entity: 'SAT de Lima',
     category: 'PAPELETAS',
-    url: 'https://www.sat.gob.pe/websitev9/TributosMultas/Papeletas/ConsultasPapeletas',
+    url: 'https://www.sat.gob.pe/',
     description: 'Papeletas de tránsito impuestas en Lima Metropolitana.',
     scope: 'Lima',
+    note: 'En el portal entra a "Consultas en línea" / Oficina Virtual e ingresa tu placa.',
   },
   {
     id: 'sat-callao',
@@ -130,6 +132,28 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     url: 'https://satt.gob.pe/servicios/papeletas-transito-y-transporte/',
     description: 'Papeletas de tránsito en Trujillo (La Libertad).',
     scope: 'La Libertad',
+  },
+
+  // ── Impuesto vehicular (municipal, por jurisdicción) ───────────────────────
+  {
+    id: 'sat-lima-impuesto',
+    name: 'Impuesto Vehicular',
+    entity: 'SAT de Lima',
+    category: 'IMPUESTO_VEHICULAR',
+    url: 'https://www.sat.gob.pe/',
+    description: 'Deuda del impuesto al patrimonio vehicular (vehículos de hasta 3 años) en Lima.',
+    scope: 'Lima',
+    note: 'En "Consultas en línea" elige Impuesto Vehicular. El impuesto es municipal: para otras provincias consulta el SAT o municipalidad correspondiente.',
+  },
+  {
+    id: 'callao-impuesto',
+    name: 'Tributos y Papeletas del Callao',
+    entity: 'Callao',
+    category: 'IMPUESTO_VEHICULAR',
+    url: 'https://pagopapeletascallao.pe/',
+    description: 'Consulta y pago de obligaciones vehiculares en la Provincia Constitucional del Callao.',
+    scope: 'Callao',
+    note: 'Requiere placa y DNI.',
   },
 
   // ── Infracciones / récord ──────────────────────────────────────────────────
@@ -160,6 +184,7 @@ export const CATEGORY_LABELS: Record<LinkCategory, string> = {
   REVISION_TECNICA: 'Revisión técnica',
   GNV: 'GNV (gas vehicular)',
   PAPELETAS: 'Papeletas (por región)',
+  IMPUESTO_VEHICULAR: 'Impuesto vehicular',
   INFRACCIONES: 'Infracciones y récord',
 };
 
@@ -170,5 +195,6 @@ export const CATEGORY_ORDER: LinkCategory[] = [
   'REVISION_TECNICA',
   'GNV',
   'PAPELETAS',
+  'IMPUESTO_VEHICULAR',
   'INFRACCIONES',
 ];
