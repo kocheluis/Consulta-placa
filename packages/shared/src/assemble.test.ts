@@ -42,6 +42,29 @@ describe('buildReport', () => {
     expect(report.vehicle?.owner).toEqual({ name: 'PEREZ, JUAN', note: expect.any(String) });
   });
 
+  it('deduplica SEGUROS de SBS y APESEG en una sola sección, prefiriendo AVAILABLE', () => {
+    const sources: SourceResult[] = [
+      {
+        kind: SectionKind.SEGUROS,
+        source: SourceId.SBS,
+        status: SectionStatus.AVAILABLE,
+        fetchedAt: base.generatedAt,
+        payload: { hasActiveSoat: true },
+      },
+      {
+        kind: SectionKind.SEGUROS,
+        source: SourceId.APESEG,
+        status: SectionStatus.UNAVAILABLE,
+        fetchedAt: null,
+      },
+    ];
+    const report = buildReport({ ...base, sources });
+    const seguros = report.sections.filter((s) => s.kind === SectionKind.SEGUROS);
+    expect(seguros).toHaveLength(1);
+    expect(seguros[0]!.source).toBe(SourceId.SBS);
+    expect(seguros[0]!.status).toBe('AVAILABLE');
+  });
+
   it('marca PARTIAL si una sección MVP queda UNAVAILABLE', () => {
     const sources: SourceResult[] = [
       {

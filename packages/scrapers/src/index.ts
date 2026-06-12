@@ -3,3 +3,7 @@ export * from './captcha/index.js';
 export { BrowserPool } from './browser/pool.js';
 export { sunarpScraper } from './sunarp/index.js';
 export { parseSunarp } from './sunarp/parser.js';
+export { sbsScraper } from './sbs/index.js';
+export { parseSbs } from './sbs/parser.js';
+export { apesegScraper } from './apeseg/index.js';
+export { parseApeseg } from './apeseg/parser.js';

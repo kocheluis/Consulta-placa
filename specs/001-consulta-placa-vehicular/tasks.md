@@ -121,20 +121,20 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 **Independent Test**: Consultar una placa con SOAT vigente → sección SEGUROS con aseguradora/póliza/vigencia; placa con accidente → indicador de siniestro; cada uno con fuente y fecha.
 
 ### Tests for User Story 2 ⚠️
-- [ ] T044 [P] [US2] Test unitario del parser SBS (seguros + siniestralidad) contra fixtures en `packages/scrapers/src/sbs/parser.test.ts`
-- [ ] T045 [P] [US2] Test unitario del parser APESEG (SOAT) contra fixtures en `packages/scrapers/src/apeseg/parser.test.ts`
-- [ ] T046 [P] [US2] Contract test de `POST /consultas` devolviendo secciones SEGUROS y SINIESTRALIDAD en `apps/api/tests/consultas.seguros.test.ts`
+- [X] T044 [P] [US2] Test unitario del parser SBS (seguros + siniestralidad) contra fixtures en `packages/scrapers/src/sbs/parser.test.ts`
+- [X] T045 [P] [US2] Test unitario del parser APESEG (SOAT) contra fixtures en `packages/scrapers/src/apeseg/parser.test.ts`
+- [X] T046 [P] [US2] Contract test de `POST /consultas` devolviendo secciones SEGUROS y SINIESTRALIDAD en `apps/api/tests/consultas.seguros.test.ts`
 
 ### Implementation for User Story 2
-- [ ] T047 [P] [US2] Guardar fixtures HTML de SBS y APESEG en `packages/scrapers/src/sbs/__fixtures__/` y `packages/scrapers/src/apeseg/__fixtures__/`
-- [ ] T048 [P] [US2] Implementar parser SBS (SOAT/seguros últimos 5 años + siniestralidad → `InsurancePolicy`/`SiniestroIndicator`) en `packages/scrapers/src/sbs/parser.ts`
-- [ ] T049 [P] [US2] Implementar parser APESEG (estado SOAT) en `packages/scrapers/src/apeseg/parser.ts`
-- [ ] T050 [US2] Implementar scraper SBS con resolución de reCAPTCHA v2 en `packages/scrapers/src/sbs/index.ts` (depende de T018, T019, T048)
-- [ ] T051 [US2] Implementar scraper APESEG en `packages/scrapers/src/apeseg/index.ts` (depende de T019, T049)
-- [ ] T052 [P] [US2] Implementar processor `sbs` en `apps/worker/src/processors/sbs.ts` y registrarlo (depende de T026, T050)
-- [ ] T053 [P] [US2] Implementar processor `apeseg` en `apps/worker/src/processors/apeseg.ts` y registrarlo (depende de T026, T051)
-- [ ] T054 [US2] Implementar `SegurosSectionCard` y la presentación de siniestralidad (StatusPill success/danger) en `apps/web/components/report/SegurosSection.tsx` (depende de T030)
-- [ ] T055 [US2] Integrar las secciones SEGUROS y SINIESTRALIDAD en la página de reporte `apps/web/app/reporte/[placa]/page.tsx`
+- [X] T047 [P] [US2] Guardar fixtures HTML de SBS y APESEG en `packages/scrapers/src/sbs/__fixtures__/` y `packages/scrapers/src/apeseg/__fixtures__/`
+- [X] T048 [P] [US2] Implementar parser SBS (SOAT/seguros últimos 5 años + siniestralidad → `InsurancePolicy`/`SiniestroIndicator`) en `packages/scrapers/src/sbs/parser.ts`
+- [X] T049 [P] [US2] Implementar parser APESEG (estado SOAT) en `packages/scrapers/src/apeseg/parser.ts`
+- [X] T050 [US2] Implementar scraper SBS con resolución de reCAPTCHA v2 en `packages/scrapers/src/sbs/index.ts` (depende de T018, T019, T048)
+- [X] T051 [US2] Implementar scraper APESEG en `packages/scrapers/src/apeseg/index.ts` (depende de T019, T049)
+- [X] T052 [P] [US2] Implementar processor `sbs` en `apps/worker/src/processors/sbs.ts` y registrarlo (depende de T026, T050)
+- [X] T053 [P] [US2] Implementar processor `apeseg` en `apps/worker/src/processors/apeseg.ts` y registrarlo (depende de T026, T051)
+- [X] T054 [US2] Implementar `SegurosSectionCard` y la presentación de siniestralidad (StatusPill success/danger) en `apps/web/components/report/SegurosSection.tsx` (depende de T030)
+- [X] T055 [US2] Integrar las secciones SEGUROS y SINIESTRALIDAD en la página de reporte `apps/web/app/reporte/[placa]/page.tsx`
 
 **Checkpoint**: US1 + US2 funcionan de forma independiente.
 

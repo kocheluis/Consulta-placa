@@ -32,7 +32,17 @@ export interface BuildReportInput {
 export function buildReport(input: BuildReportInput): Report {
   const { id, plateDisplay, generatedAt, sources } = input;
 
-  const sections: SectionResult[] = sources.map((s) => ({
+  // Deduplicar por tipo de sección: varias fuentes pueden cubrir el mismo kind
+  // (p. ej. SBS y APESEG → SEGUROS). Se prefiere AVAILABLE, luego NOT_FOUND.
+  const rank = (status: string): number =>
+    status === SectionStatus.AVAILABLE ? 3 : status === SectionStatus.NOT_FOUND ? 2 : 1;
+  const bestByKind = new Map<string, SourceResult>();
+  for (const s of sources) {
+    const current = bestByKind.get(s.kind);
+    if (!current || rank(s.status) > rank(current.status)) bestByKind.set(s.kind, s);
+  }
+
+  const sections: SectionResult[] = [...bestByKind.values()].map((s) => ({
     kind: s.kind,
     source: s.source,
     status: s.status,

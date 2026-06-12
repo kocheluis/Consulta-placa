@@ -4,6 +4,8 @@ import { CONSULTA_QUEUE, type ConsultaJobData } from '@app/shared';
 import { BrowserPool } from '@app/scrapers';
 import { config } from './config.js';
 import { runSunarp } from './processors/sunarp.js';
+import { runSbs } from './processors/sbs.js';
+import { runApeseg } from './processors/apeseg.js';
 import { assembleAndPersist } from './assemble.js';
 
 const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
@@ -27,8 +29,15 @@ const worker = new Worker(
       600,
     );
 
-    // MVP: solo SUNARP (US1). US2 añadirá los processors SBS/APESEG en paralelo.
-    const sources = await runSunarp(pool, data.plateNormalized);
+    // Scrapers de las fuentes MVP en paralelo; cada uno degrada por separado.
+    const settled = await Promise.allSettled([
+      runSunarp(pool, data.plateNormalized),
+      runSbs(pool, data.plateNormalized),
+      runApeseg(pool, data.plateNormalized),
+    ]);
+    const sources = settled
+      .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof runSunarp>>> => r.status === 'fulfilled')
+      .flatMap((r) => r.value);
 
     const report = await assembleAndPersist(connection, data, sources);
     return { status: report.status };
