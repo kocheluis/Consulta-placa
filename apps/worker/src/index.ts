@@ -7,6 +7,7 @@ import { runSunarp } from './processors/sunarp.js';
 import { runSbs } from './processors/sbs.js';
 import { runApeseg } from './processors/apeseg.js';
 import { assembleAndPersist } from './assemble.js';
+import { demoSources } from './demo.js';
 
 const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
 const pool = new BrowserPool();
@@ -29,15 +30,21 @@ const worker = new Worker(
       600,
     );
 
-    // Scrapers de las fuentes MVP en paralelo; cada uno degrada por separado.
-    const settled = await Promise.allSettled([
-      runSunarp(pool, data.plateNormalized),
-      runSbs(pool, data.plateNormalized),
-      runApeseg(pool, data.plateNormalized),
-    ]);
-    const sources = settled
-      .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof runSunarp>>> => r.status === 'fulfilled')
-      .flatMap((r) => r.value);
+    let sources;
+    if (config.demoMode) {
+      // Modo demo: datos de ejemplo, sin scraping ni CAPTCHA.
+      sources = demoSources(data.plateNormalized);
+    } else {
+      // Scrapers de las fuentes MVP en paralelo; cada uno degrada por separado.
+      const settled = await Promise.allSettled([
+        runSunarp(pool, data.plateNormalized),
+        runSbs(pool, data.plateNormalized),
+        runApeseg(pool, data.plateNormalized),
+      ]);
+      sources = settled
+        .filter((r): r is PromiseFulfilledResult<Awaited<ReturnType<typeof runSunarp>>> => r.status === 'fulfilled')
+        .flatMap((r) => r.value);
+    }
 
     const report = await assembleAndPersist(connection, data, sources);
     return { status: report.status };

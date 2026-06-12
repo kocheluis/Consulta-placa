@@ -46,13 +46,3 @@ export async function buildServer() {
 
   return app;
 }
-
-// Arranque directo (no en tests).
-if (process.argv[1] && import.meta.url === `file://${process.argv[1].replace(/\\/g, '/')}`) {
-  buildServer()
-    .then((app) => app.listen({ port: config.port, host: '0.0.0.0' }))
-    .catch((err) => {
-      console.error(err);
-      process.exit(1);
-    });
-}

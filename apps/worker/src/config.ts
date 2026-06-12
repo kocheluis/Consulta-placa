@@ -5,6 +5,7 @@ const num = (v: string | undefined, def: number): number => {
 
 export const config = {
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  demoMode: (process.env.DEMO_MODE ?? '').toLowerCase() === 'true',
   concurrency: num(process.env.WORKER_CONCURRENCY, 2),
   scraperTimeoutMs: num(process.env.SCRAPER_TIMEOUT_MS, 30000),
   captcha: {
