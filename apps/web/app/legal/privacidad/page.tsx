@@ -17,7 +17,11 @@ export default function PrivacidadPage() {
         </p>
         <p>
           Si eres titular de un vehículo y deseas ejercer tus derechos (acceso, rectificación,
-          cancelación u oposición), puedes escribirnos para tramitar tu solicitud.
+          cancelación u oposición), puedes{' '}
+          <a href="/legal/solicitar-datos" className="text-accent hover:underline">
+            presentar una solicitud
+          </a>
+          .
         </p>
       </div>
     </article>

@@ -73,6 +73,14 @@ export class ConsultaService {
     return { http: 202, body: { jobId, status: 'PENDING', cached: false, report: null } };
   }
 
+  /** Último reporte cacheado de una placa, sin disparar scraping (GET /reportes). */
+  async getCachedReport(
+    placaInput: string,
+  ): Promise<{ report: Report; ageSeconds: number } | null> {
+    const plateNormalized = assertValidPlate(placaInput);
+    return this.cache.get(plateNormalized);
+  }
+
   /** Estado/resultado de un job para polling. */
   async getJob(jobId: string): Promise<ConsultaResponse | null> {
     const state = await this.getJobState(jobId);

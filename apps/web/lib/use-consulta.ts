@@ -9,8 +9,13 @@ type State =
   | { phase: 'done'; report: ConsultaResponse['report']; error: null; cached: boolean }
   | { phase: 'error'; report: null; error: string };
 
-/** Crea la consulta y hace polling del job hasta COMPLETED/PARTIAL/FAILED. */
-export function useConsulta(placa: string, forceRefresh = false): State {
+/**
+ * Crea la consulta y hace polling del job hasta COMPLETED/PARTIAL/FAILED.
+ * `refreshToken` permite re-disparar la consulta (Actualizar/Reintentar);
+ * cuando es > 0 se fuerza el refresco ignorando la caché.
+ */
+export function useConsulta(placa: string, refreshToken = 0): State {
+  const forceRefresh = refreshToken > 0;
   const [state, setState] = useState<State>({ phase: 'loading', report: null, error: null });
 
   useEffect(() => {
@@ -51,7 +56,7 @@ export function useConsulta(placa: string, forceRefresh = false): State {
       cancelled = true;
       clearTimeout(timer);
     };
-  }, [placa, forceRefresh]);
+  }, [placa, forceRefresh, refreshToken]);
 
   return state;
 }

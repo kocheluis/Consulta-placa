@@ -9,6 +9,9 @@ import {
 } from './services/consulta.js';
 import { registerConsultaRoutes } from './routes/consultas.js';
 import { registerHealthRoute } from './routes/health.js';
+import { registerReporteRoutes } from './routes/reportes.js';
+import { registerSolicitudRoutes } from './routes/solicitudes.js';
+import { registerLegalRoutes } from './routes/legal.js';
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -30,6 +33,9 @@ export async function buildServer() {
 
   registerHealthRoute(app);
   registerConsultaRoutes(app, service);
+  registerReporteRoutes(app, service);
+  registerSolicitudRoutes(app);
+  registerLegalRoutes(app);
 
   app.addHook('onClose', async () => {
     await queue.close();

@@ -147,17 +147,17 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 **Independent Test**: Generar un reporte y verificar secciones "Próximamente" (no error), disclaimer visible, y que una fuente caída produce reporte PARCIAL sin invalidar el resto.
 
 ### Tests for User Story 3 ⚠️
-- [ ] T056 [P] [US3] Contract test: el reporte siempre incluye secciones COMING_SOON + disclaimer, y `status=PARTIAL` ante sección UNAVAILABLE, en `apps/api/tests/consultas.consolidado.test.ts`
+- [X] T056 [P] [US3] Contract test: el reporte siempre incluye secciones COMING_SOON + disclaimer, y `status=PARTIAL` ante sección UNAVAILABLE, en `apps/api/tests/consultas.consolidado.test.ts`
 - [ ] T057 [P] [US3] e2e Playwright: reporte muestra "Próximamente", disclaimer y degradación parcial en `apps/web/tests/consolidado.spec.ts`
 
 ### Implementation for User Story 3
 - [X] T058 [US3] Asegurar que el ensamblado del reporte añade siempre las secciones COMING_SOON (PAPELETAS, GNV, DEUDA_BANCARIA, PNP) y marca `status=PARTIAL` si alguna sección MVP queda UNAVAILABLE, en `apps/worker/src/assemble.ts` (FR-032, FR-034)
 - [X] T059 [US3] Incluir el texto de `disclaimer` en la respuesta del reporte en `apps/api/src/services/consulta.ts` (FR-033)
-- [ ] T060 [P] [US3] Implementar `ComingSoonSection` (tarjeta atenuada) y la grilla de "Próximamente" en `apps/web/components/report/ComingSoonSection.tsx`
-- [ ] T061 [P] [US3] Implementar `Disclaimer` y el encabezado de estado del reporte (COMPLETE/PARTIAL) en `apps/web/components/report/Disclaimer.tsx` y el header de la página
-- [ ] T062 [US3] Implementar el botón "Reintentar" en secciones UNAVAILABLE en la página de reporte (FR-034)
-- [ ] T063 [P] [US3] Implementar páginas legales `GET /legal/terms` y `/legal/privacy` (API) y vistas en `apps/web/app/legal/` (FR-051)
-- [ ] T064 [US3] Implementar `POST /api/v1/solicitudes-datos` + persistencia `DataSubjectRequest` y formulario en `apps/web/app/legal/solicitar-datos/` (FR-052)
+- [X] T060 [P] [US3] Implementar `ComingSoonSection` (tarjeta atenuada) y la grilla de "Próximamente" en `apps/web/components/report/ComingSoonSection.tsx`
+- [X] T061 [P] [US3] Implementar `Disclaimer` y el encabezado de estado del reporte (COMPLETE/PARTIAL) en `apps/web/components/report/Disclaimer.tsx` y el header de la página
+- [X] T062 [US3] Implementar el botón "Reintentar" en secciones UNAVAILABLE en la página de reporte (FR-034)
+- [X] T063 [P] [US3] Implementar páginas legales `GET /legal/terms` y `/legal/privacy` (API) y vistas en `apps/web/app/legal/` (FR-051)
+- [X] T064 [US3] Implementar `POST /api/v1/solicitudes-datos` + persistencia `DataSubjectRequest` y formulario en `apps/web/app/legal/solicitar-datos/` (FR-052)
 
 **Checkpoint**: US1 + US2 + US3 — reporte consolidado completo y honesto sobre su alcance.
 
@@ -170,15 +170,15 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 **Independent Test**: Consultar la misma placa dos veces → 2ª respuesta <3 s, marcada con antigüedad; `forceRefresh` vuelve a scrapear.
 
 ### Tests for User Story 4 ⚠️
-- [ ] T065 [P] [US4] Test de la lógica de caché read-through y TTL por sección en `apps/api/src/services/cache.test.ts`
-- [ ] T066 [P] [US4] Contract test: 2ª consulta devuelve `200 cached:true` con `ageSeconds`; `forceRefresh` ignora caché, en `apps/api/tests/consultas.cache.test.ts`
+- [X] T065 [P] [US4] Test de la lógica de caché read-through y TTL por sección en `apps/api/src/services/cache.test.ts`
+- [X] T066 [P] [US4] Contract test: 2ª consulta devuelve `200 cached:true` con `ageSeconds`; `forceRefresh` ignora caché, en `apps/api/tests/consultas.cache.test.ts`
 
 ### Implementation for User Story 4
-- [ ] T067 [US4] Añadir el camino read-through en la orquestación: cache-hit vigente → responder `200` con reporte; miss → encolar, en `apps/api/src/services/consulta.ts` (FR-042) (depende de T021, T024)
-- [ ] T068 [US4] Escribir en caché las secciones/reporte tras el ensamblado con TTL por tipo, en `apps/worker/src/assemble.ts`
-- [ ] T069 [US4] Implementar `forceRefresh` (invalida claves de la placa antes de encolar) en `apps/api/src/services/consulta.ts` (FR-043)
-- [ ] T070 [US4] Implementar `GET /api/v1/reportes/{placa}` (último reporte cacheado, sin scraping) en `apps/api/src/routes/reportes.ts`
-- [ ] T071 [P] [US4] Mostrar antigüedad del dato y botón "Actualizar" en la web `apps/web/components/report/SourceBadge.tsx` y la página de reporte
+- [X] T067 [US4] Añadir el camino read-through en la orquestación: cache-hit vigente → responder `200` con reporte; miss → encolar, en `apps/api/src/services/consulta.ts` (FR-042) (depende de T021, T024)
+- [X] T068 [US4] Escribir en caché las secciones/reporte tras el ensamblado con TTL por tipo, en `apps/worker/src/assemble.ts`
+- [X] T069 [US4] Implementar `forceRefresh` (invalida claves de la placa antes de encolar) en `apps/api/src/services/consulta.ts` (FR-043)
+- [X] T070 [US4] Implementar `GET /api/v1/reportes/{placa}` (último reporte cacheado, sin scraping) en `apps/api/src/routes/reportes.ts`
+- [X] T071 [P] [US4] Mostrar antigüedad del dato y botón "Actualizar" en la web `apps/web/components/report/SourceBadge.tsx` y la página de reporte
 
 **Checkpoint**: Las 4 historias funcionan de forma independiente.
 
@@ -195,7 +195,7 @@ description: "Task list for Consulta de Historial Vehicular por Placa (Perú)"
 - [ ] T076 [P] Configurar Dockerfiles de `apps/api` y `apps/worker` (con Chromium) para despliegue
 - [ ] T077 [P] Documentar el scaffolding de `apps/mobile` (Expo) que reutiliza la API, en `docs/mobile.md` (FR-061, fuera de alcance de implementación)
 - [ ] T078 Ejecutar la validación completa de [quickstart.md](./quickstart.md) (escenarios V1–V8)
-- [ ] T079 [P] README raíz con setup, arquitectura y comandos
+- [X] T079 [P] README raíz con setup, arquitectura y comandos
 
 ---
 

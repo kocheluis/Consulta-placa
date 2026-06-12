@@ -1,8 +1,9 @@
 'use client';
 
 import { useParams } from 'next/navigation';
+import { useState } from 'react';
 import Link from 'next/link';
-import { Car, FileText, Activity, ArrowLeft } from 'lucide-react';
+import { Car, FileText, Activity, ArrowLeft, RefreshCw } from 'lucide-react';
 import type { Report, SectionResult, InsurancePolicy, SiniestroIndicator } from '@app/shared';
 import { formatPlateDisplay } from '@app/shared';
 import { useConsulta } from '@/lib/use-consulta';
@@ -14,14 +15,27 @@ import { ComingSoonSection } from '@/components/report/ComingSoonSection';
 export default function ReportePage() {
   const params = useParams<{ placa: string }>();
   const placa = (params.placa ?? '').toUpperCase();
-  const state = useConsulta(placa);
+  const [refreshToken, setRefreshToken] = useState(0);
+  const state = useConsulta(placa, refreshToken);
+  const actualizar = () => setRefreshToken((n) => n + 1);
 
   return (
     <div className="mx-auto max-w-3xl px-4 py-8">
-      <Link href="/" className="inline-flex items-center gap-1 text-sm text-accent hover:underline mb-4">
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        Nueva consulta
-      </Link>
+      <div className="flex items-center justify-between mb-4">
+        <Link href="/" className="inline-flex items-center gap-1 text-sm text-accent hover:underline">
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Nueva consulta
+        </Link>
+        {state.phase === 'done' && (
+          <button
+            onClick={actualizar}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground transition-colors duration-200 hover:bg-background cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+          >
+            <RefreshCw className="h-4 w-4" aria-hidden="true" />
+            Actualizar
+          </button>
+        )}
+      </div>
 
       {state.phase === 'loading' && <LoadingSkeleton placa={placa} />}
       {state.phase === 'error' && (
@@ -29,12 +43,25 @@ export default function ReportePage() {
           {state.error}
         </div>
       )}
-      {state.phase === 'done' && (state.report ? <ReportView report={state.report} /> : <EmptyState placa={placa} />)}
+      {state.phase === 'done' &&
+        (state.report ? (
+          <ReportView report={state.report} cached={state.cached} onRetry={actualizar} />
+        ) : (
+          <EmptyState placa={placa} />
+        ))}
     </div>
   );
 }
 
-function ReportView({ report }: { report: Report }) {
+function ReportView({
+  report,
+  cached,
+  onRetry,
+}: {
+  report: Report;
+  cached: boolean;
+  onRetry: () => void;
+}) {
   const v = report.vehicle;
   const registral = report.sections.find((s) => s.kind === 'REGISTRAL');
   const seguros = report.sections.find((s) => s.kind === 'SEGUROS');
@@ -51,6 +78,11 @@ function ReportView({ report }: { report: Report }) {
           {v && (
             <p className="text-muted">
               {[v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') || 'Vehículo'}
+            </p>
+          )}
+          {cached && (
+            <p className="mt-1 text-xs text-muted">
+              Datos de una consulta previa. Pulsa «Actualizar» para volver a consultar las fuentes.
             </p>
           )}
         </div>
@@ -78,7 +110,7 @@ function ReportView({ report }: { report: Report }) {
               {v.owner && <DataRow label="Titular" value={v.owner.name} />}
             </dl>
           ) : (
-            <Unavailable status={registral.status} />
+            <Unavailable status={registral.status} onRetry={onRetry} />
           )}
           {v?.owner && (
             <p className="mt-2 text-xs text-muted">{v.owner.note}</p>
@@ -94,7 +126,7 @@ function ReportView({ report }: { report: Report }) {
           source={seguros.source}
           fetchedAt={seguros.fetchedAt}
         >
-          <SegurosBody section={seguros} />
+          <SegurosBody section={seguros} onRetry={onRetry} />
         </SectionCard>
       )}
 
@@ -106,7 +138,7 @@ function ReportView({ report }: { report: Report }) {
           source={siniestro.source}
           fetchedAt={siniestro.fetchedAt}
         >
-          <SiniestroBody section={siniestro} />
+          <SiniestroBody section={siniestro} onRetry={onRetry} />
         </SectionCard>
       )}
 
@@ -127,10 +159,10 @@ function ReportView({ report }: { report: Report }) {
   );
 }
 
-function SegurosBody({ section }: { section: SectionResult }) {
-  if (section.status !== 'AVAILABLE') return <Unavailable status={section.status} />;
+function SegurosBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== 'AVAILABLE') return <Unavailable status={section.status} onRetry={onRetry} />;
   const p = section.payload as InsurancePolicy | undefined;
-  if (!p) return <Unavailable status="UNAVAILABLE" />;
+  if (!p) return <Unavailable status="UNAVAILABLE" onRetry={onRetry} />;
   return (
     <div className="space-y-2">
       {p.hasActiveSoat ? (
@@ -147,10 +179,10 @@ function SegurosBody({ section }: { section: SectionResult }) {
   );
 }
 
-function SiniestroBody({ section }: { section: SectionResult }) {
-  if (section.status !== 'AVAILABLE') return <Unavailable status={section.status} />;
+function SiniestroBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== 'AVAILABLE') return <Unavailable status={section.status} onRetry={onRetry} />;
   const s = section.payload as SiniestroIndicator | undefined;
-  if (!s) return <Unavailable status="UNAVAILABLE" />;
+  if (!s) return <Unavailable status="UNAVAILABLE" onRetry={onRetry} />;
   return s.hasSiniestro ? (
     <StatusPill tone="danger">Registra siniestralidad (últimos {s.periodYears} años)</StatusPill>
   ) : (
@@ -158,14 +190,23 @@ function SiniestroBody({ section }: { section: SectionResult }) {
   );
 }
 
-function Unavailable({ status }: { status: string }) {
+function Unavailable({ status, onRetry }: { status: string; onRetry?: () => void }) {
   if (status === 'NOT_FOUND') {
     return <p className="text-sm text-muted">Sin resultados en la fuente.</p>;
   }
   return (
-    <p className="text-sm text-warning-fg">
-      Información no disponible en este momento. Vuelve a intentarlo más tarde.
-    </p>
+    <div className="space-y-2">
+      <p className="text-sm text-warning-fg">Información no disponible en este momento.</p>
+      {onRetry && (
+        <button
+          onClick={onRetry}
+          className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-1.5 text-sm text-foreground transition-colors duration-200 hover:bg-background cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
+        >
+          <RefreshCw className="h-4 w-4" aria-hidden="true" />
+          Reintentar
+        </button>
+      )}
+    </div>
   );
 }
 
