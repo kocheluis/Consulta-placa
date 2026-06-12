@@ -8,6 +8,7 @@ const num = (v: string | undefined, def: number): number => {
 export const config = {
   port: num(process.env.API_PORT, 3001),
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
+  jwtSecret: process.env.JWT_SECRET ?? 'dev-secret-cambiar-en-produccion',
   rateLimitPerMinute: num(process.env.RATE_LIMIT_PER_MINUTE, 10),
   rateLimitScrapingPerMinute: num(process.env.RATE_LIMIT_SCRAPING_PER_MINUTE, 3),
   ttl: {

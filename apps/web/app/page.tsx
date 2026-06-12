@@ -1,10 +1,10 @@
-import { FileText, ShieldAlert, Car } from 'lucide-react';
-import { PlateInput } from '@/components/PlateInput';
+import { Search, Sparkles, ShieldCheck } from 'lucide-react';
+import { PlateSearch } from '@/components/PlateSearch';
 
 export default function HomePage() {
   return (
     <div className="mx-auto max-w-5xl px-4">
-      <section className="py-12 sm:py-20 text-center">
+      <section className="py-12 sm:py-16 text-center">
         <h1 className="text-3xl sm:text-4xl font-semibold text-foreground">
           Conoce el historial de un vehículo antes de comprarlo
         </h1>
@@ -13,39 +13,40 @@ export default function HomePage() {
           vehículo peruano.
         </p>
 
-        <div className="mt-8 max-w-xl mx-auto">
-          <PlateInput />
-          <p className="mt-3 text-sm text-muted">Datos de SUNARP · SBS · SOAT</p>
+        <div className="mt-8 max-w-xl mx-auto text-left">
+          <PlateSearch />
         </div>
       </section>
 
-      <section className="grid gap-4 sm:grid-cols-3 pb-16">
-        <Feature
-          icon={<Car className="h-6 w-6 text-accent" aria-hidden="true" />}
-          title="Datos registrales"
-          desc="Titular, marca, modelo, año, color y números de serie/VIN/motor (SUNARP)."
-        />
-        <Feature
-          icon={<FileText className="h-6 w-6 text-accent" aria-hidden="true" />}
-          title="Seguro y SOAT"
-          desc="Si cuenta con SOAT vigente y su historial de siniestralidad (SBS)."
-        />
-        <Feature
-          icon={<ShieldAlert className="h-6 w-6 text-danger" aria-hidden="true" />}
-          title="Alerta de robo"
-          desc="Te avisamos si el vehículo figura reportado como robado."
-        />
+      <section className="grid gap-4 sm:grid-cols-2 pb-16">
+        <div className="rounded-xl border border-border bg-surface p-6 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Search className="h-6 w-6 text-primary" aria-hidden="true" />
+            <h2 className="font-heading font-semibold text-foreground">Consulta guiada · Gratis</h2>
+          </div>
+          <p className="text-sm text-muted">
+            Te damos los enlaces oficiales (SUNARP, SBS, SOAT, MTC, SUTRAN, SAT). Abres cada uno y
+            consultas tú mismo en la fuente. Sin costo, 100% oficial.
+          </p>
+        </div>
+        <div className="rounded-xl border border-primary/30 bg-primary/5 p-6 shadow-sm">
+          <div className="mb-3 flex items-center gap-2">
+            <Sparkles className="h-6 w-6 text-primary" aria-hidden="true" />
+            <h2 className="font-heading font-semibold text-foreground">
+              Reporte automático · PRO
+            </h2>
+          </div>
+          <p className="text-sm text-muted">
+            Un solo reporte consolidado con todos los datos resueltos automáticamente. Requiere una
+            cuenta PRO activa.
+          </p>
+        </div>
       </section>
-    </div>
-  );
-}
 
-function Feature({ icon, title, desc }: { icon: React.ReactNode; title: string; desc: string }) {
-  return (
-    <div className="rounded-xl border border-border bg-surface p-5 shadow-sm">
-      <div className="mb-3">{icon}</div>
-      <h2 className="font-heading font-semibold text-foreground">{title}</h2>
-      <p className="mt-1 text-sm text-muted">{desc}</p>
+      <section className="pb-16 flex items-center justify-center gap-2 text-sm text-muted">
+        <ShieldCheck className="h-5 w-5 text-accent" aria-hidden="true" />
+        Información referencial de portales públicos oficiales.
+      </section>
     </div>
   );
 }

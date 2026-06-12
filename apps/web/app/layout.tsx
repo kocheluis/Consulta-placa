@@ -19,7 +19,10 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               <ShieldCheck className="h-6 w-6" aria-hidden="true" />
               <span>ConsultaPlaca</span>
             </Link>
-            <nav className="text-sm">
+            <nav className="text-sm flex items-center gap-4">
+              <Link href="/cuenta" className="hover:underline">
+                Cuenta
+              </Link>
               <Link href="/legal/privacidad" className="hover:underline">
                 Legal
               </Link>

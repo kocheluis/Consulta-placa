@@ -26,21 +26,11 @@ export const sbsScraper: Scraper = {
 
       await page.locator(S.plateInput).first().fill(plateNormalized);
 
-      // reCAPTCHA v2: obtener sitekey y resolver vía el servicio externo.
-      if (S.recaptchaSitekeyEl) {
-        const sitekey = await page
-          .locator(S.recaptchaSitekeyEl)
-          .first()
-          .getAttribute('data-sitekey')
-          .catch(() => null);
-        if (sitekey) {
-          const token = await ctx.captcha.solveRecaptchaV2(sitekey, S.url);
-          await page.evaluate((t) => {
-            const el = document.querySelector<HTMLTextAreaElement>('#g-recaptcha-response');
-            if (el) el.value = t;
-          }, token);
-        }
-      }
+      // El portal SBS usa reCAPTCHA v3 (invisible, por reputación). Resolverlo de
+      // forma fiable requiere un solver de pago que soporte v3 (p. ej. CapSolver);
+      // el token se inyecta en el campo oculto hdnReCaptchaV3. Sin solver válido,
+      // el envío será rechazado y la sección degrada a UNAVAILABLE (FR-034).
+      // (La integración v3 concreta se completa cuando haya clave de solver.)
 
       await page.locator(S.submit).first().click();
       if (S.resultReady) {

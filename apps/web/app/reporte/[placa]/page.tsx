@@ -38,7 +38,8 @@ export default function ReportePage() {
       </div>
 
       {state.phase === 'loading' && <LoadingSkeleton placa={placa} />}
-      {state.phase === 'error' && (
+      {state.phase === 'error' && state.needsPro && <ProRequired placa={placa} />}
+      {state.phase === 'error' && !state.needsPro && (
         <div className="rounded-xl border border-warning bg-warning-bg p-5 text-warning-fg" role="alert">
           {state.error}
         </div>
@@ -206,6 +207,32 @@ function Unavailable({ status, onRetry }: { status: string; onRetry?: () => void
           Reintentar
         </button>
       )}
+    </div>
+  );
+}
+
+function ProRequired({ placa }: { placa: string }) {
+  return (
+    <div className="rounded-xl border border-primary/30 bg-primary/5 p-6">
+      <h2 className="font-heading font-semibold text-lg text-foreground">Reporte automático · PRO</h2>
+      <p className="mt-2 text-sm text-muted">
+        El reporte consolidado automático requiere una cuenta PRO activa. Mientras tanto, puedes
+        consultar gratis en los portales oficiales con la consulta guiada.
+      </p>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Link
+          href="/cuenta"
+          className="inline-flex items-center rounded-lg bg-primary px-5 py-2.5 font-medium text-white transition-colors duration-200 hover:bg-primary-600 cursor-pointer"
+        >
+          Iniciar sesión / Registrarse
+        </Link>
+        <Link
+          href={`/guiada/${placa}`}
+          className="inline-flex items-center rounded-lg border border-primary px-5 py-2.5 font-medium text-primary transition-colors duration-200 hover:bg-background cursor-pointer"
+        >
+          Consulta guiada · Gratis
+        </Link>
+      </div>
     </div>
   );
 }

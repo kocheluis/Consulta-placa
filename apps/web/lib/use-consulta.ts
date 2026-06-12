@@ -2,12 +2,12 @@
 
 import { useEffect, useState } from 'react';
 import type { ConsultaResponse } from '@app/shared';
-import { crearConsulta, obtenerJob } from './api';
+import { crearConsulta, obtenerJob, ApiError } from './api';
 
 type State =
   | { phase: 'loading'; report: null; error: null }
   | { phase: 'done'; report: ConsultaResponse['report']; error: null; cached: boolean }
-  | { phase: 'error'; report: null; error: string };
+  | { phase: 'error'; report: null; error: string; needsPro: boolean };
 
 /**
  * Crea la consulta y hace polling del job hasta COMPLETED/PARTIAL/FAILED.
@@ -29,12 +29,12 @@ export function useConsulta(placa: string, refreshToken = 0): State {
         if (res.status === 'COMPLETED' || res.status === 'PARTIAL') {
           setState({ phase: 'done', report: res.report, error: null, cached: res.cached });
         } else if (res.status === 'FAILED') {
-          setState({ phase: 'error', report: null, error: 'La consulta falló. Intenta de nuevo.' });
+          setState({ phase: 'error', report: null, error: 'La consulta falló. Intenta de nuevo.', needsPro: false });
         } else {
           timer = setTimeout(() => poll(jobId), 1500);
         }
       } catch (e) {
-        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message });
+        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message, needsPro: e instanceof ApiError && e.needsPro });
       }
     };
 
@@ -48,7 +48,7 @@ export function useConsulta(placa: string, refreshToken = 0): State {
           poll(res.jobId);
         }
       } catch (e) {
-        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message });
+        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message, needsPro: e instanceof ApiError && e.needsPro });
       }
     })();
 

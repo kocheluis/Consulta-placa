@@ -1,47 +1,55 @@
 /**
  * Selectores de los portales oficiales, centralizados para poder ajustarlos en
- * un solo lugar cuando cambie el DOM (los portales no exponen su estructura
- * públicamente y pueden cambiar sin aviso).
+ * un solo lugar cuando cambie el DOM.
  *
- * ⚠️ Los valores actuales son TENTATIVOS. Ejecuta el script de descubrimiento
- * (`npm run -w @app/worker discover-selectors`) una vez con un navegador real
- * para capturar los selectores verdaderos de cada portal y reemplazarlos aquí.
- * Cada campo acepta una lista de selectores separados por coma (CSS), de modo que
- * el scraper usa el primero que exista.
+ * Valores REALES capturados con el script de descubrimiento (2026-06). Notas
+ * importantes sobre la protección anti-bot real de cada portal:
+ *  - SUNARP: Angular + Ant Design, protegido con **Cloudflare Turnstile**
+ *    (cf-turnstile-response). NO es CAPTCHA de imagen → el OCR local no aplica;
+ *    requiere un solver que soporte Turnstile (p. ej. CapSolver) o un navegador
+ *    real que pase el desafío "managed".
+ *  - SBS: ASP.NET WebForms (__VIEWSTATE/__EVENTVALIDATION) + **reCAPTCHA v3**
+ *    (hdnReCaptchaV3, invisible y por reputación) → solver de pago.
+ *  - APESEG: el formulario real vive en un IFRAME (webapp.apeseg.org.pe). Hay
+ *    que conducir el contenido del iframe, no la página contenedora.
  */
 export interface PortalSelectors {
   url: string;
   plateInput: string;
   submit: string;
-  /** CAPTCHA de imagen (SUNARP). */
+  /** CAPTCHA de imagen (no aplica a estos portales actualmente). */
   captchaImage?: string;
   captchaInput?: string;
-  /** reCAPTCHA v2 (SBS): contenedor con data-sitekey. */
-  recaptchaSitekeyEl?: string;
+  /** Cloudflare Turnstile (SUNARP). */
+  turnstileResponse?: string;
+  /** reCAPTCHA (SBS): hidden + textarea g-recaptcha-response. */
+  recaptchaResponse?: string;
+  /** Frame del formulario real (APESEG). */
+  iframe?: string;
   /** Contenedor del resultado, para esperar tras enviar. */
   resultReady?: string;
 }
 
 export const PORTAL_SELECTORS: Record<'sunarp' | 'sbs' | 'apeseg', PortalSelectors> = {
   sunarp: {
-    url: 'https://www.consultavehicular.sunarp.gob.pe/',
-    plateInput: 'input[name="nroPlaca"], #nroPlaca, input[type="text"]',
-    captchaImage: 'img.captcha, #imgCaptcha, img[alt*="captcha" i]',
-    captchaInput: 'input[name="codigoCaptcha"], #codigoCaptcha',
-    submit: 'button[type="submit"], #btnBuscar, button:has-text("Consultar")',
-    resultReady: '.resultado-consulta, table.datos-vehiculo',
+    url: 'https://consultavehicular.sunarp.gob.pe/',
+    plateInput: '#nroPlaca',
+    submit: 'button.btn-sunarp-green, button:has-text("Realizar Busqueda")',
+    turnstileResponse: 'input[name="cf-turnstile-response"]',
+    resultReady: '.resultado, .ant-card, nz-table',
   },
   sbs: {
     url: 'https://servicios.sbs.gob.pe/reportesoat/',
-    plateInput: 'input[name="placa"], #placa, input[type="text"]',
-    recaptchaSitekeyEl: '.g-recaptcha, [data-sitekey]',
-    submit: 'button[type="submit"], #btnConsultar, button:has-text("Consultar")',
-    resultReady: '.reporte-soat, table.poliza',
+    plateInput: '#ctl00_MainBodyContent_txtPlaca',
+    submit: '#ctl00_MainBodyContent_btnIngresarPla',
+    recaptchaResponse: '#ctl00_MainBodyContent_hdnReCaptchaV3',
+    resultReady: '#ctl00_MainBodyContent_pnlResultado, table',
   },
   apeseg: {
     url: 'https://www.apeseg.org.pe/consultas-soat/',
-    plateInput: 'input[name="placa"], #placa, input[type="text"]',
-    submit: 'button[type="submit"], #btnBuscar, button:has-text("Buscar")',
-    resultReady: '.apeseg-soat, table',
+    iframe: 'iframe[src*="webapp.apeseg.org.pe"]',
+    plateInput: 'input[type="text"], input[name*="placa" i]',
+    submit: 'button[type="submit"], button:has-text("Consultar")',
+    resultReady: 'table, .resultado',
   },
 };

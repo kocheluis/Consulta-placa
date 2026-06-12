@@ -151,6 +151,16 @@ model AuditLog {
   @@index([plateNormalized])
 }
 
+/// Cuenta de usuario. El reporte automático (PRO) requiere isPro && isActive.
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  passwordHash String
+  isPro        Boolean  @default(false)
+  isActive     Boolean  @default(false)
+  createdAt    DateTime @default(now())
+}
+
 /// Solicitud relacionada con datos personales (FR-052).
 model DataSubjectRequest {
   id             String            @id @default(uuid())

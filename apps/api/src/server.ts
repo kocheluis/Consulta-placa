@@ -1,6 +1,7 @@
 import Fastify from 'fastify';
 import cors from '@fastify/cors';
 import helmet from '@fastify/helmet';
+import jwt from '@fastify/jwt';
 import rateLimit from '@fastify/rate-limit';
 import { config } from './config.js';
 import {
@@ -13,12 +14,14 @@ import { registerHealthRoute } from './routes/health.js';
 import { registerReporteRoutes } from './routes/reportes.js';
 import { registerSolicitudRoutes } from './routes/solicitudes.js';
 import { registerLegalRoutes } from './routes/legal.js';
+import { registerAuthRoutes, requirePro } from './routes/auth.js';
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
 
   await app.register(helmet);
   await app.register(cors, { origin: true });
+  await app.register(jwt, { secret: config.jwtSecret });
   await app.register(rateLimit, {
     max: config.rateLimitPerMinute,
     timeWindow: '1 minute',
@@ -34,7 +37,9 @@ export async function buildServer() {
   const service = new ConsultaService(redis, queue);
 
   registerHealthRoute(app, redis);
-  registerConsultaRoutes(app, service);
+  registerAuthRoutes(app);
+  // El reporte automático (consultas) queda detrás del gate PRO.
+  registerConsultaRoutes(app, service, requirePro);
   registerReporteRoutes(app, service);
   registerSolicitudRoutes(app);
   registerLegalRoutes(app);

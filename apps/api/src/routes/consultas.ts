@@ -1,12 +1,19 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { ConsultaRequestSchema, InvalidPlateError } from '@app/shared';
 import { config } from '../config.js';
 import type { ConsultaService } from '../services/consulta.js';
 
-export function registerConsultaRoutes(app: FastifyInstance, service: ConsultaService): void {
+export function registerConsultaRoutes(
+  app: FastifyInstance,
+  service: ConsultaService,
+  guard?: preHandlerHookHandler,
+): void {
+  const preHandler = guard ? [guard] : [];
+
   app.post(
     '/api/v1/consultas',
     {
+      preHandler,
       config: {
         // Límite más estricto: crear una consulta puede disparar scraping (FR-003).
         rateLimit: { max: config.rateLimitScrapingPerMinute, timeWindow: '1 minute' },
@@ -37,7 +44,7 @@ export function registerConsultaRoutes(app: FastifyInstance, service: ConsultaSe
     }
   });
 
-  app.get<{ Params: { jobId: string } }>('/api/v1/consultas/:jobId', async (request, reply) => {
+  app.get<{ Params: { jobId: string } }>('/api/v1/consultas/:jobId', { preHandler }, async (request, reply) => {
     const result = await service.getJob(request.params.jobId);
     if (!result) {
       return reply.status(404).send({ error: 'NOT_FOUND', message: 'Job inexistente o expirado' });

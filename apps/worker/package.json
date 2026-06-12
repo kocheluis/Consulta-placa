@@ -9,7 +9,8 @@
     "start": "node dist/index.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "purge": "tsx src/jobs/purge-owners.ts",
-    "discover-selectors": "tsx ../../packages/scrapers/src/discover.ts"
+    "discover-selectors": "tsx ../../packages/scrapers/src/discover.ts",
+    "probe-sunarp": "tsx ../../packages/scrapers/src/probe.ts"
   },
   "dependencies": {
     "@app/db": "*",
