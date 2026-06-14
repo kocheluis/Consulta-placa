@@ -11,6 +11,7 @@ export type LinkCategory =
   | 'REGISTRAL'
   | 'SEGUROS'
   | 'REVISION_TECNICA'
+  | 'TRANSPORTE'
   | 'GNV'
   | 'PAPELETAS'
   | 'IMPUESTO_VEHICULAR'
@@ -82,6 +83,19 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     url: 'https://portal.mtc.gob.pe/reportedgtt/form/frmConsultaCITV.aspx',
     description: 'Certificados de inspección técnica vehicular y su vigencia.',
     scope: 'Nacional',
+  },
+
+  // ── Habilitación de transporte / taxi ──────────────────────────────────────
+  {
+    id: 'atu',
+    name: 'Consulta de Vehículos (taxi / transporte)',
+    entity: 'ATU',
+    category: 'TRANSPORTE',
+    url: 'https://sistemas.atu.gob.pe/ConsultaVehiculo',
+    description:
+      'Verifica si el vehículo está o estuvo habilitado como taxi/transporte urbano (modalidad, titular y conductores). Útil para detectar autos usados como taxi (mayor desgaste).',
+    scope: 'Lima y Callao',
+    note: 'Requiere placa y código de verificación (captcha).',
   },
 
   // ── GNV (gas natural vehicular) ────────────────────────────────────────────
@@ -250,15 +264,6 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     scope: 'Lima',
     note: 'En el menú "Consultas en línea" toca "Captura de vehículos".',
   },
-  {
-    id: 'satica-captura',
-    name: 'Vehículos con Orden de Captura',
-    entity: 'SAT de Ica',
-    category: 'CAPTURA',
-    url: 'https://m.satica.gob.pe/consultaordencaptura.php',
-    description: 'Verifica si el vehículo tiene orden de captura en Ica.',
-    scope: 'Ica',
-  },
 
   // ── Infracciones / récord ──────────────────────────────────────────────────
   {
@@ -286,6 +291,7 @@ export const CATEGORY_LABELS: Record<LinkCategory, string> = {
   REGISTRAL: 'Datos registrales y transferencias',
   SEGUROS: 'Seguro (SOAT) y siniestros',
   REVISION_TECNICA: 'Revisión técnica',
+  TRANSPORTE: 'Habilitación de transporte / taxi',
   GNV: 'GNV (gas vehicular)',
   PAPELETAS: 'Papeletas (por región)',
   IMPUESTO_VEHICULAR: 'Impuesto vehicular',
@@ -298,6 +304,7 @@ export const CATEGORY_ORDER: LinkCategory[] = [
   'REGISTRAL',
   'SEGUROS',
   'REVISION_TECNICA',
+  'TRANSPORTE',
   'GNV',
   'PAPELETAS',
   'IMPUESTO_VEHICULAR',
