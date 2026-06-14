@@ -1,4 +1,4 @@
-export const metadata = { title: 'Política de privacidad — ConsultaPlaca' };
+export const metadata = { title: 'Política de privacidad — PlacaPe' };
 
 export default function PrivacidadPage() {
   return (

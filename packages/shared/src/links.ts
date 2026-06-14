@@ -120,6 +120,17 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     scope: 'Nacional',
   },
   {
+    id: 'sutran-cinemometro',
+    name: 'Papeletas por Cinemómetro (radar)',
+    entity: 'SUTRAN',
+    category: 'PAPELETAS',
+    url: 'https://webexterno.sutran.gob.pe/WebExterno/Pages/frmPapeletasCinemometro.aspx',
+    description:
+      'Papeletas por exceso de velocidad detectadas por radar/cinemómetro en carreteras nacionales.',
+    scope: 'Nacional',
+    note: 'Requiere placa y documento (DNI/RUC) + captcha.',
+  },
+  {
     id: 'sat-lima',
     name: 'Consulta de Papeletas',
     entity: 'SAT de Lima',

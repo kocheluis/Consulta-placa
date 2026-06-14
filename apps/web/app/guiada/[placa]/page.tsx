@@ -144,7 +144,7 @@ export default async function GuiadaPage({ params }: { params: Promise<{ placa: 
       </div>
 
       <p className="mt-10 text-xs text-muted border-t border-border pt-4">
-        Los enlaces dirigen a portales públicos oficiales (.gob.pe y APESEG). ConsultaPlaca no
+        Los enlaces dirigen a portales públicos oficiales (.gob.pe y APESEG). PlacaPe no
         almacena ni intermedia estas consultas en el modo gratuito.
       </p>
     </div>

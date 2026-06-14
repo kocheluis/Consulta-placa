@@ -43,7 +43,10 @@ export default function HomePage() {
       />
 
       <section className="py-12 sm:py-16 text-center">
-        <h1 className="text-3xl sm:text-4xl font-semibold text-foreground">
+        <p className="font-heading text-sm font-semibold tracking-wide text-accent">
+          Antes de comprar, revisa la placa
+        </p>
+        <h1 className="mt-2 text-3xl sm:text-4xl font-semibold text-foreground">
           Consulta de placa e historial vehicular en Perú
         </h1>
         <p className="mt-4 text-lg text-muted max-w-2xl mx-auto">
@@ -54,6 +57,9 @@ export default function HomePage() {
         <div className="mt-8 max-w-xl mx-auto text-left">
           <PlateSearch />
         </div>
+        <p className="mt-4 text-xs text-muted">
+          Fuentes oficiales: SUNARP · SBS · APESEG · MTC · SUNAT · SAT
+        </p>
       </section>
 
       <section className="grid gap-4 sm:grid-cols-2 pb-8">
