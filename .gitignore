@@ -30,6 +30,9 @@ test-results/
 __pycache__/
 *.py[cod]
 
+# Artefactos de sondeo de scrapers (HTML/capturas)
+**/__captured__/
+
 # Logs
 *.log
 npm-debug.log*

@@ -10,7 +10,9 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "purge": "tsx src/jobs/purge-owners.ts",
     "discover-selectors": "tsx ../../packages/scrapers/src/discover.ts",
-    "probe-sunarp": "tsx ../../packages/scrapers/src/probe.ts"
+    "probe-sunarp": "tsx ../../packages/scrapers/src/probe.ts",
+    "probe-sat": "tsx ../../packages/scrapers/src/probe-sat.ts",
+    "probe-sat-live": "tsx ../../packages/scrapers/src/probe-sat-live.ts"
   },
   "dependencies": {
     "@app/db": "*",
