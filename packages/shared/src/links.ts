@@ -113,6 +113,7 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     url: 'https://www.sat.gob.pe/VirtualSAT/modulos/papeletas.aspx',
     description: 'Papeletas de tránsito impuestas en Lima Metropolitana.',
     scope: 'Lima',
+    note: 'En el menú "Consultas en línea" toca el ícono "Consulta de papeletas / Multas Administrativas" (el portal de SAT no permite enlace directo a la sub-consulta).',
   },
   {
     id: 'sat-callao',
@@ -224,7 +225,7 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     url: 'https://www.sat.gob.pe/WebSitev8/IncioOV2.aspx',
     description: 'Deuda del impuesto al patrimonio vehicular (vehículos de hasta 3 años) en Lima.',
     scope: 'Lima',
-    note: 'Consultas en línea de SAT Lima. El impuesto es municipal: para otras provincias consulta el SAT o municipalidad correspondiente.',
+    note: 'En el menú "Consultas en línea" toca "Consulta Tributos". El impuesto es municipal: otras provincias en su SAT.',
   },
   {
     id: 'callao-impuesto',
@@ -247,6 +248,7 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     description:
       'Verifica si el vehículo tiene orden de captura o internamiento por deuda impaga (papeletas o impuesto vehicular).',
     scope: 'Lima',
+    note: 'En el menú "Consultas en línea" toca "Captura de vehículos".',
   },
   {
     id: 'satica-captura',
