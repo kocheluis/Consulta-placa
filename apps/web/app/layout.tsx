@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
-import { ShieldCheck } from 'lucide-react';
+import { Logo } from '@/components/Logo';
 import { Analytics } from '@vercel/analytics/react';
 import './globals.css';
 
@@ -9,8 +9,8 @@ const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://consultavehicular.
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
   title: {
-    default: 'ConsultaPlaca — Consulta de placa y historial vehicular en Perú',
-    template: '%s | ConsultaPlaca',
+    default: 'PlacaPe — Consulta de placa y historial vehicular en Perú',
+    template: '%s | PlacaPe',
   },
   description:
     'Consulta gratis por placa el historial de un vehículo en Perú: datos de SUNARP, papeletas (SAT), SOAT, siniestros, GNV, impuesto vehicular y orden de captura. Enlaces oficiales en un solo lugar.',
@@ -31,14 +31,14 @@ export const metadata: Metadata = {
     type: 'website',
     locale: 'es_PE',
     url: SITE_URL,
-    siteName: 'ConsultaPlaca',
-    title: 'ConsultaPlaca — Consulta de placa y historial vehicular en Perú',
+    siteName: 'PlacaPe',
+    title: 'PlacaPe — Consulta de placa y historial vehicular en Perú',
     description:
       'Consulta gratis por placa: SUNARP, papeletas, SOAT, siniestros, GNV, impuesto vehicular y orden de captura. Enlaces oficiales en un solo lugar.',
   },
   twitter: {
     card: 'summary_large_image',
-    title: 'ConsultaPlaca — Historial vehicular del Perú por placa',
+    title: 'PlacaPe — Historial vehicular del Perú por placa',
     description:
       'Consulta gratis por placa: SUNARP, papeletas, SOAT, siniestros, GNV e impuesto vehicular.',
   },
@@ -52,7 +52,7 @@ const jsonLd = {
       '@type': 'WebSite',
       '@id': `${SITE_URL}/#website`,
       url: SITE_URL,
-      name: 'ConsultaPlaca',
+      name: 'PlacaPe',
       inLanguage: 'es-PE',
       description:
         'Consulta de placa e historial vehicular en Perú con enlaces oficiales (SUNARP, SAT, SBS, MTC).',
@@ -60,7 +60,7 @@ const jsonLd = {
     {
       '@type': 'Organization',
       '@id': `${SITE_URL}/#org`,
-      name: 'ConsultaPlaca',
+      name: 'PlacaPe',
       url: SITE_URL,
       areaServed: 'PE',
     },
@@ -78,9 +78,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
         <header className="sticky top-0 z-10 bg-primary text-white">
           <div className="mx-auto max-w-7xl px-4 py-3 flex items-center justify-between">
-            <Link href="/" className="flex items-center gap-2 font-heading font-semibold">
-              <ShieldCheck className="h-6 w-6" aria-hidden="true" />
-              <span>ConsultaPlaca</span>
+            <Link href="/" className="flex items-center" aria-label="PlacaPe — inicio">
+              <Logo className="h-8 w-auto" />
             </Link>
             <nav className="text-sm flex items-center gap-4">
               <Link href="/cuenta" className="hover:underline">
