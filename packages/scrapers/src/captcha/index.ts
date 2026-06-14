@@ -3,15 +3,17 @@ import { TwoCaptchaSolver } from './twocaptcha.js';
 import { LocalImageSolver } from './local.js';
 
 /**
- * Cliente intercambiable de resolución de CAPTCHA. Soporta reCAPTCHA v2 (SBS)
- * y CAPTCHA de imagen (SUNARP). El proveedor concreto (2Captcha/CapSolver) se
- * configura por entorno; en tests se inyecta un mock.
+ * Cliente intercambiable de resolución de CAPTCHA. Soporta reCAPTCHA v2,
+ * Cloudflare Turnstile (SUNARP) y CAPTCHA de imagen. El proveedor concreto
+ * (2Captcha/CapSolver) se configura por entorno; en tests se inyecta un mock.
  */
 export interface CaptchaSolver {
   /** Resuelve un reCAPTCHA v2 dado su sitekey y la URL de la página. */
   solveRecaptchaV2(sitekey: string, url: string): Promise<string>;
   /** Resuelve un CAPTCHA de imagen (base64) y devuelve el texto. */
   solveImage(imageBase64: string): Promise<string>;
+  /** Resuelve un Cloudflare Turnstile dado su sitekey y la URL. Devuelve el token. */
+  solveTurnstile(sitekey: string, url: string): Promise<string>;
 }
 
 export interface CaptchaConfig {
@@ -25,6 +27,9 @@ export class NoopCaptchaSolver implements CaptchaSolver {
     throw new Error('CAPTCHA solver no configurado (CAPTCHA_API_KEY ausente)');
   }
   async solveImage(): Promise<string> {
+    throw new Error('CAPTCHA solver no configurado (CAPTCHA_API_KEY ausente)');
+  }
+  async solveTurnstile(): Promise<string> {
     throw new Error('CAPTCHA solver no configurado (CAPTCHA_API_KEY ausente)');
   }
 }

@@ -56,6 +56,17 @@ export const ReportStatus = {
 } as const;
 export type ReportStatus = (typeof ReportStatus)[keyof typeof ReportStatus];
 
+/** Nivel del resultado de búsqueda (escalera de valor del producto). */
+export const ReportTier = {
+  /** Gratis: info común auto-resuelta (marca, modelo, año, color, alerta de robo). */
+  BASIC: 'BASIC',
+  /** Pago: reporte consolidado + score 0–100 general y por concepto. */
+  PRO: 'PRO',
+  /** Pago: PRO + recomendación con IA y valor de compra de referencia. */
+  ULTRA: 'ULTRA',
+} as const;
+export type ReportTier = (typeof ReportTier)[keyof typeof ReportTier];
+
 export const DataRequestType = {
   ACCESS: 'ACCESS',
   DELETION: 'DELETION',

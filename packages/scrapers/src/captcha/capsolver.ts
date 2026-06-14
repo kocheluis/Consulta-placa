@@ -13,7 +13,7 @@ interface TaskResultResponse {
   errorId: number;
   errorDescription?: string;
   status?: 'idle' | 'processing' | 'ready' | 'failed';
-  solution?: { text?: string; gRecaptchaResponse?: string };
+  solution?: { text?: string; gRecaptchaResponse?: string; token?: string };
 }
 
 async function post<T>(path: string, body: unknown): Promise<T> {
@@ -70,5 +70,16 @@ export class CapSolverSolver implements CaptchaSolver {
     const solution = await this.getResult(taskId);
     if (!solution?.text) throw new Error('CapSolver: sin texto');
     return solution.text;
+  }
+
+  async solveTurnstile(sitekey: string, url: string): Promise<string> {
+    const taskId = await this.createTask({
+      type: 'AntiTurnstileTaskProxyLess',
+      websiteURL: url,
+      websiteKey: sitekey,
+    });
+    const solution = await this.getResult(taskId);
+    if (!solution?.token) throw new Error('CapSolver: sin token (Turnstile)');
+    return solution.token;
   }
 }

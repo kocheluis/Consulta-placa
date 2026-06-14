@@ -40,4 +40,9 @@ export class TwoCaptchaSolver implements CaptchaSolver {
     const id = await this.submit({ method: 'base64', body: imageBase64 });
     return this.poll(id);
   }
+
+  async solveTurnstile(sitekey: string, url: string): Promise<string> {
+    const id = await this.submit({ method: 'turnstile', sitekey, pageurl: url });
+    return this.poll(id);
+  }
 }

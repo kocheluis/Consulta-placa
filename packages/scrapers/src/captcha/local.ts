@@ -30,4 +30,10 @@ export class LocalImageSolver implements CaptchaSolver {
       'El solver local (OCR) no resuelve reCAPTCHA v2. Configura CAPTCHA_PROVIDER=capsolver|2captcha con su clave para SBS.',
     );
   }
+
+  async solveTurnstile(): Promise<string> {
+    throw new Error(
+      'El solver local (OCR) no resuelve Cloudflare Turnstile. Configura CAPTCHA_PROVIDER=capsolver|2captcha con su clave para SUNARP.',
+    );
+  }
 }

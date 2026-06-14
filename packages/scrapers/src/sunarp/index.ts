@@ -8,9 +8,10 @@ const S = PORTAL_SELECTORS.sunarp;
 /**
  * Scraper de la consulta vehicular SUNARP.
  *
- * Flujo (portal protegido con CAPTCHA de imagen): cargar página → ingresar placa
- * → resolver CAPTCHA vía el solver inyectado → enviar → leer el HTML del resultado
- * → delegar el parseo a `parseSunarp` (parser puro, testeado con fixtures).
+ * Flujo (portal protegido con Cloudflare Turnstile): cargar página → ingresar
+ * placa → leer el sitekey del widget Turnstile → resolver el token con el solver
+ * inyectado (CapSolver/2Captcha) → depositarlo en `cf-turnstile-response` → enviar
+ * → leer el HTML del resultado → delegar el parseo a `parseSunarp` (parser puro).
  *
  * Los selectores viven en `../selectors.ts` para ajustarlos en un solo lugar.
  * Ante cualquier fallo devuelve UNAVAILABLE para permitir el reporte parcial.
@@ -37,14 +38,31 @@ export const sunarpScraper: Scraper = {
 
       await page.locator(S.plateInput).first().fill(plateNormalized);
 
-      // Resolución de CAPTCHA de imagen (si el portal lo presenta).
-      if (S.captchaImage && S.captchaInput) {
-        const captchaImg = page.locator(S.captchaImage).first();
-        if (await captchaImg.count()) {
-          const buf = await captchaImg.screenshot();
-          const text = await ctx.captcha.solveImage(buf.toString('base64'));
-          await page.locator(S.captchaInput).first().fill(text);
-        }
+      // Cloudflare Turnstile: leer el sitekey del widget, resolver el token con
+      // el solver y depositarlo en el campo oculto cf-turnstile-response.
+      if (S.turnstileResponse) {
+        const sitekey = await page
+          .locator('[data-sitekey]')
+          .first()
+          .getAttribute('data-sitekey')
+          .catch(() => null);
+        if (!sitekey) return unavailable('SUNARP_TURNSTILE_SITEKEY_NO_ENCONTRADO');
+        const token = await ctx.captcha.solveTurnstile(sitekey, S.url);
+        await page.evaluate(
+          (args: { sel: string; value: string }) => {
+            const g = globalThis as unknown as {
+              document?: { querySelector(s: string): { value: string; dispatchEvent(e: unknown): void } | null };
+              Event: new (type: string, init?: { bubbles?: boolean }) => unknown;
+            };
+            const el = g.document?.querySelector(args.sel);
+            if (el) {
+              el.value = args.value;
+              el.dispatchEvent(new g.Event('input', { bubbles: true }));
+              el.dispatchEvent(new g.Event('change', { bubbles: true }));
+            }
+          },
+          { sel: S.turnstileResponse, value: token },
+        );
       }
 
       await page.locator(S.submit).first().click();

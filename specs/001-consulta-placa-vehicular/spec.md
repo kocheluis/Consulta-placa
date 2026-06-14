@@ -130,6 +130,14 @@ Cuando una placa ya fue consultada recientemente, el sistema devuelve el reporte
 - **FR-070**: El sistema SHOULD estar diseñado para soportar a futuro un modelo de consumo (p. ej., consultas gratuitas limitadas y reportes/créditos de pago) sin que el MVP implemente cobro.
 - **FR-071**: El MVP MUST lanzarse sin autenticación obligatoria (consulta anónima con límite de tasa por origen); las cuentas de usuario se incorporarán junto con el modelo de monetización en una fase posterior.
 
+#### Niveles de resultado (BASIC / PRO / ULTRA)
+- **FR-080**: El sistema MUST ofrecer tres niveles de resultado por placa: **BASIC** (gratuito), **PRO** y **ULTRA** (de pago).
+- **FR-081**: El nivel **BASIC** MUST mostrar automáticamente la información común del vehículo (marca, modelo, año, color y alerta de robo) obtenida de SUNARP, sin requerir que el usuario visite portales externos.
+- **FR-082**: El nivel **PRO** MUST presentar el reporte consolidado en formato amigable con un **score general (0–100)** y un **score por concepto** (legal/registral, seguro y siniestros, multas y deudas, uso y estado), cada uno con su explicación y fuente. El score MUST calcularse de forma determinística y explicable (no mediante IA).
+- **FR-083**: El nivel **ULTRA** MUST añadir una recomendación asistida por IA que estime un valor de compra de referencia a partir de precios de mercado obtenidos en el momento (Neoauto, Mercado Libre Perú, Autocosmos, Facebook Marketplace) y un veredicto (comprar/negociar/evitar) con su justificación.
+- **FR-084**: La interfaz pública MUST NOT exponer los enlaces a los portales oficiales (la "consulta guiada"); las URLs de origen se usan solo del lado servidor para la obtención de datos. Una vista interna protegida por rol de administrador PUEDE mostrarlos para verificación del equipo.
+- **FR-085**: La atribución de la fuente oficial de cada dato (p. ej. "SUNARP") MUST permanecer visible (ver FR-031), aunque la mecánica de obtención (URLs, scraping, tokens) NO se exponga al cliente.
+
 ### Key Entities *(include if feature involves data)*
 
 - **Vehículo**: representa el bien consultado, identificado por su placa (vigente e histórica). Atributos: marca, modelo, año, color, serie/VIN/motor, estado de robo.
@@ -140,6 +148,8 @@ Cuando una placa ya fue consultada recientemente, el sistema devuelve el reporte
 - **Siniestro**: indicación de accidente registrado para el vehículo en el periodo disponible.
 - **Solicitud de consulta (trabajo en cola)**: unidad de trabajo que representa una consulta en proceso. Atributos: placa, estado (pendiente/en proceso/completado/fallido), reintentos.
 - **Usuario/Consumidor de la consulta**: quien realiza la búsqueda; sujeto a límites de tasa. (Cuenta de usuario formal pendiente de definición según FR-070.)
+- **Nivel de resultado (Tier)**: BASIC | PRO | ULTRA. Determina qué secciones y elaboraciones (score, recomendación IA) se entregan para una consulta.
+- **Score del vehículo**: puntuación general (0–100) y por concepto, derivada de forma determinística del reporte ensamblado (no IA); sustenta el nivel PRO y alimenta la recomendación ULTRA.
 
 ## Success Criteria *(mandatory)*
 
@@ -157,6 +167,7 @@ Cuando una placa ya fue consultada recientemente, el sistema devuelve el reporte
 ## Assumptions
 
 - **Fuentes de datos**: No existe ninguna API oficial contratada del gobierno peruano; los datos se obtienen de los portales públicos gratuitos (SUNARP `consultavehicular.sunarp.gob.pe`, SBS `servicios.sbs.gob.pe/reportesoat`, APESEG). Estos portales están protegidos con CAPTCHA/reCAPTCHA y mecanismos de sesión, por lo que la obtención automatizada es frágil y puede requerir mantenimiento continuo.
+- **Obtención de SUNARP (Cloudflare Turnstile)**: El portal de SUNARP está protegido con Cloudflare Turnstile (no es CAPTCHA de imagen ni reCAPTCHA); la obtención automatizada requiere un solver de pago que soporte Turnstile (**2Captcha** para iniciar, **CapSolver** para producción) y, probablemente, proxies residenciales para no ser bloqueado por reputación de IP. El nivel BASIC depende de esta obtención, por lo que se aplica **caché agresiva por placa** para acotar el costo por consulta.
 - **Alcance MVP**: Solo se implementan SUNARP, SBS y SOAT/APESEG por ser las únicas fuentes que entregan datos por placa de forma públicamente verificable. Papeletas (SAT/SUTRAN/MTC), deuda de GNV, deuda bancaria/prendas detalladas e investigaciones PNP quedan fuera del MVP por no tener fuente pública automatizable confirmada.
 - **Cobertura geográfica**: La sección de papeletas urbanas (futuro) sería inicialmente solo de Lima (SAT Lima), no nacional.
 - **Lanzamiento**: Web primero (FR-060); la app Android del Play Store es una fase posterior que reutiliza la misma capa de datos (FR-061).
