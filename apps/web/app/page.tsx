@@ -1,3 +1,4 @@
+import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
 import { HeroSearch } from '@/components/HeroSearch';
@@ -165,6 +166,14 @@ export default function HomePage() {
                 <Icon name={ic} className="text-[16px] text-teal-700" /> {t}
               </span>
             ))}
+          </div>
+          <div className="mt-6">
+            <Link
+              href="/reporte/ejemplo"
+              className="inline-flex items-center gap-1.5 font-body text-sm font-semibold text-primary hover:underline"
+            >
+              Ver un reporte de ejemplo <Icon name="arrow_forward" className="text-[16px]" />
+            </Link>
           </div>
         </div>
         {/* Placa gigante difuminada */}

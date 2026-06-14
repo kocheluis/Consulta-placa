@@ -21,6 +21,7 @@ function classesFor(variant: Variant, size: Size, block?: boolean): string {
   return [
     'inline-flex items-center justify-center border font-body font-semibold transition-colors cursor-pointer',
     'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2',
+    'disabled:cursor-not-allowed disabled:opacity-50',
     VARIANT[variant],
     SIZE[size],
     block ? 'w-full' : '',
@@ -38,6 +39,7 @@ type Props = {
   className?: string;
   onClick?: () => void;
   type?: 'button' | 'submit';
+  disabled?: boolean;
 };
 
 export function Button({
