@@ -67,6 +67,25 @@ export const ReportTier = {
 } as const;
 export type ReportTier = (typeof ReportTier)[keyof typeof ReportTier];
 
+/** Nivel cualitativo de un score (semáforo). */
+export const ScoreLevel = {
+  GOOD: 'GOOD',
+  WARNING: 'WARNING',
+  BAD: 'BAD',
+  /** Sin datos suficientes para puntuar el concepto. */
+  UNKNOWN: 'UNKNOWN',
+} as const;
+export type ScoreLevel = (typeof ScoreLevel)[keyof typeof ScoreLevel];
+
+/** Conceptos en los que se descompone el score del vehículo (PRO). */
+export const ScoreConcept = {
+  LEGAL: 'LEGAL',
+  INSURANCE: 'INSURANCE',
+  DEBTS: 'DEBTS',
+  USAGE: 'USAGE',
+} as const;
+export type ScoreConcept = (typeof ScoreConcept)[keyof typeof ScoreConcept];
+
 export const DataRequestType = {
   ACCESS: 'ACCESS',
   DELETION: 'DELETION',
