@@ -69,7 +69,7 @@ const jsonLd = {
 
 const NAV_LINKS = [
   { label: 'Consultar', href: '/' },
-  { label: 'Planes', href: '/#planes' },
+  { label: 'Planes', href: '/planes' },
   { label: 'Empresas', href: '/#empresas' },
 ];
 
@@ -78,7 +78,7 @@ const FOOTER_COLS: { h: string; links: { label: string; href: string }[] }[] = [
     h: 'Producto',
     links: [
       { label: 'Consultar placa', href: '/' },
-      { label: 'Planes', href: '/#planes' },
+      { label: 'Planes', href: '/planes' },
       { label: 'Empresas', href: '/#empresas' },
     ],
   },
