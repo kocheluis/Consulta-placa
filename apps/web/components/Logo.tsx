@@ -1,8 +1,8 @@
 /**
- * Logotipo "PlacaPe" con forma de placa vehicular peruana.
- * El chip "PE" es el guiño a Perú / al dominio .pe. Paleta institucional
- * (navy + blanco) coherente con el design system; sin rojo (reservado a la
- * alerta de robo). Escala con `className` (alto); el ancho se ajusta solo.
+ * Logotipo PlacaPe — versión clara (para fondos oscuros, como el header).
+ * Tomado del design system oficial (handoff de Claude Design): placa con check
+ * teal + wordmark "placape" en Sora. Escala con `className` (alto); el ancho se
+ * ajusta solo.
  */
 type LogoProps = {
   className?: string;
@@ -11,52 +11,41 @@ type LogoProps = {
 export function Logo({ className = 'h-8 w-auto' }: LogoProps) {
   return (
     <svg
-      viewBox="0 0 240 64"
+      viewBox="0 0 430 120"
       className={className}
       role="img"
       aria-label="PlacaPe"
+      fill="none"
       xmlns="http://www.w3.org/2000/svg"
     >
-      <title>PlacaPe</title>
-      {/* Cuerpo de la placa */}
-      <rect
-        x="2"
-        y="12"
-        width="236"
-        height="40"
-        rx="8"
-        fill="#FFFFFF"
-        stroke="#1E3A8A"
-        strokeWidth="3"
-      />
-      {/* Tornillos (realismo sutil) */}
-      <circle cx="15" cy="22" r="2" fill="#CBD5E1" />
-      <circle cx="225" cy="42" r="2" fill="#CBD5E1" />
-      {/* Wordmark */}
+      <rect x="6" y="33" width="92" height="54" rx="13" fill="#FFFFFF" />
+      <circle cx="21" cy="44" r="2.4" fill="#14506B" fillOpacity="0.35" />
+      <circle cx="83" cy="44" r="2.4" fill="#14506B" fillOpacity="0.35" />
+      <rect x="16" y="42" width="72" height="36" rx="7" fill="#0A2E3D" />
+      <rect x="16" y="42" width="16" height="36" rx="7" fill="#16B5A3" />
+      <rect x="25" y="42" width="7" height="36" fill="#16B5A3" />
       <text
         x="24"
-        y="40"
-        fontFamily="Lexend, ui-sans-serif, system-ui, sans-serif"
-        fontSize="26"
-        fontWeight="700"
-        letterSpacing="0.5"
-        fill="#1E3A8A"
-      >
-        Placa
-      </text>
-      {/* Chip "PE" (banda de país / .pe) */}
-      <rect x="176" y="20" width="48" height="24" rx="5" fill="#1E3A8A" />
-      <text
-        x="200"
-        y="38"
+        y="64"
         textAnchor="middle"
-        fontFamily="Lexend, ui-sans-serif, system-ui, sans-serif"
-        fontSize="17"
+        fontFamily="'Plus Jakarta Sans', sans-serif"
+        fontSize="9"
         fontWeight="700"
-        letterSpacing="1"
-        fill="#FFFFFF"
+        fill="#06231D"
       >
         PE
+      </text>
+      <path
+        d="M44 62 L51 69 L69 49"
+        stroke="#16B5A3"
+        strokeWidth="6"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        fill="none"
+      />
+      <text x="116" y="76" fontFamily="'Sora', sans-serif" fontSize="46" fontWeight="800" letterSpacing="-1.6">
+        <tspan fill="#FFFFFF">placa</tspan>
+        <tspan fill="#3FC9B8">pe</tspan>
       </text>
     </svg>
   );

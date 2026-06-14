@@ -15,7 +15,7 @@ export default function OpengraphImage() {
           display: 'flex',
           flexDirection: 'column',
           justifyContent: 'center',
-          backgroundColor: '#1E3A8A',
+          backgroundColor: '#0A2E3D',
           padding: '80px',
           fontFamily: 'sans-serif',
         }}
@@ -27,36 +27,24 @@ export default function OpengraphImage() {
             alignItems: 'center',
             alignSelf: 'flex-start',
             backgroundColor: '#FFFFFF',
-            border: '5px solid #0F172A',
+            border: '5px solid #07222E',
             borderRadius: '22px',
             padding: '22px 36px',
           }}
         >
-          <div
-            style={{
-              display: 'flex',
-              fontSize: '76px',
-              fontWeight: 700,
-              color: '#1E3A8A',
-            }}
-          >
-            Placa
-          </div>
+          <div style={{ display: 'flex', fontSize: '76px', fontWeight: 700, color: '#14506B' }}>placa</div>
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              marginLeft: '22px',
-              backgroundColor: '#1E3A8A',
-              color: '#FFFFFF',
-              borderRadius: '12px',
-              padding: '6px 24px',
-              fontSize: '58px',
+              marginLeft: '6px',
+              fontSize: '76px',
               fontWeight: 700,
+              color: '#16B5A3',
             }}
           >
-            PE
+            pe
           </div>
         </div>
 
@@ -73,14 +61,7 @@ export default function OpengraphImage() {
         >
           Consulta de placa e historial vehicular en Peru
         </div>
-        <div
-          style={{
-            display: 'flex',
-            marginTop: '28px',
-            fontSize: '30px',
-            color: '#BFDBFE',
-          }}
-        >
+        <div style={{ display: 'flex', marginTop: '28px', fontSize: '30px', color: '#A8E9E0' }}>
           Gratis y con enlaces oficiales: SUNARP, SBS, APESEG, MTC, SUNAT, SAT
         </div>
       </div>

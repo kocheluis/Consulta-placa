@@ -44,3 +44,4 @@ Thumbs.db
 .idea/
 .vscode/*
 !.vscode/extensions.json
+tmp-design-handoff/

@@ -1,0 +1,22 @@
+<svg width="430" height="120" viewBox="0 0 430 120" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PlacaPe">
+  
+  <rect x="6" y="33" width="92" height="54" rx="13" fill="#14506B"></rect>
+  <rect x="6" y="33" width="92" height="54" rx="13" fill="url(#ppw_grad)"></rect>
+  <circle cx="21" cy="44" r="2.4" fill="#FFFFFF" fill-opacity="0.5"></circle>
+  <circle cx="83" cy="44" r="2.4" fill="#FFFFFF" fill-opacity="0.5"></circle>
+  <rect x="16" y="42" width="72" height="36" rx="7" fill="#FFFFFF"></rect>
+  <rect x="16" y="42" width="16" height="36" rx="7" fill="#14506B"></rect>
+  <rect x="25" y="42" width="7" height="36" fill="#14506B"></rect>
+  <text x="24" y="64" text-anchor="middle" font-family="&#39;Plus Jakarta Sans&#39;, sans-serif" font-size="9" font-weight="700" fill="#FFFFFF">PE</text>
+  <path d="M44 62 L51 69 L69 49" stroke="#16B5A3" stroke-width="6" stroke-linecap="round" stroke-linejoin="round" fill="none"></path>
+  
+  <text x="116" y="76" font-family="&#39;Sora&#39;, sans-serif" font-size="46" font-weight="800" letter-spacing="-1.6">
+    <tspan fill="#0A2E3D">placa</tspan><tspan fill="#16B5A3">pe</tspan>
+  </text>
+  <defs>
+    <linearGradient id="ppw_grad" x1="6" y1="33" x2="98" y2="87" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#14506B"></stop>
+      <stop offset="1" stop-color="#0A2E3D"></stop>
+    </linearGradient>
+  </defs>
+</svg>
