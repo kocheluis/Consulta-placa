@@ -20,7 +20,11 @@ export async function buildServer() {
   const app = Fastify({ logger: true });
 
   await app.register(helmet);
-  await app.register(cors, { origin: true });
+  // CORS: en producción solo los dominios configurados en WEB_ORIGIN; en dev,
+  // se permite cualquier origen para facilitar pruebas locales.
+  await app.register(cors, {
+    origin: config.isProd ? (config.corsOrigins.length ? config.corsOrigins : false) : true,
+  });
   await app.register(jwt, { secret: config.jwtSecret });
   await app.register(rateLimit, {
     max: config.rateLimitPerMinute,

@@ -2,6 +2,7 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import bcrypt from 'bcryptjs';
 import { z } from 'zod';
 import { prisma } from '@app/db';
+import { config } from '../config.js';
 
 const CredentialsSchema = z.object({
   email: z.string().email('Correo inválido'),
@@ -9,8 +10,13 @@ const CredentialsSchema = z.object({
 });
 
 export function registerAuthRoutes(app: FastifyInstance): void {
+  // Límite estricto en endpoints de auth para mitigar fuerza bruta de contraseñas.
+  const authLimit = {
+    config: { rateLimit: { max: config.rateLimitAuthPerMinute, timeWindow: '1 minute' } },
+  };
+
   // Registro: crea la cuenta SIN PRO y SIN activar (FR — PRO requiere activación).
-  app.post('/api/v1/auth/register', async (request, reply) => {
+  app.post('/api/v1/auth/register', authLimit, async (request, reply) => {
     const parsed = CredentialsSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'INVALID', message: parsed.error.issues[0]?.message });
@@ -27,7 +33,7 @@ export function registerAuthRoutes(app: FastifyInstance): void {
   });
 
   // Login: devuelve un JWT si las credenciales son válidas.
-  app.post('/api/v1/auth/login', async (request, reply) => {
+  app.post('/api/v1/auth/login', authLimit, async (request, reply) => {
     const parsed = CredentialsSchema.safeParse(request.body);
     if (!parsed.success) {
       return reply.status(400).send({ error: 'INVALID', message: parsed.error.issues[0]?.message });
