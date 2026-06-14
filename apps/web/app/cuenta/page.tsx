@@ -3,25 +3,199 @@
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import { login, register, fetchMe, clearToken, type Account } from '@/lib/auth';
+import { Button } from '@/components/ui/Button';
+import { Input } from '@/components/ui/Input';
+import { Icon } from '@/components/ui/Icon';
+import { Badge } from '@/components/ui/Badge';
 
+type View = 'login' | 'register' | 'forgot';
+
+/* ── Panel de marca (columna izquierda) ───────────────────────────── */
+const TRUST_POINTS = [
+  { icon: 'account_balance', t: '+10 fuentes nacionales', d: 'SUNARP, SAT, SBS, MTC, SUTRAN, ONPE y más.' },
+  { icon: 'bolt', t: 'Resultado en segundos', d: 'Consolidamos todo en un reporte claro.' },
+  { icon: 'lock', t: 'Pago y datos protegidos', d: 'Cifrado de extremo a extremo en cada consulta.' },
+];
+
+function BrandPanel() {
+  return (
+    <div
+      className="relative hidden flex-col overflow-hidden p-11 text-white md:flex"
+      style={{ background: 'linear-gradient(165deg, #103D52 0%, #0A2E3D 55%, #06222E 100%)' }}
+    >
+      <div
+        className="pointer-events-none absolute -right-28 -top-28 h-80 w-80 rounded-full"
+        style={{ background: 'radial-gradient(circle, rgba(22,181,163,.22), transparent 70%)' }}
+      />
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      <img src="/brand/logo-placape-light.svg" alt="PlacaPe" className="relative h-8 self-start" />
+
+      <div className="relative flex flex-1 flex-col justify-center">
+        <h2 className="mb-3.5 font-heading text-[32px] font-extrabold leading-[1.12] tracking-tight">
+          Conoce el historial
+          <br />
+          antes de comprar
+        </h2>
+        <p className="mb-8 max-w-sm text-base leading-relaxed text-azul-200">
+          Verifica cualquier placa del Perú y compra tu próximo vehículo con total tranquilidad.
+        </p>
+        <div className="flex flex-col gap-[18px]">
+          {TRUST_POINTS.map((p) => (
+            <div key={p.t} className="flex items-start gap-3.5">
+              <div className="grid h-10 w-10 flex-none place-items-center rounded-md border border-teal-400/40 bg-teal-400/15">
+                <Icon name={p.icon} className="text-[22px] text-teal-300" />
+              </div>
+              <div>
+                <p className="font-body text-[15px] font-bold">{p.t}</p>
+                <p className="mt-0.5 text-[13.5px] leading-snug text-azul-200">{p.d}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="relative flex items-center gap-2.5">
+        <div className="flex">
+          {['#2D7FA0', '#13A091', '#1A6584', '#0F8A7E'].map((c, i) => (
+            <span
+              key={c}
+              className="h-7 w-7 rounded-full border-2 border-azul-900"
+              style={{ background: c, marginLeft: i ? -8 : 0 }}
+            />
+          ))}
+        </div>
+        <span className="text-[13.5px] text-azul-200">
+          Compradores de todo el Perú verifican con PlacaPe
+        </span>
+      </div>
+    </div>
+  );
+}
+
+/* ── Login social (pendiente de Supabase OAuth) ───────────────────── */
+function SocialButtons() {
+  const base =
+    'flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-3 font-body text-sm font-semibold text-foreground opacity-60 cursor-not-allowed';
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex gap-2.5">
+        <button type="button" disabled className={base} title="Disponible muy pronto">
+          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+            <path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.4h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.5z" />
+            <path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H.9v2.3A9 9 0 0 0 9 18z" />
+            <path fill="#FBBC05" d="M3.9 10.7a5.4 5.4 0 0 1 0-3.4V5H.9a9 9 0 0 0 0 8l3-2.3z" />
+            <path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 .9 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z" />
+          </svg>
+          Google
+        </button>
+        <button type="button" disabled className={base} title="Disponible muy pronto">
+          <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true">
+            <path d="M13.1 9.6c0-2 1.6-3 1.7-3a3.7 3.7 0 0 0-2.9-1.6c-1.2-.1-2.4.7-3 .7-.6 0-1.6-.7-2.6-.7C5 5.1 3.8 5.8 3.1 7c-1.4 2.4-.4 6 1 8 .7.9 1.4 2 2.5 1.9 1-.04 1.4-.6 2.6-.6s1.6.6 2.6.6 1.8-1 2.4-1.9c.8-1.1 1.1-2.2 1.1-2.2s-2.1-.8-2.1-3.2zM11.2 3.8c.5-.7.9-1.6.8-2.5-.8 0-1.7.5-2.3 1.2-.5.6-1 1.5-.8 2.4.9.1 1.7-.4 2.3-1.1z" />
+          </svg>
+          Apple
+        </button>
+      </div>
+      <p className="text-center text-[11px] font-medium text-muted">
+        Acceso con Google y Apple — disponible muy pronto
+      </p>
+    </div>
+  );
+}
+
+function Divider({ label }: { label: string }) {
+  return (
+    <div className="my-4 flex items-center gap-3">
+      <div className="h-px flex-1 bg-border" />
+      <span className="font-body text-xs font-semibold text-muted">{label}</span>
+      <div className="h-px flex-1 bg-border" />
+    </div>
+  );
+}
+
+/* ── Pantalla de cuenta (logueado) ────────────────────────────────── */
+function AccountView({ account, onLogout }: { account: Account; onLogout: () => void }) {
+  const isPro = account.isPro && account.isActive;
+  return (
+    <div className="mx-auto max-w-md px-4 py-14">
+      <h1 className="font-heading text-2xl font-bold text-foreground">Mi cuenta</h1>
+      <div className="mt-5 rounded-xl border border-border bg-surface p-6 shadow-sm">
+        <p className="font-body text-sm text-muted">Correo</p>
+        <p className="font-body font-semibold text-foreground">{account.email}</p>
+        <div className="mt-3">
+          {isPro ? (
+            <Badge tone="success">PRO activa</Badge>
+          ) : (
+            <Badge tone="neutral" icon={null}>
+              Cuenta gratuita
+            </Badge>
+          )}
+        </div>
+        {!isPro && (
+          <p className="mt-3 font-body text-sm text-muted">
+            Tu cuenta aún no tiene PRO activo. La activación se habilita tras la suscripción
+            (próximamente). Mientras tanto usa la consulta gratuita.
+          </p>
+        )}
+        <button
+          onClick={onLogout}
+          className="mt-5 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-accent hover:underline cursor-pointer"
+        >
+          <Icon name="logout" className="text-[18px]" />
+          Cerrar sesión
+        </button>
+      </div>
+      <Link href="/" className="mt-5 inline-block font-body text-sm text-muted hover:text-foreground">
+        ← Volver al inicio
+      </Link>
+    </div>
+  );
+}
+
+/* ── Pantalla principal ───────────────────────────────────────────── */
 export default function CuentaPage() {
-  const [mode, setMode] = useState<'login' | 'register'>('login');
+  const [view, setView] = useState<View>('login');
+  const [account, setAccount] = useState<Account | null>(null);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [account, setAccount] = useState<Account | null>(null);
+  const [nombres, setNombres] = useState('');
+  const [apellidos, setApellidos] = useState('');
+  const [celular, setCelular] = useState('');
+  const [terms, setTerms] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
     fetchMe().then(setAccount);
   }, []);
 
+  const go = (v: View) => {
+    setView(v);
+    setError(null);
+    setNotice(null);
+  };
+
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    setBusy(true);
     setError(null);
+    setNotice(null);
+
+    if (view === 'forgot') {
+      // La recuperación por correo se habilita al migrar a Supabase Auth.
+      setNotice(
+        'La recuperación por correo se habilitará muy pronto. Por ahora escríbenos a soporte@placape.pe y te ayudamos.',
+      );
+      return;
+    }
+
+    if (view === 'register' && !terms) {
+      setError('Debes aceptar los Términos y la Política de privacidad.');
+      return;
+    }
+
+    setBusy(true);
     try {
-      if (mode === 'register') {
+      if (view === 'register') {
         await register(email, password);
         await login(email, password);
       } else {
@@ -37,107 +211,222 @@ export default function CuentaPage() {
 
   if (account) {
     return (
-      <div className="mx-auto max-w-md px-4 py-10">
-        <h1 className="text-2xl font-semibold text-foreground">Mi cuenta</h1>
-        <div className="mt-4 rounded-xl border border-border bg-surface p-5">
-          <p className="text-sm text-muted">Correo</p>
-          <p className="font-medium text-foreground">{account.email}</p>
-          <div className="mt-3 flex items-center gap-2">
-            <span
-              className={`rounded-full px-3 py-1 text-sm font-medium ${
-                account.isPro && account.isActive
-                  ? 'bg-success-bg text-success-fg'
-                  : 'bg-slate-100 text-slate-600'
-              }`}
-            >
-              {account.isPro && account.isActive ? 'PRO activa' : 'Cuenta gratuita'}
-            </span>
-          </div>
-          {!(account.isPro && account.isActive) && (
-            <p className="mt-3 text-sm text-muted">
-              Tu cuenta aún no tiene PRO activo. La activación PRO se habilita tras la suscripción
-              (próximamente). Mientras tanto usa la consulta guiada gratuita.
-            </p>
-          )}
-          <button
-            onClick={() => {
-              clearToken();
-              setAccount(null);
-            }}
-            className="mt-4 text-sm text-accent hover:underline cursor-pointer"
-          >
-            Cerrar sesión
-          </button>
-        </div>
-        <Link href="/" className="mt-4 inline-block text-sm text-accent hover:underline">
-          ← Volver al inicio
-        </Link>
-      </div>
+      <AccountView
+        account={account}
+        onLogout={() => {
+          clearToken();
+          setAccount(null);
+          go('login');
+        }}
+      />
     );
   }
 
   return (
-    <div className="mx-auto max-w-md px-4 py-10">
-      <h1 className="text-2xl font-semibold text-foreground">
-        {mode === 'login' ? 'Iniciar sesión' : 'Crear cuenta'}
-      </h1>
-      <p className="mt-1 text-sm text-muted">
-        Necesaria para el reporte automático PRO. La consulta guiada es gratis y no requiere cuenta.
-      </p>
+    <section
+      className="grid place-items-center px-4 py-12 sm:py-16"
+      style={{
+        background: 'radial-gradient(120% 130% at 80% -10%, #EFF6F9 0%, #EEF2F5 60%)',
+      }}
+    >
+      <div className="grid w-full max-w-[940px] grid-cols-1 overflow-hidden rounded-2xl bg-surface shadow-xl md:min-h-[600px] md:grid-cols-2">
+        <BrandPanel />
 
-      <form onSubmit={submit} className="mt-6 space-y-4">
-        <div>
-          <label htmlFor="email" className="block text-sm font-medium text-foreground mb-1">
-            Correo
-          </label>
-          <input
-            id="email"
-            type="email"
-            required
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-          />
+        <div className="flex flex-col justify-center p-7 sm:p-11">
+          {view === 'forgot' ? (
+            <>
+              <button
+                onClick={() => go('login')}
+                className="mb-4 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-muted hover:text-foreground cursor-pointer"
+              >
+                <Icon name="arrow_back" className="text-[18px]" /> Volver
+              </button>
+              <h1 className="mb-1 font-heading text-[27px] font-extrabold tracking-tight text-foreground">
+                Recupera tu acceso
+              </h1>
+              <p className="mb-6 font-body text-[15px] leading-relaxed text-muted">
+                Ingresa tu correo y te enviaremos un enlace para restablecer tu contraseña.
+              </p>
+            </>
+          ) : view === 'login' ? (
+            <>
+              <h1 className="mb-1 font-heading text-[27px] font-extrabold tracking-tight text-foreground">
+                Bienvenido de nuevo
+              </h1>
+              <p className="mb-6 font-body text-[15px] text-muted">
+                Ingresa para ver tus reportes guardados.
+              </p>
+              <SocialButtons />
+              <Divider label="o con tu correo" />
+            </>
+          ) : (
+            <>
+              <h1 className="mb-1 font-heading text-[27px] font-extrabold tracking-tight text-foreground">
+                Crea tu cuenta
+              </h1>
+              <p className="mb-6 font-body text-[15px] text-muted">
+                Gratis. Tu primer reporte básico no cuesta nada.
+              </p>
+              <SocialButtons />
+              <Divider label="o con tu correo" />
+            </>
+          )}
+
+          <form onSubmit={submit} className="flex flex-col gap-3.5">
+            {view === 'register' && (
+              <div className="flex gap-3">
+                <Input
+                  label="Nombres"
+                  icon="person"
+                  placeholder="Carlos"
+                  autoComplete="given-name"
+                  value={nombres}
+                  onChange={(e) => setNombres(e.target.value)}
+                  className="flex-1"
+                />
+                <Input
+                  label="Apellidos"
+                  placeholder="Mendoza"
+                  autoComplete="family-name"
+                  value={apellidos}
+                  onChange={(e) => setApellidos(e.target.value)}
+                  className="flex-1"
+                />
+              </div>
+            )}
+
+            <Input
+              label="Correo electrónico"
+              type="email"
+              icon="mail"
+              placeholder="tu@correo.com"
+              autoComplete="email"
+              required
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+            />
+
+            {view === 'register' && (
+              <Input
+                label="Celular"
+                icon="smartphone"
+                placeholder="987 654 321"
+                autoComplete="tel"
+                inputMode="tel"
+                hint="Opcional. Te avisamos cuando tu reporte esté listo."
+                value={celular}
+                onChange={(e) => setCelular(e.target.value)}
+              />
+            )}
+
+            {view !== 'forgot' && (
+              <Input
+                label="Contraseña"
+                type="password"
+                icon="lock"
+                placeholder={view === 'register' ? 'Mínimo 8 caracteres' : '••••••••'}
+                autoComplete={view === 'register' ? 'new-password' : 'current-password'}
+                required
+                minLength={8}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+              />
+            )}
+
+            {view === 'login' && (
+              <div className="flex items-center justify-between">
+                <label className="flex items-center gap-2 font-body text-[13.5px] text-foreground cursor-pointer">
+                  <input type="checkbox" defaultChecked className="h-4 w-4 accent-accent" /> Recordarme
+                </label>
+                <button
+                  type="button"
+                  onClick={() => go('forgot')}
+                  className="font-body text-[13.5px] font-semibold text-accent hover:underline cursor-pointer"
+                >
+                  ¿Olvidaste tu contraseña?
+                </button>
+              </div>
+            )}
+
+            {view === 'register' && (
+              <label className="flex items-start gap-2 font-body text-[13px] leading-snug text-muted cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={terms}
+                  onChange={(e) => setTerms(e.target.checked)}
+                  className="mt-0.5 h-4 w-4 accent-accent"
+                />
+                <span>
+                  Acepto los{' '}
+                  <Link href="/legal/terminos" className="font-semibold text-accent hover:underline">
+                    Términos
+                  </Link>{' '}
+                  y la{' '}
+                  <Link href="/legal/privacidad" className="font-semibold text-accent hover:underline">
+                    Política de privacidad
+                  </Link>
+                  .
+                </span>
+              </label>
+            )}
+
+            {error && (
+              <p className="font-body text-sm font-medium text-danger-fg" role="alert">
+                {error}
+              </p>
+            )}
+            {notice && (
+              <p
+                className="rounded-md border border-azul-200 bg-azul-50 px-3 py-2.5 font-body text-[13px] leading-snug text-azul-700"
+                role="status"
+              >
+                {notice}
+              </p>
+            )}
+
+            <Button
+              type="submit"
+              variant="accent"
+              size="lg"
+              block
+              disabled={busy}
+              iconRight={view === 'forgot' ? undefined : 'arrow_forward'}
+              icon={view === 'forgot' ? 'send' : undefined}
+            >
+              {busy
+                ? 'Procesando…'
+                : view === 'login'
+                  ? 'Ingresar'
+                  : view === 'register'
+                    ? 'Crear cuenta gratis'
+                    : 'Enviar enlace'}
+            </Button>
+          </form>
+
+          {view === 'login' && (
+            <p className="mt-5 text-center font-body text-sm text-muted">
+              ¿No tienes cuenta?{' '}
+              <button
+                onClick={() => go('register')}
+                className="font-bold text-accent hover:underline cursor-pointer"
+              >
+                Crear cuenta
+              </button>
+            </p>
+          )}
+          {view === 'register' && (
+            <p className="mt-5 text-center font-body text-sm text-muted">
+              ¿Ya tienes cuenta?{' '}
+              <button
+                onClick={() => go('login')}
+                className="font-bold text-accent hover:underline cursor-pointer"
+              >
+                Ingresar
+              </button>
+            </p>
+          )}
         </div>
-        <div>
-          <label htmlFor="password" className="block text-sm font-medium text-foreground mb-1">
-            Contraseña
-          </label>
-          <input
-            id="password"
-            type="password"
-            required
-            minLength={8}
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            className="w-full rounded-lg border border-border bg-surface px-3 py-2 text-foreground focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-          />
-        </div>
-
-        {error && (
-          <p className="text-sm text-danger" role="alert">
-            {error}
-          </p>
-        )}
-
-        <button
-          type="submit"
-          disabled={busy}
-          className="w-full rounded-lg bg-primary px-5 py-2.5 font-medium text-white transition-colors duration-200 hover:bg-primary-600 cursor-pointer disabled:opacity-60 focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-2"
-        >
-          {busy ? 'Procesando…' : mode === 'login' ? 'Entrar' : 'Registrarme'}
-        </button>
-      </form>
-
-      <button
-        onClick={() => {
-          setMode(mode === 'login' ? 'register' : 'login');
-          setError(null);
-        }}
-        className="mt-4 text-sm text-accent hover:underline cursor-pointer"
-      >
-        {mode === 'login' ? '¿No tienes cuenta? Regístrate' : '¿Ya tienes cuenta? Inicia sesión'}
-      </button>
-    </div>
+      </div>
+    </section>
   );
 }
