@@ -13,6 +13,7 @@ import {
   Lock,
   Gavel,
 } from 'lucide-react';
+import type { Metadata } from 'next';
 import {
   OFFICIAL_LINKS,
   CATEGORY_LABELS,
@@ -21,6 +22,21 @@ import {
   type LinkCategory,
 } from '@app/shared';
 import { CopyButton } from '@/components/CopyButton';
+
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<{ placa: string }>;
+}): Promise<Metadata> {
+  const { placa } = await params;
+  const display = formatPlateDisplay(placa);
+  return {
+    title: `Consulta guiada de la placa ${display}`,
+    description: `Enlaces oficiales para consultar la placa ${display}: SUNARP, papeletas, SOAT, GNV, impuesto vehicular y orden de captura.`,
+    // Página-herramienta: no se indexa (evita contenido duplicado por cada placa).
+    robots: { index: false, follow: false },
+  };
+}
 
 const CATEGORY_ICON: Record<LinkCategory, React.ReactNode> = {
   REGISTRAL: <Car className="h-5 w-5" aria-hidden="true" />,
