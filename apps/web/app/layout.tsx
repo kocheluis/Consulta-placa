@@ -4,7 +4,7 @@ import { ShieldCheck } from 'lucide-react';
 import { Analytics } from '@vercel/analytics/react';
 import './globals.css';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://consulta-placa-web.vercel.app';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://consultavehicular.vercel.app';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
