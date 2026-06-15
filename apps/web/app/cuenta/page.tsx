@@ -2,7 +2,16 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { login, register, getAccount, logout, usingSupabase, type Account } from '@/lib/account';
+import {
+  login,
+  register,
+  getAccount,
+  logout,
+  getMyReports,
+  usingSupabase,
+  type Account,
+  type ReportHistoryItem,
+} from '@/lib/account';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Icon } from '@/components/ui/Icon';
@@ -113,48 +122,135 @@ function Divider({ label }: { label: string }) {
 }
 
 /* ── Pantalla de cuenta (logueado) ────────────────────────────────── */
-function AccountView({ account, onLogout }: { account: Account; onLogout: () => void }) {
-  const isPro = account.tier !== 'BASIC';
+const fmtDate = (iso: string): string => {
+  try {
+    return new Date(iso).toLocaleDateString('es-PE', { day: '2-digit', month: 'short', year: 'numeric' });
+  } catch {
+    return iso;
+  }
+};
+const STATUS: Record<string, { tone: 'success' | 'warning' | 'danger'; label: string }> = {
+  paid: { tone: 'success', label: 'Pagado' },
+  pending: { tone: 'warning', label: 'Pendiente' },
+  failed: { tone: 'danger', label: 'Fallido' },
+};
+
+function ReportRow({ r }: { r: ReportHistoryItem }) {
+  const st = STATUS[r.status] ?? STATUS.pending;
   return (
-    <div className="mx-auto max-w-md px-4 py-14">
-      <h1 className="font-heading text-2xl font-bold text-foreground">Mi cuenta</h1>
-      <div className="mt-5 rounded-xl border border-border bg-surface p-6 shadow-sm">
-        {account.fullName && (
-          <>
-            <p className="font-body text-sm text-muted">Nombre</p>
-            <p className="mb-3 font-body font-semibold text-foreground">{account.fullName}</p>
-          </>
-        )}
-        <p className="font-body text-sm text-muted">Correo</p>
-        <p className="font-body font-semibold text-foreground">{account.email}</p>
-        <div className="mt-3">
-          {isPro ? (
-            <Badge tone="success" icon="bolt">
-              {account.tier === 'ULTRA' ? 'Plan Ultra' : 'Plan Pro'} activo
-            </Badge>
-          ) : (
-            <Badge tone="neutral" icon={null}>
-              Cuenta Basic (gratis)
-            </Badge>
+    <div className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
+      <div className="grid h-10 w-10 flex-none place-items-center rounded-lg bg-azul-50">
+        <Icon name="directions_car" className="text-[22px] text-primary" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-sm font-bold tracking-wide text-foreground">{r.plate}</span>
+          <Badge tone={r.tier === 'ULTRA' ? 'brand' : 'info'} size="sm" icon={r.tier === 'ULTRA' ? 'bolt' : null}>
+            {r.tier === 'ULTRA' ? 'Ultra' : 'Pro'}
+          </Badge>
+        </div>
+        <p className="mt-0.5 font-body text-[13px] text-muted">{fmtDate(r.createdAt)}</p>
+      </div>
+      <Badge tone={st.tone} size="sm" icon={null}>
+        {st.label}
+      </Badge>
+      {r.status === 'paid' && (
+        <Button variant="ghost" size="sm" iconRight="arrow_forward" href={`/reporte/${r.plate}`}>
+          Ver
+        </Button>
+      )}
+    </div>
+  );
+}
+
+function AccountView({ account, onLogout }: { account: Account; onLogout: () => void }) {
+  const [reports, setReports] = useState<ReportHistoryItem[] | null>(null);
+  useEffect(() => {
+    getMyReports().then(setReports).catch(() => setReports([]));
+  }, []);
+
+  const firstName = account.fullName?.trim().split(/\s+/)[0];
+  const paid = (reports ?? []).filter((r) => r.status === 'paid');
+
+  return (
+    <div className="mx-auto max-w-[960px] px-4 py-12 sm:px-6">
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div>
+          <h1 className="font-heading text-[26px] font-extrabold tracking-tight text-foreground">
+            Hola{firstName ? `, ${firstName}` : ''}
+          </h1>
+          <p className="font-body text-sm text-muted">Tus reportes y datos de cuenta.</p>
+        </div>
+        <Button variant="secondary" size="sm" icon="add" href="/">
+          Nueva consulta
+        </Button>
+      </div>
+
+      <div className="grid items-start gap-5 lg:grid-cols-[1fr_300px]">
+        {/* Mis reportes */}
+        <div className="order-2 lg:order-1">
+          <h2 className="mb-3 font-heading text-lg font-bold text-foreground">Mis reportes</h2>
+          <div className="overflow-hidden rounded-xl border border-border bg-surface shadow-sm">
+            {reports === null ? (
+              <div className="p-8 text-center font-body text-sm text-muted">Cargando…</div>
+            ) : paid.length > 0 ? (
+              paid.map((r) => <ReportRow key={r.id} r={r} />)
+            ) : (
+              <div className="px-6 py-12 text-center">
+                <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-azul-50">
+                  <Icon name="description" className="text-[24px] text-primary" />
+                </div>
+                <p className="font-body font-semibold text-foreground">Aún no tienes reportes comprados</p>
+                <p className="mx-auto mt-1 max-w-xs font-body text-sm text-muted">
+                  Cuando compres un reporte Pro o Ultra, aparecerá aquí para volver a verlo.
+                </p>
+                <div className="mt-4">
+                  <Button variant="accent" size="sm" href="/" iconRight="arrow_forward">
+                    Consultar una placa
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
+          {!usingSupabase && (
+            <p className="mt-3 font-body text-[12px] text-slate-400">
+              El historial real se activa con Supabase configurado.
+            </p>
           )}
         </div>
-        {!isPro && (
-          <p className="mt-3 font-body text-sm text-muted">
-            Tu cuenta aún no tiene PRO activo. La activación se habilita tras la suscripción
-            (próximamente). Mientras tanto usa la consulta gratuita.
-          </p>
-        )}
-        <button
-          onClick={onLogout}
-          className="mt-5 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-accent hover:underline cursor-pointer"
-        >
-          <Icon name="logout" className="text-[18px]" />
-          Cerrar sesión
-        </button>
+
+        {/* Datos de cuenta */}
+        <aside className="order-1 flex flex-col gap-4 lg:order-2 lg:sticky lg:top-20">
+          <div className="rounded-xl border border-border bg-surface p-5 shadow-sm">
+            {account.fullName && (
+              <>
+                <p className="font-body text-xs font-semibold uppercase tracking-wide text-slate-400">Nombre</p>
+                <p className="mb-3 font-body font-semibold text-foreground">{account.fullName}</p>
+              </>
+            )}
+            <p className="font-body text-xs font-semibold uppercase tracking-wide text-slate-400">Correo</p>
+            <p className="break-all font-body font-semibold text-foreground">{account.email}</p>
+            <div className="mt-3">
+              <Badge tone="neutral" icon={null}>
+                Cuenta Basic (gratis)
+              </Badge>
+            </div>
+            <p className="mt-3 font-body text-[13px] leading-snug text-muted">
+              El acceso a Pro/Ultra es por reporte: se desbloquea al comprar la placa que consultas.
+            </p>
+            <button
+              onClick={onLogout}
+              className="mt-4 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-accent hover:underline cursor-pointer"
+            >
+              <Icon name="logout" className="text-[18px]" />
+              Cerrar sesión
+            </button>
+          </div>
+          <Link href="/" className="font-body text-sm text-muted hover:text-foreground">
+            ← Volver al inicio
+          </Link>
+        </aside>
       </div>
-      <Link href="/" className="mt-5 inline-block font-body text-sm text-muted hover:text-foreground">
-        ← Volver al inicio
-      </Link>
     </div>
   );
 }

@@ -117,3 +117,40 @@ export async function getAccount(): Promise<Account | null> {
   const acc = await legacy.fetchMe();
   return acc ? fromLegacy(acc) : null;
 }
+
+export interface ReportHistoryItem {
+  id: string;
+  plate: string;
+  tier: Tier;
+  status: string; // pending | paid | failed
+  amount: number;
+  createdAt: string;
+  paidAt: string | null;
+}
+
+/**
+ * Reportes comprados por el usuario (tabla `purchases`, RLS). Devuelve [] si
+ * Supabase no está configurado o si la tabla aún no existe (migración 0002).
+ */
+export async function getMyReports(): Promise<ReportHistoryItem[]> {
+  if (!usingSupabase) return [];
+  try {
+    const client = await sb();
+    const { data, error } = await client
+      .from('purchases')
+      .select('id, plate, tier, status, amount, created_at, paid_at')
+      .order('created_at', { ascending: false });
+    if (error || !data) return [];
+    return (data as Record<string, unknown>[]).map((r) => ({
+      id: String(r.id),
+      plate: String(r.plate),
+      tier: (r.tier as Tier) ?? 'PRO',
+      status: String(r.status),
+      amount: Number(r.amount ?? 0),
+      createdAt: String(r.created_at),
+      paidAt: r.paid_at ? String(r.paid_at) : null,
+    }));
+  } catch {
+    return [];
+  }
+}
