@@ -35,6 +35,8 @@ function translate(message: string): string {
   if (m.includes('password should be at least')) return 'La contraseña debe tener al menos 8 caracteres.';
   if (m.includes('email not confirmed')) return 'Confirma tu correo antes de iniciar sesión.';
   if (m.includes('unable to validate email')) return 'Ingresa un correo válido.';
+  if (m.includes('invalid path') || m.includes('failed to fetch'))
+    return 'No pudimos conectar con el servidor de cuentas. Verifica la configuración de Supabase (URL del proyecto).';
   return message;
 }
 
