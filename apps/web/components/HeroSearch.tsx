@@ -18,7 +18,7 @@ export function HeroSearch() {
       return;
     }
     setError(null);
-    router.push(`/guiada/${normalized}`);
+    router.push(`/reporte/${normalized}`);
   };
 
   return (
