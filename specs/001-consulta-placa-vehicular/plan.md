@@ -1,6 +1,11 @@
-# Implementation Plan: Consulta de Historial Vehicular por Placa (Perú)
+# Implementation Plan: PlacaPe — Historial Vehicular por Placa (Perú)
 
 **Branch**: `001-consulta-placa-vehicular` | **Date**: 2026-06-12 | **Spec**: [spec.md](./spec.md)
+
+> ⚠️ **El proyecto giró desde este plan original.** Marca **PlacaPe**, niveles de pago
+> (BASIC/PRO/ULTRA), cuentas con **Supabase**, CAPTCHA **Turnstile**, design system nuevo.
+> Estado vigente y todos los virajes en **[estado-actual.md](./estado-actual.md)** — manda
+> ese documento donde discrepe con este.
 
 **Input**: Feature specification from `/specs/001-consulta-placa-vehicular/spec.md`
 

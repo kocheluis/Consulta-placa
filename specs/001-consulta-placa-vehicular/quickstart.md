@@ -1,6 +1,9 @@
-# Quickstart & Validation Guide: Consulta de Historial Vehicular
+# Quickstart & Validation Guide: PlacaPe — Historial Vehicular
 
 **Feature**: `001-consulta-placa-vehicular` | **Date**: 2026-06-12
+
+> ⚠️ Guía del backend de scraping. Para **cuentas/Supabase** ver `SUPABASE.md` (raíz);
+> para el estado vigente y nuevas rutas web, [estado-actual.md](./estado-actual.md).
 
 Guía para levantar el proyecto localmente y validar end-to-end que la feature funciona. Los detalles de implementación viven en `tasks.md` (generado por `/speckit-tasks`).
 
