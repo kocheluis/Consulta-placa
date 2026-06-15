@@ -92,7 +92,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     tier: ReportTier.PRO,
     sources: ['MTC'],
     concept: ScoreConcept.USAGE,
-    dataKind: null,
+    dataKind: SectionKind.REVISION_TECNICA,
     blurb: 'Estado de la revisión técnica (vigente/vencida), última fecha y resultado.',
   },
   {
@@ -102,7 +102,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     tier: ReportTier.PRO,
     sources: ['SAT'],
     concept: ScoreConcept.LEGAL,
-    dataKind: null,
+    dataKind: SectionKind.CAPTURA,
     blurb: 'Si la placa registra orden de captura vigente.',
   },
   {
@@ -112,7 +112,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     tier: ReportTier.PRO,
     sources: ['ATU'],
     concept: ScoreConcept.USAGE,
-    dataKind: null,
+    dataKind: SectionKind.TRANSPORTE,
     blurb: 'Si el vehículo está o estuvo registrado para taxi/transporte (uso intensivo).',
   },
   {
@@ -132,7 +132,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     tier: ReportTier.PRO,
     sources: ['ONPE'],
     concept: ScoreConcept.DEBTS,
-    dataKind: null,
+    dataKind: SectionKind.MULTAS_ELECTORALES,
     blurb: 'Multas electorales del titular (por DNI, con su consentimiento).',
   },
   // ── ULTRA: valorización + IA + odómetro ─────────────────────────────

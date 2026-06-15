@@ -54,6 +54,51 @@ export interface SiniestroIndicator {
   periodYears: number;
 }
 
+/** Una papeleta/infracción individual. */
+export interface PapeletaItem {
+  type: string;
+  entity: string;
+  date: string | null;
+  amount: number;
+  status: string;
+}
+
+/** Payload de la sección PAPELETAS (SAT municipal + SUTRAN cinemómetro). */
+export interface PapeletasPayload {
+  total: number;
+  pendingAmount: number;
+  items: PapeletaItem[];
+}
+
+/** Payload de la sección CAPTURA (orden de captura SAT). */
+export interface CapturaIndicator {
+  hasCapture: boolean;
+  detail: string | null;
+}
+
+/** Payload de la sección REVISION_TECNICA (MTC). */
+export interface RevisionTecnica {
+  hasValid: boolean;
+  status: string | null;
+  lastInspection: string | null;
+  validUntil: string | null;
+  result: string | null;
+}
+
+/** Payload de la sección TRANSPORTE (ATU — uso como taxi/transporte). */
+export interface TransporteInfo {
+  isPublicTransport: boolean;
+  modality: string | null;
+  detail: string | null;
+}
+
+/** Payload de la sección MULTAS_ELECTORALES (ONPE, por DNI del titular). */
+export interface MultasElectorales {
+  hasFine: boolean;
+  amount: number | null;
+  detail: string | null;
+}
+
 /**
  * Resultado crudo que devuelve un scraper para una sección concreta.
  * Es el contrato estable que aísla la fragilidad de las fuentes externas.
