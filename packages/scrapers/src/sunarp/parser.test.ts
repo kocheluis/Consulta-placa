@@ -33,6 +33,27 @@ describe('parseSunarp', () => {
     expect((result!.payload as { stolenAlert: boolean }).stolenAlert).toBe(true);
   });
 
+  it('parsea la estructura real (Nº prefijo, estado, anotaciones, sede, año de modelo)', () => {
+    const [result] = parseSunarp(fixture('real-sunarp.html'), 'XYZ-987');
+    expect(result!.status).toBe('AVAILABLE');
+    expect(result!.vehicle).toMatchObject({
+      brand: 'TOYOTA',
+      model: 'HILUX',
+      color: 'ROJO',
+      serie: '8AJBA3FS4N1234567',
+      vin: '8AJBA3FS4N1234567',
+      engineNumber: '1GD9876543',
+      year: 2024,
+      registralStatus: 'EN CIRCULACION',
+      annotations: 'NINGUNA',
+      sede: 'LIMA',
+      stolenAlert: false,
+    });
+    // "PLACA ANTERIOR: NINGUNA" debe quedar como sin dato.
+    expect(result!.vehicle?.platePrevious).toBeNull();
+    expect(result!.ownerName).toBe('RODRIGUEZ TORRES, MARIA ELENA');
+  });
+
   it('devuelve NOT_FOUND cuando no hay registros', () => {
     const [result] = parseSunarp(fixture('not-found.html'), 'ZZZ-999');
     expect(result!.status).toBe('NOT_FOUND');

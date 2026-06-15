@@ -7,13 +7,17 @@ import {
   type VehicleData,
 } from '@app/shared';
 
-/** Normaliza una etiqueta a una clave estable (sin tildes, minúsculas). */
+/**
+ * Normaliza una etiqueta a una clave estable: sin tildes, minúsculas, y sin el
+ * prefijo "Nº"/"N°" que usa SUNARP (p. ej. "Nº SERIE" → "serie").
+ */
 function normLabel(label: string): string {
   return label
     .normalize('NFD')
     .replace(/[̀-ͯ]/g, '')
     .trim()
-    .toLowerCase();
+    .toLowerCase()
+    .replace(/^n[º°]\.?\s*/, '');
 }
 
 function cleanValue(v: string | undefined): string | null {
@@ -21,6 +25,14 @@ function cleanValue(v: string | undefined): string | null {
   const t = v.trim();
   if (!t || t === '-') return null;
   return t;
+}
+
+/** Valores "vacíos" típicos de SUNARP que deben tratarse como sin dato. */
+function cleanValueStrict(v: string | undefined): string | null {
+  const t = cleanValue(v);
+  if (!t) return null;
+  const n = t.toLowerCase();
+  return n === 'ninguna' || n === 'ninguno' || n === 'no registra' || n === 's/n' ? null : t;
 }
 
 /**
@@ -65,12 +77,19 @@ export function parseSunarp(html: string, plateDisplay: string): SourceResult[] 
     ];
   }
 
-  const yearRaw = cleanValue(data.get('ano fabricacion') ?? data.get('ano'));
-  const stolenAlert = root.querySelector('.alerta-robo') !== null;
+  const yearRaw = cleanValue(
+    data.get('ano de modelo') ?? data.get('ano fabricacion') ?? data.get('ano'),
+  );
+  const annotations = cleanValue(data.get('anotaciones'));
+  const registralStatus = cleanValue(data.get('estado'));
+  const stolenAlert =
+    root.querySelector('.alerta-robo') !== null ||
+    /robo|orden de captura/i.test(annotations ?? '') ||
+    /robo/i.test(registralStatus ?? '');
 
   const vehicle: Partial<VehicleData> = {
     plateDisplay,
-    platePrevious: cleanValue(data.get('placa anterior')),
+    platePrevious: cleanValueStrict(data.get('placa anterior')),
     brand: cleanValue(data.get('marca')),
     model: cleanValue(data.get('modelo')),
     year: yearRaw ? Number.parseInt(yearRaw, 10) : null,
@@ -78,10 +97,13 @@ export function parseSunarp(html: string, plateDisplay: string): SourceResult[] 
     serie: cleanValue(data.get('serie')),
     vin: cleanValue(data.get('vin')),
     engineNumber: cleanValue(data.get('motor')),
+    registralStatus,
+    annotations,
+    sede: cleanValue(data.get('sede')),
     stolenAlert,
   };
 
-  const ownerName = cleanValue(data.get('propietario'));
+  const ownerName = cleanValue(data.get('propietario') ?? data.get('propietario(s)'));
 
   return [
     {
