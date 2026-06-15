@@ -160,7 +160,7 @@ function FirstSearchView() {
       setError('Ingresa una placa peruana válida (ej. ABC-123).');
       return;
     }
-    router.push(`/guiada/${normalized}`);
+    router.push(`/reporte/${normalized}`);
   };
 
   return (
