@@ -3,8 +3,23 @@
 import { useParams } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import Link from 'next/link';
-import type { Report, SectionResult, InsurancePolicy, SiniestroIndicator } from '@app/shared';
-import { formatPlateDisplay, computeScore, ScoreLevel, SectionKind, SectionStatus } from '@app/shared';
+import type {
+  Report,
+  SectionResult,
+  InsurancePolicy,
+  SiniestroIndicator,
+  SectionCatalogEntry,
+  OwnerInfo,
+} from '@app/shared';
+import {
+  formatPlateDisplay,
+  computeScore,
+  ScoreLevel,
+  SectionStatus,
+  SECTION_CATALOG,
+  TIER_RANK,
+  ReportTier,
+} from '@app/shared';
 import { useConsulta } from '@/lib/use-consulta';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
@@ -30,14 +45,10 @@ const SCORE_TO_TONE: Record<string, Tone> = {
   [ScoreLevel.BAD]: 'danger',
   [ScoreLevel.UNKNOWN]: 'neutral',
 };
-const SECTION_META: Record<string, { label: string; icon: string }> = {
-  [SectionKind.REGISTRAL]: { label: 'Identidad del vehículo', icon: 'directions_car' },
-  [SectionKind.SEGUROS]: { label: 'Seguro y SOAT', icon: 'health_and_safety' },
-  [SectionKind.SINIESTRALIDAD]: { label: 'Siniestralidad', icon: 'car_crash' },
-  [SectionKind.PAPELETAS]: { label: 'Papeletas e infracciones', icon: 'receipt_long' },
-  [SectionKind.GNV]: { label: 'Deuda de GNV', icon: 'local_gas_station' },
-  [SectionKind.DEUDA_BANCARIA]: { label: 'Deuda bancaria / prendas', icon: 'account_balance' },
-  [SectionKind.PNP]: { label: 'Investigación PNP', icon: 'gavel' },
+const TIER_NAME: Record<string, string> = {
+  [ReportTier.BASIC]: 'Gratis',
+  [ReportTier.PRO]: 'Pro',
+  [ReportTier.ULTRA]: 'Ultra',
 };
 
 /* ── Helpers de UI ────────────────────────────────────────────────── */
@@ -159,11 +170,10 @@ export default function ReportePage() {
 function ReportView({ report, cached, onRetry }: { report: Report; cached: boolean; onRetry: () => void }) {
   const v = report.vehicle;
   const score = computeScore(report);
-  const find = (kind: string): SectionResult | undefined => report.sections.find((s) => s.kind === kind);
-  const registral = find(SectionKind.REGISTRAL);
-  const seguros = find(SectionKind.SEGUROS);
-  const siniestro = find(SectionKind.SINIESTRALIDAD);
-  const comingSoon = report.sections.filter((s) => s.status === SectionStatus.COMING_SOON);
+  const sectionByKind = (kind: string | null): SectionResult | undefined =>
+    kind ? report.sections.find((s) => s.kind === kind) : undefined;
+  // Sin pago aún: el reporte opera en BASIC; PRO/ULTRA se muestran bloqueados.
+  const currentTier = ReportTier.BASIC;
   const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
   const summary = v ? [v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') : 'Vehículo';
 
@@ -273,76 +283,16 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
           )}
         </aside>
 
-        {/* Secciones */}
+        {/* Secciones — desde el catálogo: BASIC con datos, PRO/ULTRA bloqueados */}
         <main className="grid items-start gap-4 sm:grid-cols-2">
-          {/* Identidad */}
-          {registral && (
-            <Card
-              title={SECTION_META[SectionKind.REGISTRAL].label}
-              icon={SECTION_META[SectionKind.REGISTRAL].icon}
-              className="sm:col-span-2"
-              action={
-                registral.status === SectionStatus.AVAILABLE ? (
-                  <Badge tone="success" size="sm">Verificado</Badge>
-                ) : undefined
-              }
-            >
-              {registral.status === SectionStatus.AVAILABLE && v ? (
-                <>
-                  <DefGrid
-                    items={[
-                      ['Marca', v.brand],
-                      ['Modelo', v.model],
-                      ['Año', v.year ? String(v.year) : null],
-                      ['Color', v.color],
-                      ['Serie', v.serie],
-                      ['VIN', v.vin],
-                      ['Motor', v.engineNumber],
-                      ['Placa anterior', v.platePrevious],
-                    ]}
-                  />
-                  {v.owner && (
-                    <div className="mt-4 border-t border-border pt-3">
-                      <span className="font-body text-xs font-semibold uppercase tracking-wide text-slate-400">Titular</span>
-                      <p className="font-body text-[15px] font-medium text-foreground">{v.owner.name}</p>
-                      {v.owner.note && <p className="mt-1 font-body text-xs text-muted">{v.owner.note}</p>}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <Unavailable status={registral.status} onRetry={onRetry} />
-              )}
-            </Card>
-          )}
-
-          {/* Seguro y SOAT */}
-          {seguros && (
-            <Card title={SECTION_META[SectionKind.SEGUROS].label} icon={SECTION_META[SectionKind.SEGUROS].icon}>
-              <SegurosBody section={seguros} onRetry={onRetry} />
-            </Card>
-          )}
-
-          {/* Siniestralidad */}
-          {siniestro && (
-            <Card title={SECTION_META[SectionKind.SINIESTRALIDAD].label} icon={SECTION_META[SectionKind.SINIESTRALIDAD].icon}>
-              <SiniestroBody section={siniestro} onRetry={onRetry} />
-            </Card>
-          )}
-
-          {/* Próximamente */}
-          {comingSoon.map((s) => {
-            const meta = SECTION_META[s.kind] ?? { label: s.kind, icon: 'schedule' };
+          {SECTION_CATALOG.map((entry) => {
+            const locked = TIER_RANK[entry.tier] > TIER_RANK[currentTier];
+            const section = sectionByKind(entry.dataKind);
+            const wide = entry.key === 'identidad' || entry.key === 'ia';
             return (
-              <Card
-                key={s.kind}
-                title={meta.label}
-                icon={meta.icon}
-                action={<Badge tone="neutral" size="sm" icon="schedule">Próximamente</Badge>}
-              >
-                <p className="font-body text-sm text-muted">
-                  Esta fuente aún no está conectada. La incorporaremos al reporte muy pronto.
-                </p>
-              </Card>
+              <CatalogCard key={entry.key} entry={entry} locked={locked} wide={wide}>
+                <SectionBody entry={entry} section={section} vehicle={v} onRetry={onRetry} />
+              </CatalogCard>
             );
           })}
         </main>
@@ -358,6 +308,124 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
   );
 }
 
+/* ── Tarjeta de sección (catálogo) con bloqueo por tier ───────────── */
+function CatalogCard({
+  entry,
+  locked,
+  wide,
+  children,
+}: {
+  entry: SectionCatalogEntry;
+  locked: boolean;
+  wide?: boolean;
+  children: ReactNode;
+}) {
+  const neededName = entry.tier === ReportTier.ULTRA ? 'Ultra' : 'Pro';
+  const action = locked ? (
+    <Badge tone="neutral" size="sm" icon="lock">
+      {neededName}
+    </Badge>
+  ) : entry.tier === ReportTier.BASIC ? (
+    <Badge tone="neutral" size="sm" icon={null}>
+      Gratis
+    </Badge>
+  ) : null;
+  return (
+    <div className={wide ? 'sm:col-span-2' : ''}>
+      <Card title={entry.label} icon={entry.icon} action={action}>
+        {locked ? (
+          <div className="relative">
+            <div className="pointer-events-none select-none opacity-50 blur-[5px]">
+              <p className="font-body text-sm text-muted">{entry.blurb}</p>
+            </div>
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 p-3 text-center">
+              <div className="grid h-11 w-11 place-items-center rounded-full bg-surface shadow-md">
+                <Icon name="lock" className="text-[22px] text-primary" />
+              </div>
+              <span className="font-body text-[13px] font-semibold text-slate-700">Disponible en {neededName}</span>
+              <Button variant="accent" size="sm" iconRight="arrow_forward" href="/planes">
+                Mejorar a {neededName}
+              </Button>
+            </div>
+          </div>
+        ) : (
+          children
+        )}
+      </Card>
+    </div>
+  );
+}
+
+function ComingSoon({ blurb }: { blurb: string }) {
+  return (
+    <div className="flex items-start gap-2.5">
+      <Icon name="schedule" className="mt-0.5 text-[18px] text-slate-400" />
+      <p className="font-body text-sm text-muted">
+        {blurb} <span className="text-slate-400">(próximamente)</span>
+      </p>
+    </div>
+  );
+}
+
+/** Cuerpo de cada sección desbloqueada: dato real o "próximamente". */
+function SectionBody({
+  entry,
+  section,
+  vehicle,
+  onRetry,
+}: {
+  entry: SectionCatalogEntry;
+  section?: SectionResult;
+  vehicle: Report['vehicle'];
+  onRetry: () => void;
+}) {
+  if (entry.key === 'identidad') {
+    if (section?.status === SectionStatus.AVAILABLE && vehicle) {
+      return (
+        <DefGrid
+          items={[
+            ['Marca', vehicle.brand],
+            ['Modelo', vehicle.model],
+            ['Año', vehicle.year ? String(vehicle.year) : null],
+            ['Color', vehicle.color],
+            ['Serie', vehicle.serie],
+            ['VIN', vehicle.vin],
+            ['Motor', vehicle.engineNumber],
+            ['Placa anterior', vehicle.platePrevious],
+            ['Estado', vehicle.registralStatus],
+            ['Anotaciones', vehicle.annotations],
+            ['Sede', vehicle.sede],
+          ]}
+        />
+      );
+    }
+    return section ? <Unavailable status={section.status} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'propietarios') {
+    return vehicle?.owner ? <PropietariosBody owner={vehicle.owner} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'soat') {
+    return section ? <SegurosBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'siniestralidad') {
+    return section ? <SiniestroBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  return <ComingSoon blurb={entry.blurb} />;
+}
+
+function PropietariosBody({ owner }: { owner: OwnerInfo }) {
+  return (
+    <div>
+      <p className="font-body text-[15px] font-medium text-foreground">{owner.name}</p>
+      {owner.note && <p className="mt-1 font-body text-xs text-muted">{owner.note}</p>}
+    </div>
+  );
+}
+
 function SegurosBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const p = section.payload as InsurancePolicy | undefined;
@@ -367,13 +435,17 @@ function SegurosBody({ section, onRetry }: { section: SectionResult; onRetry: ()
       {p.hasActiveSoat ? (
         <StatusLine tone="success" icon="verified">SOAT vigente</StatusLine>
       ) : (
-        <StatusLine tone="warning" icon="warning">Sin SOAT vigente registrado (últimos 5 años)</StatusLine>
+        <StatusLine tone="warning" icon="warning">Sin SOAT vigente registrado</StatusLine>
       )}
       <DefGrid
         items={[
-          ['Aseguradora', p.insurer],
-          ['N° de póliza', p.policyNumber],
+          ['Compañía', p.insurer],
+          ['Certificado', p.certificate],
           ['Vigencia', [p.validFrom, p.validTo].filter(Boolean).join(' – ') || null],
+          ['Uso', p.use],
+          ['Clase', p.vehicleClass],
+          ['Tipo', p.policyType],
+          ['N° de póliza', p.policyNumber],
         ]}
       />
     </div>

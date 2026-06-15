@@ -10,6 +10,7 @@ shell commands, and other important information, read the current plan:
 
 Related design artifacts:
 - **Estado actual y virajes**: [specs/001-consulta-placa-vehicular/estado-actual.md](specs/001-consulta-placa-vehicular/estado-actual.md)
+- **Arquitectura del reporte** (secciones×fuentes×tier×score): [specs/001-consulta-placa-vehicular/report-architecture.md](specs/001-consulta-placa-vehicular/report-architecture.md)
 - Spec: [specs/001-consulta-placa-vehicular/spec.md](specs/001-consulta-placa-vehicular/spec.md)
 - Research / tech decisions: [specs/001-consulta-placa-vehicular/research.md](specs/001-consulta-placa-vehicular/research.md)
 - Data model: [specs/001-consulta-placa-vehicular/data-model.md](specs/001-consulta-placa-vehicular/data-model.md)

@@ -5,7 +5,7 @@ import type {
   ReportStatus,
 } from './enums.js';
 
-/** Datos registrales no personales del vehículo. */
+/** Datos registrales no personales del vehículo (SUNARP Consulta Vehicular). */
 export interface VehicleData {
   brand: string | null;
   model: string | null;
@@ -17,6 +17,12 @@ export interface VehicleData {
   plateDisplay: string;
   platePrevious: string | null;
   stolenAlert: boolean;
+  /** Estado registral, p. ej. "EN CIRCULACION". */
+  registralStatus?: string | null;
+  /** Anotaciones registrales, p. ej. "NINGUNA". */
+  annotations?: string | null;
+  /** Sede registral SUNARP, p. ej. "LIMA". */
+  sede?: string | null;
 }
 
 /** Titular — dato personal, minimizado. */
@@ -25,13 +31,21 @@ export interface OwnerInfo {
   note: string;
 }
 
-/** Payload de la sección SEGUROS. */
+/** Payload de la sección SEGUROS / SOAT (APESEG). */
 export interface InsurancePolicy {
   hasActiveSoat: boolean;
   insurer: string | null;
   policyNumber: string | null;
   validFrom: string | null;
   validTo: string | null;
+  /** N° de certificado SOAT. */
+  certificate?: string | null;
+  /** Uso, p. ej. "PARTICULAR". */
+  use?: string | null;
+  /** Clase, p. ej. "CAMIONETA SUV/RURAL". */
+  vehicleClass?: string | null;
+  /** Tipo de póliza, p. ej. "DIGITAL". */
+  policyType?: string | null;
 }
 
 /** Payload de la sección SINIESTRALIDAD. */
