@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { login, register, fetchMe, clearToken, type Account } from '@/lib/auth';
+import { login, register, getAccount, logout, usingSupabase, type Account } from '@/lib/account';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Icon } from '@/components/ui/Icon';
@@ -114,19 +114,27 @@ function Divider({ label }: { label: string }) {
 
 /* ── Pantalla de cuenta (logueado) ────────────────────────────────── */
 function AccountView({ account, onLogout }: { account: Account; onLogout: () => void }) {
-  const isPro = account.isPro && account.isActive;
+  const isPro = account.tier !== 'BASIC';
   return (
     <div className="mx-auto max-w-md px-4 py-14">
       <h1 className="font-heading text-2xl font-bold text-foreground">Mi cuenta</h1>
       <div className="mt-5 rounded-xl border border-border bg-surface p-6 shadow-sm">
+        {account.fullName && (
+          <>
+            <p className="font-body text-sm text-muted">Nombre</p>
+            <p className="mb-3 font-body font-semibold text-foreground">{account.fullName}</p>
+          </>
+        )}
         <p className="font-body text-sm text-muted">Correo</p>
         <p className="font-body font-semibold text-foreground">{account.email}</p>
         <div className="mt-3">
           {isPro ? (
-            <Badge tone="success">PRO activa</Badge>
+            <Badge tone="success" icon="bolt">
+              {account.tier === 'ULTRA' ? 'Plan Ultra' : 'Plan Pro'} activo
+            </Badge>
           ) : (
             <Badge tone="neutral" icon={null}>
-              Cuenta gratuita
+              Cuenta Basic (gratis)
             </Badge>
           )}
         </div>
@@ -166,7 +174,7 @@ export default function CuentaPage() {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    fetchMe().then(setAccount);
+    getAccount().then(setAccount).catch(() => setAccount(null));
   }, []);
 
   const go = (v: View) => {
@@ -196,12 +204,18 @@ export default function CuentaPage() {
     setBusy(true);
     try {
       if (view === 'register') {
-        await register(email, password);
-        await login(email, password);
+        const fullName = `${nombres} ${apellidos}`.trim() || undefined;
+        const { account: acc, needsConfirmation } = await register(email, password, fullName);
+        if (needsConfirmation) {
+          setNotice('Te enviamos un correo para confirmar tu cuenta. Ábrelo para activar el acceso.');
+          setBusy(false);
+          return;
+        }
+        setAccount(acc ?? (await getAccount()));
       } else {
         await login(email, password);
+        setAccount(await getAccount());
       }
-      setAccount(await fetchMe());
     } catch (err) {
       setError((err as Error).message);
     } finally {
@@ -213,8 +227,8 @@ export default function CuentaPage() {
     return (
       <AccountView
         account={account}
-        onLogout={() => {
-          clearToken();
+        onLogout={async () => {
+          await logout();
           setAccount(null);
           go('login');
         }}
@@ -423,6 +437,13 @@ export default function CuentaPage() {
               >
                 Ingresar
               </button>
+            </p>
+          )}
+
+          {!usingSupabase && (
+            <p className="mt-6 flex items-center justify-center gap-1.5 text-center font-body text-[12px] text-slate-400">
+              <Icon name="info" className="text-[14px]" />
+              Cuentas en modo de prueba. Configura Supabase para activarlas.
             </p>
           )}
         </div>
