@@ -70,7 +70,8 @@ const jsonLd = {
 const NAV_LINKS = [
   { label: 'Consultar', href: '/' },
   { label: 'Planes', href: '/planes' },
-  { label: 'Empresas', href: '/#empresas' },
+  { label: 'Empresas', href: '/empresas' },
+  { label: 'Ayuda', href: '/ayuda' },
 ];
 
 const FOOTER_COLS: { h: string; links: { label: string; href: string }[] }[] = [
@@ -79,7 +80,7 @@ const FOOTER_COLS: { h: string; links: { label: string; href: string }[] }[] = [
     links: [
       { label: 'Consultar placa', href: '/' },
       { label: 'Planes', href: '/planes' },
-      { label: 'Empresas', href: '/#empresas' },
+      { label: 'Empresas', href: '/empresas' },
     ],
   },
   {
@@ -87,7 +88,7 @@ const FOOTER_COLS: { h: string; links: { label: string; href: string }[] }[] = [
     links: [
       { label: 'Cómo funciona', href: '/#como-funciona' },
       { label: 'Fuentes oficiales', href: '/#fuentes' },
-      { label: 'Preguntas frecuentes', href: '/#faq' },
+      { label: 'Centro de ayuda', href: '/ayuda' },
     ],
   },
   {
