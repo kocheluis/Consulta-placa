@@ -3,15 +3,24 @@ export const SourceId = {
   SUNARP: 'SUNARP',
   SBS: 'SBS',
   APESEG: 'APESEG',
+  SAT: 'SAT',
+  SUTRAN: 'SUTRAN',
+  MTC: 'MTC',
+  ATU: 'ATU',
+  ONPE: 'ONPE',
 } as const;
 export type SourceId = (typeof SourceId)[keyof typeof SourceId];
 
-/** Tipos de sección del reporte. Solo las 3 primeras están disponibles en el MVP. */
+/** Tipos de sección del reporte (ver SECTION_CATALOG para tier/fuente de cada una). */
 export const SectionKind = {
   REGISTRAL: 'REGISTRAL',
   SEGUROS: 'SEGUROS',
   SINIESTRALIDAD: 'SINIESTRALIDAD',
   PAPELETAS: 'PAPELETAS',
+  CAPTURA: 'CAPTURA',
+  REVISION_TECNICA: 'REVISION_TECNICA',
+  TRANSPORTE: 'TRANSPORTE',
+  MULTAS_ELECTORALES: 'MULTAS_ELECTORALES',
   GNV: 'GNV',
   DEUDA_BANCARIA: 'DEUDA_BANCARIA',
   PNP: 'PNP',
