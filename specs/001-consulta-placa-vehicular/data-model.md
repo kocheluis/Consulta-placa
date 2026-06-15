@@ -1,6 +1,11 @@
-# Data Model: Consulta de Historial Vehicular por Placa
+# Data Model: PlacaPe — Historial Vehicular por Placa
 
 **Feature**: `001-consulta-placa-vehicular` | **Date**: 2026-06-12
+
+> ⚠️ Modelo del backend de scraping (Prisma/Postgres). Las **cuentas** ahora viven en
+> **Supabase** (`profiles` + `tier` BASIC/PRO/ULTRA, ver `supabase/migrations/0001_init.sql`)
+> y el **score** (0–100, por concepto) en `packages/shared/src/score.ts`. Estado vigente:
+> [estado-actual.md](./estado-actual.md).
 
 Modelo de datos derivado de los Key Entities de la spec y las decisiones de research. Persistencia en PostgreSQL (Prisma); caché caliente en Redis.
 

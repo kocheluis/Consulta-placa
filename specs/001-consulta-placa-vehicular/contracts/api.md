@@ -1,6 +1,10 @@
-# API Contract: Consulta de Historial Vehicular
+# API Contract: PlacaPe — Historial Vehicular
 
 **Feature**: `001-consulta-placa-vehicular` | **Base path**: `/api/v1` | **Format**: JSON
+
+> ⚠️ Contrato del backend de scraping (Fastify). **Auth ya no usa estos endpoints**: las
+> cuentas son **Supabase Auth** (la web consume `apps/web/lib/account.ts`, no `/api/v1/auth/*`).
+> Faltan endpoints de pago (IziPay) y de tier. Ver [estado-actual.md](../estado-actual.md).
 
 API REST consumida por la web (Next.js) y, en fase posterior, por la app Expo (FR-061). Esquemas validados con Zod (compartidos en `packages/shared`). Versión OpenAPI completa en [openapi.yaml](./openapi.yaml).
 

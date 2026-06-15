@@ -1,6 +1,10 @@
-# Research & Technical Decisions: Consulta de Historial Vehicular por Placa
+# Research & Technical Decisions: PlacaPe — Historial Vehicular por Placa
 
 **Feature**: `001-consulta-placa-vehicular` | **Date**: 2026-06-12
+
+> ⚠️ Decisiones de Fase 0. Actualizaciones posteriores: CAPTCHA = **Cloudflare Turnstile**
+> + **CapSolver** (no CAPTCHA de imagen), cuentas en **Supabase**, pagos por reporte con
+> IziPay/Yape. Ver [estado-actual.md](./estado-actual.md).
 
 Este documento consolida las decisiones técnicas (Fase 0). Se apoya en la investigación de fuentes de datos realizada para la spec (sin API oficial peruana; obtención por scraping de portales con CAPTCHA).
 

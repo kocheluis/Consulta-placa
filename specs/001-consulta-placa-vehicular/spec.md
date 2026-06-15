@@ -1,10 +1,14 @@
-# Feature Specification: Consulta de Historial Vehicular por Placa (Perú)
+# Feature Specification: PlacaPe — Historial Vehicular por Placa (Perú)
 
 **Feature Branch**: `001-consulta-placa-vehicular`
 
 **Created**: 2026-06-12
 
-**Status**: Draft
+**Status**: En desarrollo (marcha blanca)
+
+> ⚠️ Esta spec describe el alcance original. El producto evolucionó (marca **PlacaPe**,
+> niveles **BASIC/PRO/ULTRA**, cuentas **Supabase**, pagos por reporte, CAPTCHA Turnstile).
+> Ver el estado vigente y los cambios de alcance en **[estado-actual.md](./estado-actual.md)**.
 
 **Input**: User description: "Aplicación web (y posteriormente app Android para Play Store) para consultar el historial de un vehículo peruano por su número de placa, mostrando datos registrales (SUNARP), seguros y siniestralidad (SBS), y estado del SOAT, con secciones 'próximamente' para papeletas, GNV, deuda bancaria e investigaciones PNP que aún no tienen fuente pública automatizable."
 
