@@ -45,10 +45,15 @@ export function parseApeseg(html: string): SourceResult[] {
   const estado = (data.get('estado') ?? '').toUpperCase();
   const policy: InsurancePolicy = {
     hasActiveSoat: estado.includes('VIGENTE') && !estado.includes('NO VIGENTE'),
-    insurer: cleanValue(data.get('aseguradora')),
+    // APESEG rotula la compañía como "Compañía"; SBS la rotula "Aseguradora".
+    insurer: cleanValue(data.get('compania') ?? data.get('aseguradora')),
     policyNumber: cleanValue(data.get('certificado') ?? data.get('poliza')),
-    validFrom: cleanValue(data.get('vigencia desde')),
-    validTo: cleanValue(data.get('vigencia hasta')),
+    validFrom: cleanValue(data.get('inicio') ?? data.get('vigencia desde')),
+    validTo: cleanValue(data.get('fin') ?? data.get('vigencia hasta')),
+    certificate: cleanValue(data.get('certificado')),
+    use: cleanValue(data.get('uso')),
+    vehicleClass: cleanValue(data.get('clase')),
+    policyType: cleanValue(data.get('tipo')),
   };
 
   return [
