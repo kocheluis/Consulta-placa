@@ -4,7 +4,7 @@ import { Analytics } from '@vercel/analytics/react';
 import { Button } from '@/components/ui/Button';
 import './globals.css';
 
-const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://consultavehicular.vercel.app';
+const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://placape.pe';
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
