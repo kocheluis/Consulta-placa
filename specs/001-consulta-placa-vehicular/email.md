@@ -71,8 +71,12 @@ y Redirect URL `https://placape.pe/auth/confirmado`.
 
 ### Plantilla "Confirm signup" (pegar en Auth → Email Templates)
 
-Usa la sintaxis Go de Supabase (`{{ .ConfirmationURL }}`). HTML email-safe con la
-marca PlacaPe:
+**Importante:** el enlace NO usa el `{{ .ConfirmationURL }}` por defecto (que va por
+PKCE a la Site URL como `?redirect_to`). Usa el flujo **token_hash** apuntando a la
+ruta [`/auth/confirm`](../../apps/web/app/auth/confirm/route.ts) de la app, que
+verifica con `verifyOtp`, **inicia sesión** del lado servidor y funciona aunque el
+correo se abra en otro navegador. Requiere **Site URL** = `https://placape.pe` (para
+que `{{ .SiteURL }}` resuelva bien). HTML email-safe con la marca PlacaPe:
 
 ```html
 <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:#F5F8FA;padding:32px 12px;font-family:-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif">
@@ -88,9 +92,9 @@ marca PlacaPe:
         <p style="margin:0 0 4px">Gracias por crear tu cuenta en PlacaPe. Confirma tu correo para empezar a consultar el historial de cualquier vehículo del Perú.</p>
         <table role="presentation" cellpadding="0" cellspacing="0" style="margin:24px 0"><tr>
           <td style="border-radius:12px;background:#16B5A3">
-            <a href="{{ .ConfirmationURL }}" style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:700;color:#fff;text-decoration:none;border-radius:12px">Confirmar mi cuenta</a>
+            <a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup" style="display:inline-block;padding:13px 26px;font-size:15px;font-weight:700;color:#fff;text-decoration:none;border-radius:12px">Confirmar mi cuenta</a>
           </td></tr></table>
-        <p style="margin:0;font-size:13px;color:#647884">Si el botón no funciona, copia este enlace:<br><a href="{{ .ConfirmationURL }}" style="color:#14506B">{{ .ConfirmationURL }}</a></p>
+        <p style="margin:0;font-size:13px;color:#647884">Si el botón no funciona, copia este enlace:<br><a href="{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup" style="color:#14506B">{{ .SiteURL }}/auth/confirm?token_hash={{ .TokenHash }}&type=signup</a></p>
         <p style="margin:16px 0 0;font-size:13px;color:#647884">Si no creaste esta cuenta, ignora este correo.</p>
       </td></tr>
       <tr><td style="background:#07222E;padding:22px 32px">
