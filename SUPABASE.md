@@ -29,8 +29,10 @@ Supabase Auth; si faltan, cae al backend de prueba (API Fastify).
 - **Auth → Providers → Email**: deja activada la *confirmación por correo*
   (la UI ya maneja el estado "revisa tu correo"). Para pruebas rápidas en
   marcha blanca puedes desactivarla temporalmente.
-- **Auth → URL Configuration**: agrega `https://consultavehicular.vercel.app`
-  (y el dominio final `placape.pe`) a *Site URL* y *Redirect URLs*.
+- **Auth → URL Configuration**: pon `https://placape.pe` como *Site URL* y
+  agrega `https://placape.pe/auth/confirmado` a *Redirect URLs*.
+- **Auth → SMTP Settings**: activa *Custom SMTP* con Resend para que los correos
+  de confirmación salgan desde `@placape.pe` (ver [`specs/001-consulta-placa-vehicular/email.md`](specs/001-consulta-placa-vehicular/email.md)).
 - **OAuth (Google/Apple)**: cuando los configures, los botones de la pantalla
   de acceso se cablean con `signInWithOAuth`.
 
