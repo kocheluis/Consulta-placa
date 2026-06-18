@@ -31,6 +31,6 @@ export async function GET(request: Request) {
     }
   }
 
-  // Token inválido o expirado: vuelve al acceso.
-  return NextResponse.redirect(`${baseUrl}/cuenta`);
+  // Token inválido o expirado: pantalla de error con mensaje claro.
+  return NextResponse.redirect(`${baseUrl}/auth/confirmado?error=1`);
 }

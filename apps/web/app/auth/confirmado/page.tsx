@@ -7,7 +7,32 @@ export const metadata: Metadata = {
   robots: { index: false, follow: false },
 };
 
-export default function ConfirmadoPage() {
+export default async function ConfirmadoPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ error?: string }>;
+}) {
+  const { error } = await searchParams;
+
+  if (error) {
+    return (
+      <section className="bg-background px-4 py-16 sm:py-24">
+        <StateScreen
+          tone="danger"
+          icon="error"
+          title="No pudimos confirmar tu cuenta"
+          description="El enlace de confirmación expiró o ya fue usado. Inicia sesión; si tu correo aún no está verificado, podrás pedir un nuevo enlace."
+        >
+          <div className="flex flex-wrap justify-center gap-3">
+            <Button variant="accent" size="lg" href="/cuenta" iconRight="arrow_forward">
+              Ir a iniciar sesión
+            </Button>
+          </div>
+        </StateScreen>
+      </section>
+    );
+  }
+
   return (
     <section className="bg-background px-4 py-16 sm:py-24">
       <StateScreen
