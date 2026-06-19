@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { getAccount, type Account } from '@/lib/account';
+import { getAccount, onAccountChange, type Account } from '@/lib/account';
 import { Icon } from '@/components/ui/Icon';
 
 /**
@@ -20,8 +20,13 @@ export function HeaderAccount() {
       .then((a) => alive && setAccount(a))
       .catch(() => alive && setAccount(null))
       .finally(() => alive && setLoaded(true));
+    // Mantiene la barra sincronizada al iniciar/cerrar sesión sin recargar.
+    const unsub = onAccountChange((a) => {
+      if (alive) setAccount(a);
+    });
     return () => {
       alive = false;
+      unsub();
     };
   }, []);
 

@@ -134,6 +134,39 @@ export async function getAccount(): Promise<Account | null> {
   return acc ? fromLegacy(acc) : null;
 }
 
+/**
+ * Notifica cambios de sesión (login/logout) y entrega la cuenta vigente (o
+ * null). Devuelve una función para cancelar la suscripción. Solo reacciona con
+ * Supabase; en modo legado no hay eventos (no-op). La UI (p. ej. la barra
+ * superior) lo usa para mantenerse sincronizada sin recargar la página.
+ */
+export function onAccountChange(cb: (account: Account | null) => void): () => void {
+  if (!usingSupabase) return () => {};
+  let cancelled = false;
+  let unsub = () => {};
+  void (async () => {
+    const client = await sb();
+    const { data } = client.auth.onAuthStateChange((_event, session) => {
+      if (cancelled) return;
+      if (!session) {
+        cb(null);
+        return;
+      }
+      // Se difiere para evitar el "deadlock" documentado al invocar métodos de
+      // Supabase dentro del propio callback de onAuthStateChange.
+      setTimeout(() => {
+        if (!cancelled) sbGetAccount().then(cb).catch(() => cb(null));
+      }, 0);
+    });
+    if (cancelled) data.subscription.unsubscribe();
+    else unsub = () => data.subscription.unsubscribe();
+  })();
+  return () => {
+    cancelled = true;
+    unsub();
+  };
+}
+
 export interface ReportHistoryItem {
   id: string;
   plate: string;
