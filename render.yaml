@@ -2,9 +2,11 @@
 # Crea ambos servicios desde los Dockerfiles del monorepo (contexto = raíz).
 # Las claves con sync:false se completan en el panel de Render (no en git).
 #
-# Antes del primer deploy, corre las migraciones contra tu Postgres (Neon):
-#   DATABASE_URL="postgresql://..." npx prisma migrate deploy \
-#     --schema packages/db/prisma/schema.prisma
+# Region "ohio" = US East, junto a Neon (us-east-1) y Upstash US East: minima latencia.
+#
+# Antes del primer deploy, corre las migraciones desde tu maquina (usa la
+# conexion DIRECTA de Neon via DIRECT_URL del .env; el pooler no sirve para migrar):
+#   npx prisma migrate deploy --schema packages/db/prisma/schema.prisma
 services:
   - type: web
     name: placape-api
@@ -12,7 +14,7 @@ services:
     dockerfilePath: ./apps/api/Dockerfile
     dockerContext: .
     plan: free
-    region: oregon
+    region: ohio
     healthCheckPath: /health
     envVars:
       - key: NODE_ENV
@@ -32,7 +34,7 @@ services:
     dockerfilePath: ./apps/worker/Dockerfile
     dockerContext: .
     plan: starter
-    region: oregon
+    region: ohio
     envVars:
       - key: NODE_ENV
         value: production
