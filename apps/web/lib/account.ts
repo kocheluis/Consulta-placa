@@ -114,7 +114,7 @@ export async function signInWithProvider(provider: OAuthProvider): Promise<void>
   if (!usingSupabase) throw new Error('El acceso con Google/Facebook requiere Supabase configurado.');
   const client = await sb();
   const redirectTo =
-    typeof window !== 'undefined' ? `${window.location.origin}/auth/callback?next=/cuenta` : undefined;
+    typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined;
   const { error } = await client.auth.signInWithOAuth({ provider, options: { redirectTo } });
   if (error) throw new Error(translate(error.message));
 }
