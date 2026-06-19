@@ -1,0 +1,49 @@
+# Render Blueprint — API (web) + Worker (background) de PlacaPe.
+# Crea ambos servicios desde los Dockerfiles del monorepo (contexto = raíz).
+# Las claves con sync:false se completan en el panel de Render (no en git).
+#
+# Antes del primer deploy, corre las migraciones contra tu Postgres (Neon):
+#   DATABASE_URL="postgresql://..." npx prisma migrate deploy \
+#     --schema packages/db/prisma/schema.prisma
+services:
+  - type: web
+    name: placape-api
+    runtime: docker
+    dockerfilePath: ./apps/api/Dockerfile
+    dockerContext: .
+    plan: free
+    region: oregon
+    healthCheckPath: /health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: WEB_ORIGIN
+        value: https://placape.pe
+      - key: JWT_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+
+  - type: worker
+    name: placape-worker
+    runtime: docker
+    dockerfilePath: ./apps/worker/Dockerfile
+    dockerContext: .
+    plan: starter
+    region: oregon
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Arranca en demo para validar el pipeline sin CapSolver; luego pásalo a false.
+      - key: DEMO_MODE
+        value: "true"
+      - key: CAPTCHA_PROVIDER
+        value: local
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CAPTCHA_API_KEY
+        sync: false

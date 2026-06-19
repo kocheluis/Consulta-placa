@@ -17,6 +17,8 @@ const bullConnection = {
   host: redisUrl.hostname,
   port: Number(redisUrl.port || 6379),
   ...(redisUrl.password ? { password: redisUrl.password } : {}),
+  // Upstash y otros Redis gestionados exigen TLS (rediss://).
+  ...(redisUrl.protocol === 'rediss:' ? { tls: {} } : {}),
 };
 
 const worker = new Worker(

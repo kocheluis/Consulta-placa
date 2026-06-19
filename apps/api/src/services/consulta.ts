@@ -115,12 +115,19 @@ export function createRedis(): Redis {
 }
 
 /** Opciones de conexión para BullMQ (evita compartir la instancia de ioredis). */
-export function redisConnectionOptions(): { host: string; port: number; password?: string } {
+export function redisConnectionOptions(): {
+  host: string;
+  port: number;
+  password?: string;
+  tls?: Record<string, never>;
+} {
   const url = new URL(config.redisUrl);
   return {
     host: url.hostname,
     port: Number(url.port || 6379),
     ...(url.password ? { password: url.password } : {}),
+    // Upstash y otros Redis gestionados exigen TLS (rediss://).
+    ...(url.protocol === 'rediss:' ? { tls: {} } : {}),
   };
 }
 

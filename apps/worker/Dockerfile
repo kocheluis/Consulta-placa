@@ -1,21 +1,16 @@
 # Worker (BullMQ + Playwright) — consume la cola y ejecuta los scrapers.
-# Usa la imagen oficial de Playwright que ya trae Chromium y sus dependencias.
-FROM mcr.microsoft.com/playwright:v1.49.1-noble AS base
+# Imagen oficial de Playwright (trae Chromium + dependencias del sistema).
+FROM mcr.microsoft.com/playwright:v1.49.1-noble AS build
 WORKDIR /app
-ENV NODE_ENV=production
-
-FROM base AS deps
-COPY package.json package-lock.json ./
-COPY packages ./packages
-COPY apps/worker ./apps/worker
+COPY . .
 RUN npm ci
-
-FROM deps AS build
 RUN npx prisma generate --schema packages/db/prisma/schema.prisma \
-  && npx tsc --build packages/shared packages/scrapers \
+  && npx tsc --build packages/shared packages/scrapers packages/db \
   && npm run -w @app/worker build
 
-FROM base AS runtime
+FROM mcr.microsoft.com/playwright:v1.49.1-noble AS runtime
+WORKDIR /app
+ENV NODE_ENV=production
 COPY --from=build /app /app
 WORKDIR /app/apps/worker
 CMD ["node", "dist/index.js"]
