@@ -2,6 +2,7 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Analytics } from '@vercel/analytics/react';
 import { Button } from '@/components/ui/Button';
+import { HeaderAccount } from '@/components/HeaderAccount';
 import './globals.css';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://placape.pe';
@@ -129,12 +130,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               ))}
             </nav>
             <div className="ml-auto flex items-center gap-3 sm:ml-0">
-              <Link
-                href="/cuenta"
-                className="hidden font-body text-[14.5px] font-semibold text-foreground hover:text-primary sm:inline"
-              >
-                Iniciar sesión
-              </Link>
+              <HeaderAccount />
               <Button variant="accent" size="sm" iconRight="arrow_forward" href="/">
                 Verificar placa
               </Button>
