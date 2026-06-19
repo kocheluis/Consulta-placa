@@ -99,6 +99,26 @@ export interface MultasElectorales {
   detail: string | null;
 }
 
+/** Una carga/gravamen individual (SIGM / SUNARP). */
+export interface GravamenItem {
+  /** Tipo: "Garantía mobiliaria", "Prenda vehicular", "Embargo", etc. */
+  type: string;
+  /** Acreedor o entidad a favor de quien se inscribe. */
+  creditor: string | null;
+  amount: number | null;
+  date: string | null;
+  /** VIGENTE / LEVANTADO. */
+  status: string;
+}
+
+/** Payload de la sección GRAVAMENES (SIGM — garantías mobiliarias + cargas SUNARP). */
+export interface GravamenesPayload {
+  /** true si el vehículo registra alguna carga/garantía vigente. */
+  hasLiens: boolean;
+  total: number;
+  items: GravamenItem[];
+}
+
 /**
  * Resultado crudo que devuelve un scraper para una sección concreta.
  * Es el contrato estable que aísla la fragilidad de las fuentes externas.

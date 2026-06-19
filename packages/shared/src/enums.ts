@@ -8,6 +8,7 @@ export const SourceId = {
   MTC: 'MTC',
   ATU: 'ATU',
   ONPE: 'ONPE',
+  SIGM: 'SIGM',
 } as const;
 export type SourceId = (typeof SourceId)[keyof typeof SourceId];
 
@@ -21,6 +22,7 @@ export const SectionKind = {
   REVISION_TECNICA: 'REVISION_TECNICA',
   TRANSPORTE: 'TRANSPORTE',
   MULTAS_ELECTORALES: 'MULTAS_ELECTORALES',
+  GRAVAMENES: 'GRAVAMENES',
   GNV: 'GNV',
   DEUDA_BANCARIA: 'DEUDA_BANCARIA',
   PNP: 'PNP',
