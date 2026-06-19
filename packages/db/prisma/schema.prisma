@@ -6,8 +6,11 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  // Conexion directa (sin pooler) que Prisma Migrate usa: Neon no admite el
+  // pooler PgBouncer para migraciones. La app en runtime usa solo `url`.
+  directUrl = env("DIRECT_URL")
 }
 
 enum SectionKind {
