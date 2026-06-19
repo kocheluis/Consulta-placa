@@ -7,12 +7,14 @@ import { parseSutran } from './sutran/parser.js';
 import { parseMtc } from './mtc/parser.js';
 import { parseAtu } from './atu/parser.js';
 import { parseOnpe } from './onpe/parser.js';
+import { parseSigm } from './sigm/parser.js';
 import type {
   PapeletasPayload,
   CapturaIndicator,
   RevisionTecnica,
   TransporteInfo,
   MultasElectorales,
+  GravamenesPayload,
 } from '@app/shared';
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -68,9 +70,20 @@ describe('parsers PRO', () => {
     expect(p.amount).toBe(96);
   });
 
+  it('SIGM → garantía mobiliaria vigente', () => {
+    const [r] = parseSigm(fx('sigm', '__fixtures__', 'con-gravamen.html'));
+    expect(r!.kind).toBe('GRAVAMENES');
+    expect(r!.source).toBe('SIGM');
+    const p = r!.payload as GravamenesPayload;
+    expect(p.hasLiens).toBe(true);
+    expect(p.total).toBe(1);
+    expect(p.items[0]).toMatchObject({ type: 'Garantía mobiliaria', amount: 18500, status: 'VIGENTE' });
+  });
+
   it('devuelven NOT_FOUND si no hay contenedor', () => {
     expect(parseMtc('<html></html>')[0]!.status).toBe('NOT_FOUND');
     expect(parseAtu('<html></html>')[0]!.status).toBe('NOT_FOUND');
     expect(parseOnpe('<html></html>')[0]!.status).toBe('NOT_FOUND');
+    expect(parseSigm('<html></html>')[0]!.status).toBe('NOT_FOUND');
   });
 });

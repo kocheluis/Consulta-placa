@@ -5,6 +5,7 @@ import Link from 'next/link';
 import {
   login,
   register,
+  signInWithProvider,
   getAccount,
   logout,
   getMyReports,
@@ -81,32 +82,38 @@ function BrandPanel() {
   );
 }
 
-/* ── Login social (pendiente de Supabase OAuth) ───────────────────── */
-function SocialButtons() {
+/* ── Login social (Supabase OAuth: Google + Facebook) ─────────────── */
+function SocialButtons({ onError }: { onError: (m: string) => void }) {
+  const [busy, setBusy] = useState<'google' | 'facebook' | null>(null);
+  const go = async (provider: 'google' | 'facebook') => {
+    setBusy(provider);
+    try {
+      await signInWithProvider(provider);
+      // En éxito, el navegador se redirige al proveedor (no vuelve aquí).
+    } catch (err) {
+      onError((err as Error).message);
+      setBusy(null);
+    }
+  };
   const base =
-    'flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-3 font-body text-sm font-semibold text-foreground opacity-60 cursor-not-allowed';
+    'flex flex-1 items-center justify-center gap-2 rounded-md border border-border bg-surface px-3 py-3 font-body text-sm font-semibold text-foreground transition-colors hover:bg-azul-50 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed';
   return (
-    <div className="flex flex-col gap-1.5">
-      <div className="flex gap-2.5">
-        <button type="button" disabled className={base} title="Disponible muy pronto">
-          <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
-            <path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.4h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.5z" />
-            <path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H.9v2.3A9 9 0 0 0 9 18z" />
-            <path fill="#FBBC05" d="M3.9 10.7a5.4 5.4 0 0 1 0-3.4V5H.9a9 9 0 0 0 0 8l3-2.3z" />
-            <path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 .9 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z" />
-          </svg>
-          Google
-        </button>
-        <button type="button" disabled className={base} title="Disponible muy pronto">
-          <svg width="16" height="18" viewBox="0 0 16 18" fill="currentColor" aria-hidden="true">
-            <path d="M13.1 9.6c0-2 1.6-3 1.7-3a3.7 3.7 0 0 0-2.9-1.6c-1.2-.1-2.4.7-3 .7-.6 0-1.6-.7-2.6-.7C5 5.1 3.8 5.8 3.1 7c-1.4 2.4-.4 6 1 8 .7.9 1.4 2 2.5 1.9 1-.04 1.4-.6 2.6-.6s1.6.6 2.6.6 1.8-1 2.4-1.9c.8-1.1 1.1-2.2 1.1-2.2s-2.1-.8-2.1-3.2zM11.2 3.8c.5-.7.9-1.6.8-2.5-.8 0-1.7.5-2.3 1.2-.5.6-1 1.5-.8 2.4.9.1 1.7-.4 2.3-1.1z" />
-          </svg>
-          Apple
-        </button>
-      </div>
-      <p className="text-center text-[11px] font-medium text-muted">
-        Acceso con Google y Apple — disponible muy pronto
-      </p>
+    <div className="flex gap-2.5">
+      <button type="button" onClick={() => go('google')} disabled={busy !== null} className={base}>
+        <svg width="18" height="18" viewBox="0 0 18 18" aria-hidden="true">
+          <path fill="#4285F4" d="M17.6 9.2c0-.6-.1-1.2-.2-1.8H9v3.4h4.8a4.1 4.1 0 0 1-1.8 2.7v2.2h2.9c1.7-1.6 2.7-3.9 2.7-6.5z" />
+          <path fill="#34A853" d="M9 18c2.4 0 4.5-.8 6-2.2l-2.9-2.2c-.8.5-1.8.9-3.1.9-2.4 0-4.4-1.6-5.1-3.8H.9v2.3A9 9 0 0 0 9 18z" />
+          <path fill="#FBBC05" d="M3.9 10.7a5.4 5.4 0 0 1 0-3.4V5H.9a9 9 0 0 0 0 8l3-2.3z" />
+          <path fill="#EA4335" d="M9 3.6c1.3 0 2.5.5 3.4 1.3l2.6-2.6A9 9 0 0 0 .9 5l3 2.3C4.6 5.2 6.6 3.6 9 3.6z" />
+        </svg>
+        {busy === 'google' ? 'Conectando…' : 'Google'}
+      </button>
+      <button type="button" onClick={() => go('facebook')} disabled={busy !== null} className={base}>
+        <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true">
+          <path fill="#1877F2" d="M24 12.07C24 5.4 18.63 0 12 0S0 5.4 0 12.07C0 18.1 4.39 23.1 10.13 24v-8.44H7.08v-3.49h3.05V9.41c0-3.02 1.79-4.69 4.53-4.69 1.31 0 2.68.24 2.68.24v2.97h-1.51c-1.49 0-1.95.93-1.95 1.89v2.25h3.32l-.53 3.49h-2.79V24C19.61 23.1 24 18.1 24 12.07z" />
+        </svg>
+        {busy === 'facebook' ? 'Conectando…' : 'Facebook'}
+      </button>
     </div>
   );
 }
@@ -366,7 +373,7 @@ export default function CuentaPage() {
               <p className="mb-6 font-body text-[15px] text-muted">
                 Ingresa para ver tus reportes guardados.
               </p>
-              <SocialButtons />
+              <SocialButtons onError={setError} />
               <Divider label="o con tu correo" />
             </>
           ) : (
@@ -377,7 +384,7 @@ export default function CuentaPage() {
               <p className="mb-6 font-body text-[15px] text-muted">
                 Gratis. Tu primer reporte básico no cuesta nada.
               </p>
-              <SocialButtons />
+              <SocialButtons onError={setError} />
               <Divider label="o con tu correo" />
             </>
           )}

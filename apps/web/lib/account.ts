@@ -103,6 +103,22 @@ export async function login(email: string, password: string): Promise<Account | 
   return fromLegacy(await legacy.login(email, password));
 }
 
+/** Proveedores OAuth soportados (deben estar habilitados en Supabase Auth). */
+export type OAuthProvider = 'google' | 'facebook';
+
+/**
+ * Inicia sesión con un proveedor social. Redirige el navegador al proveedor; al
+ * volver, /auth/callback canjea el código por sesión. Requiere Supabase.
+ */
+export async function signInWithProvider(provider: OAuthProvider): Promise<void> {
+  if (!usingSupabase) throw new Error('El acceso con Google/Facebook requiere Supabase configurado.');
+  const client = await sb();
+  const redirectTo =
+    typeof window !== 'undefined' ? `${window.location.origin}/auth/callback?next=/cuenta` : undefined;
+  const { error } = await client.auth.signInWithOAuth({ provider, options: { redirectTo } });
+  if (error) throw new Error(translate(error.message));
+}
+
 export async function logout(): Promise<void> {
   if (usingSupabase) {
     const client = await sb();

@@ -120,10 +120,10 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     label: 'Gravámenes / prendas',
     icon: 'account_balance',
     tier: ReportTier.PRO,
-    sources: ['SUNARP'],
+    sources: ['SIGM', 'SUNARP'],
     concept: ScoreConcept.LEGAL,
-    dataKind: null,
-    blurb: 'Si el vehículo está libre o registra gravámenes, prendas o embargos.',
+    dataKind: SectionKind.GRAVAMENES,
+    blurb: 'Prendas, garantías mobiliarias (SIGM) y embargos inscritos: indica si el vehículo está libre o en garantía de un crédito.',
   },
   {
     key: 'multas_electorales',
