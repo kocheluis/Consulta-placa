@@ -24,7 +24,8 @@ const corsOrigins = (process.env.WEB_ORIGIN ?? '')
 
 export const config = {
   isProd,
-  port: num(process.env.API_PORT, 3001),
+  // Render (y otros PaaS) inyectan el puerto en PORT; localmente cae a API_PORT.
+  port: num(process.env.PORT ?? process.env.API_PORT, 3001),
   redisUrl: process.env.REDIS_URL ?? 'redis://localhost:6379',
   jwtSecret: jwtSecret || 'dev-only-insecure-secret-no-usar-en-produccion',
   corsOrigins,
