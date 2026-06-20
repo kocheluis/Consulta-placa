@@ -1,7 +1,7 @@
 'use client';
 
-import { useParams } from 'next/navigation';
-import { useState, type ReactNode } from 'react';
+import { useParams, useRouter } from 'next/navigation';
+import { useEffect, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import type {
   Report,
@@ -21,6 +21,7 @@ import {
   ReportTier,
 } from '@app/shared';
 import { useConsulta } from '@/lib/use-consulta';
+import { getPaidTier, buyReport, type Tier } from '@/lib/account';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -168,12 +169,41 @@ export default function ReportePage() {
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
 function ReportView({ report, cached, onRetry }: { report: Report; cached: boolean; onRetry: () => void }) {
+  const router = useRouter();
   const v = report.vehicle;
   const score = computeScore(report);
   const sectionByKind = (kind: string | null): SectionResult | undefined =>
     kind ? report.sections.find((s) => s.kind === kind) : undefined;
-  // Sin pago aún: el reporte opera en BASIC; PRO/ULTRA se muestran bloqueados.
-  const currentTier = ReportTier.BASIC;
+
+  // Nivel desbloqueado por el usuario para esta placa (pago por reporte).
+  const [currentTier, setCurrentTier] = useState<Tier>('BASIC');
+  const [buying, setBuying] = useState<'PRO' | 'ULTRA' | null>(null);
+  useEffect(() => {
+    getPaidTier(report.placa)
+      .then(setCurrentTier)
+      .catch(() => {});
+  }, [report.placa]);
+
+  const comprar = async (tier: 'PRO' | 'ULTRA') => {
+    setBuying(tier);
+    try {
+      const res = await buyReport(report.placa, tier);
+      if (res.status === 'paid') {
+        setCurrentTier(await getPaidTier(report.placa));
+      } else if (res.redirectUrl) {
+        window.location.href = res.redirectUrl;
+        return;
+      }
+    } catch (err) {
+      if ((err as Error).message === 'AUTH_REQUIRED') {
+        router.push(`/cuenta?next=/reporte/${report.placa}`);
+        return;
+      }
+    } finally {
+      setBuying(null);
+    }
+  };
+
   const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
   const summary = v ? [v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') : 'Vehículo';
 
@@ -286,11 +316,19 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
         {/* Secciones — desde el catálogo: BASIC con datos, PRO/ULTRA bloqueados */}
         <main className="grid items-start gap-4 sm:grid-cols-2">
           {SECTION_CATALOG.map((entry) => {
-            const locked = TIER_RANK[entry.tier] > TIER_RANK[currentTier];
+            const locked = TIER_RANK[entry.tier] > TIER_RANK[currentTier as ReportTier];
             const section = sectionByKind(entry.dataKind);
             const wide = entry.key === 'identidad' || entry.key === 'ia';
+            const needed: 'PRO' | 'ULTRA' = entry.tier === ReportTier.ULTRA ? 'ULTRA' : 'PRO';
             return (
-              <CatalogCard key={entry.key} entry={entry} locked={locked} wide={wide}>
+              <CatalogCard
+                key={entry.key}
+                entry={entry}
+                locked={locked}
+                wide={wide}
+                busy={buying === needed}
+                onBuy={() => comprar(needed)}
+              >
                 <SectionBody entry={entry} section={section} vehicle={v} onRetry={onRetry} />
               </CatalogCard>
             );
@@ -313,11 +351,15 @@ function CatalogCard({
   entry,
   locked,
   wide,
+  onBuy,
+  busy,
   children,
 }: {
   entry: SectionCatalogEntry;
   locked: boolean;
   wide?: boolean;
+  onBuy: () => void;
+  busy: boolean;
   children: ReactNode;
 }) {
   const neededName = entry.tier === ReportTier.ULTRA ? 'Ultra' : 'Pro';
@@ -343,8 +385,8 @@ function CatalogCard({
                 <Icon name="lock" className="text-[22px] text-primary" />
               </div>
               <span className="font-body text-[13px] font-semibold text-slate-700">Disponible en {neededName}</span>
-              <Button variant="accent" size="sm" iconRight="arrow_forward" href="/planes">
-                Mejorar a {neededName}
+              <Button variant="accent" size="sm" iconRight="arrow_forward" onClick={onBuy} disabled={busy}>
+                {busy ? 'Procesando…' : `Mejorar a ${neededName}`}
               </Button>
             </div>
           </div>
