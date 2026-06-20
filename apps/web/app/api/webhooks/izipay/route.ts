@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { verifyWebhookSignature } from '@/lib/izipay';
-import { markPurchaseFailed, markPurchasePaid } from '@/lib/payments';
+import { getPurchaseNotice, markPurchaseFailed, markPurchasePaid } from '@/lib/payments';
+import { notifyPurchasePaid } from '@/lib/notifications';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -37,7 +38,13 @@ export async function POST(request: Request) {
 
   try {
     if (status === 'PAID') {
-      await markPurchasePaid(orderId, event.transactionId ?? null);
+      // Solo notifica si esta llamada hizo la transición (evita correos duplicados
+      // ante reintentos del IPN).
+      const transitioned = await markPurchasePaid(orderId, event.transactionId ?? null);
+      if (transitioned) {
+        const notice = await getPurchaseNotice(orderId);
+        if (notice) await notifyPurchasePaid(notice);
+      }
     } else if (status === 'FAILED' || status === 'CANCELLED') {
       await markPurchaseFailed(orderId);
     }

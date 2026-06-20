@@ -36,7 +36,20 @@ con el MX de Zoho en la raíz.
 - **Remitente:** `no-reply@placape.pe` · **Reply-To:** `soporte@placape.pe`.
 - **Código:** [`apps/web/lib/email.ts`](../../apps/web/lib/email.ts) (envío vía REST,
   sin SDK) + [`apps/web/lib/email-templates.ts`](../../apps/web/lib/email-templates.ts)
-  (plantillas HTML con la marca).
+  (plantillas HTML con la marca) + [`apps/web/lib/notifications.ts`](../../apps/web/lib/notifications.ts)
+  (compone plantilla + envía; único punto de entrada para los tres orígenes de un
+  cambio de estado de compra).
+- **Plantillas:** `reportReadyEmail` (reporte listo), `purchasePaidEmail`
+  (pago confirmado · reporte desbloqueado, con recibo) y `yapeReceivedEmail`
+  (pedido recibido · instrucciones de Yape).
+- **Disparadores cableados (jun-2026):**
+  - `POST /api/checkout` → `notifyPurchasePaid` al aprobar mock; `notifyYapeReceived`
+    cuando el pago queda pendiente por Yape.
+  - `POST /api/webhooks/izipay` → `notifyPurchasePaid` al confirmar el pago (solo si
+    la compra realmente transicionó `pending→paid`, para no duplicar correos en
+    reintentos del IPN).
+- **Vista previa (solo dev):** `GET /api/dev/email-preview?type=paid|yape|report`
+  renderiza la plantilla en el navegador sin enviar nada (404 en producción).
 
 ### Variables de entorno (server-only)
 
@@ -121,4 +134,8 @@ Reply-To de los correos de Resend para que un humano lea las respuestas.
 - [ ] Supabase: pegar la plantilla "Confirm signup".
 - [ ] Probar registro real → llega correo desde `@placape.pe`.
 - [ ] Zoho: montar buzón `admin@` / `soporte@`.
-- [ ] (Futuro) Cablear `reportReadyEmail()` cuando el pipeline de reportes esté desplegado.
+- [x] Cablear correos de compra (`purchasePaidEmail` / `yapeReceivedEmail`) en
+      checkout + webhook (jun-2026).
+- [ ] (Futuro) Cablear `reportReadyEmail()` desde el worker cuando el pipeline de
+      reportes asíncronos esté desplegado (hoy el reporte pagado se entrega con el
+      enlace dentro de `purchasePaidEmail`).
