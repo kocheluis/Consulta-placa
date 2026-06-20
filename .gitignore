@@ -33,6 +33,10 @@ __pycache__/
 # Artefactos de sondeo de scrapers (HTML/capturas)
 **/__captured__/
 
+# Datos de idioma de tesseract OCR (se descargan en runtime) + perfiles de navegador stealth
+*.traineddata
+.pw-profile/
+
 # Logs
 *.log
 npm-debug.log*
