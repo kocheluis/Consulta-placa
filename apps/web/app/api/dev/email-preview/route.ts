@@ -22,11 +22,11 @@ export async function GET(request: Request) {
 
   let html: string;
   if (type === 'yape') {
-    html = yapeReceivedEmail({ ...sample, yapeNumber: '987 654 321', yapeName: 'PlacaPe', reportUrl: 'http://localhost:3000/reporte/VAS710' }).html;
+    html = yapeReceivedEmail({ ...sample, yapeNumber: '987 654 321', yapeName: 'PlacaPe', reportUrl: 'http://localhost:3002/reporte/VAS710' }).html;
   } else if (type === 'report') {
-    html = reportReadyEmail({ plate: sample.plate, tier: sample.tier, reportUrl: 'http://localhost:3000/reporte/VAS710', scoreOverall: 78, scoreLevel: 'verde', scoreLabel: 'Riesgo bajo' }).html;
+    html = reportReadyEmail({ plate: sample.plate, tier: sample.tier, reportUrl: 'http://localhost:3002/reporte/VAS710', scoreOverall: 78, scoreLevel: 'verde', scoreLabel: 'Riesgo bajo' }).html;
   } else {
-    html = purchasePaidEmail({ ...sample, reportUrl: 'http://localhost:3000/reporte/VAS710' }).html;
+    html = purchasePaidEmail({ ...sample, reportUrl: 'http://localhost:3002/reporte/VAS710' }).html;
   }
 
   return new NextResponse(html, { headers: { 'content-type': 'text/html; charset=utf-8' } });
