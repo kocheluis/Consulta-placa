@@ -205,13 +205,18 @@ export async function getPaidTier(plate: string): Promise<Tier> {
 
 export interface CheckoutResult {
   status: 'paid' | 'pending';
+  /** Referencia de la compra (la pone el usuario en el mensaje del Yape). */
+  orderId?: string;
+  /** Solo IziPay real: URL a la que redirigir para pagar. */
   redirectUrl?: string;
 }
 
 /**
  * Inicia la compra de un reporte (PRO/ULTRA) para una placa vía /api/checkout.
- * En mock se aprueba al instante (status 'paid'); con IziPay real devuelve
- * 'pending' + redirectUrl. Lanza 'AUTH_REQUIRED' si falta iniciar sesión.
+ *  - mock: aprueba al instante (status 'paid').
+ *  - Yape manual: status 'pending' + orderId (el usuario yapea con esa referencia).
+ *  - IziPay real: status 'pending' + redirectUrl.
+ * Lanza 'AUTH_REQUIRED' si falta iniciar sesión.
  */
 export async function buyReport(plate: string, tier: 'PRO' | 'ULTRA'): Promise<CheckoutResult> {
   const res = await fetch('/api/checkout', {
@@ -222,11 +227,16 @@ export async function buyReport(plate: string, tier: 'PRO' | 'ULTRA'): Promise<C
   if (res.status === 401) throw new Error('AUTH_REQUIRED');
   const data = (await res.json().catch(() => ({}))) as {
     status?: string;
+    orderId?: string;
     redirectUrl?: string;
     error?: string;
   };
   if (!res.ok) throw new Error(data.error ?? 'No se pudo iniciar la compra.');
-  return { status: data.status === 'paid' ? 'paid' : 'pending', redirectUrl: data.redirectUrl };
+  return {
+    status: data.status === 'paid' ? 'paid' : 'pending',
+    orderId: data.orderId,
+    redirectUrl: data.redirectUrl,
+  };
 }
 
 /**

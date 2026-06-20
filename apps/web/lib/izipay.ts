@@ -10,6 +10,11 @@ export const IZIPAY_CONFIGURED = Boolean(
   process.env.IZIPAY_SHOP_ID && process.env.IZIPAY_SECRET_KEY,
 );
 
+/** Modo interino: cobro con Yape PERSONAL (manual). El usuario yapea con la
+ *  referencia del pedido y un admin confirma la compra (no hay webhook de Yape
+ *  personal). Se activa al definir NEXT_PUBLIC_YAPE_NUMBER y sin IziPay. */
+export const YAPE_MANUAL_ENABLED = Boolean(process.env.NEXT_PUBLIC_YAPE_NUMBER) && !IZIPAY_CONFIGURED;
+
 export interface PaymentRequest {
   orderId: string;
   amount: number;
@@ -20,21 +25,26 @@ export interface PaymentRequest {
 }
 
 export interface PaymentSession {
-  provider: 'mock' | 'izipay';
-  /** 'paid' = aprobado inline (mock); 'pending' = redirige a la pasarela. */
+  provider: 'mock' | 'izipay' | 'yape';
+  /** 'paid' = aprobado inline (mock); 'pending' = falta confirmar (Yape/IziPay). */
   status: 'paid' | 'pending';
   redirectUrl?: string;
 }
 
-/** Crea la sesión de pago. En mock aprueba al instante. */
+/** Crea la sesión de pago según el modo configurado. */
 export async function createPaymentSession(_req: PaymentRequest): Promise<PaymentSession> {
-  if (!IZIPAY_CONFIGURED) {
-    return { provider: 'mock', status: 'paid' };
+  if (IZIPAY_CONFIGURED) {
+    // TODO(IziPay): POST /api-payment/V4/Charge/CreatePayment con Basic auth
+    // (shopId:secretKey) → formToken; el front lo usa con KR (Krypton). Aquí se
+    // devolvería { provider:'izipay', status:'pending', redirectUrl } o el formToken.
+    throw new Error('Integración IziPay pendiente: completa createPaymentSession (formToken).');
   }
-  // TODO(IziPay): POST /api-payment/V4/Charge/CreatePayment con Basic auth
-  // (shopId:secretKey) → formToken; el front lo usa con KR (Krypton). Aquí se
-  // devolvería { provider:'izipay', status:'pending', redirectUrl } o el formToken.
-  throw new Error('Integración IziPay pendiente: define IZIPAY_SHOP_ID e IZIPAY_SECRET_KEY.');
+  // Yape personal (manual): queda pendiente hasta que un admin confirme el pago.
+  if (YAPE_MANUAL_ENABLED) {
+    return { provider: 'yape', status: 'pending' };
+  }
+  // Dev / sin pasarela: mock aprueba al instante para probar el flujo.
+  return { provider: 'mock', status: 'paid' };
 }
 
 /**
