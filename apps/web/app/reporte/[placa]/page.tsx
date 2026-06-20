@@ -178,6 +178,7 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
   // Nivel desbloqueado por el usuario para esta placa (pago por reporte).
   const [currentTier, setCurrentTier] = useState<Tier>('BASIC');
   const [buying, setBuying] = useState<'PRO' | 'ULTRA' | null>(null);
+  const [pendingYape, setPendingYape] = useState<{ tier: 'PRO' | 'ULTRA'; orderId?: string } | null>(null);
   useEffect(() => {
     getPaidTier(report.placa)
       .then(setCurrentTier)
@@ -189,10 +190,12 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
     try {
       const res = await buyReport(report.placa, tier);
       if (res.status === 'paid') {
-        setCurrentTier(await getPaidTier(report.placa));
+        setCurrentTier(await getPaidTier(report.placa)); // mock / aprobado al instante
       } else if (res.redirectUrl) {
-        window.location.href = res.redirectUrl;
+        window.location.href = res.redirectUrl; // IziPay real
         return;
+      } else {
+        setPendingYape({ tier, orderId: res.orderId }); // Yape manual
       }
     } catch (err) {
       if ((err as Error).message === 'AUTH_REQUIRED') {
@@ -202,6 +205,14 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
     } finally {
       setBuying(null);
     }
+  };
+
+  // Reconsulta el nivel pagado (tras yapear, el usuario pulsa "Verificar").
+  const verificarPago = async (): Promise<Tier> => {
+    const t = await getPaidTier(report.placa);
+    setCurrentTier(t);
+    if (t !== 'BASIC') setPendingYape(null);
+    return t;
   };
 
   const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
@@ -341,6 +352,96 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
         <Link href="/" className="mt-4 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-primary hover:underline">
           <Icon name="arrow_back" className="text-[18px]" /> Nueva consulta
         </Link>
+      </div>
+
+      {pendingYape && (
+        <YapeModal
+          plate={formatPlateDisplay(report.placa)}
+          tier={pendingYape.tier}
+          orderId={pendingYape.orderId}
+          onVerify={verificarPago}
+          onClose={() => setPendingYape(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+/* ── Modal de pago con Yape personal (manual) ─────────────────────── */
+function YapeModal({
+  plate,
+  tier,
+  orderId,
+  onVerify,
+  onClose,
+}: {
+  plate: string;
+  tier: 'PRO' | 'ULTRA';
+  orderId?: string;
+  onVerify: () => Promise<Tier>;
+  onClose: () => void;
+}) {
+  const number = process.env.NEXT_PUBLIC_YAPE_NUMBER ?? '';
+  const name = process.env.NEXT_PUBLIC_YAPE_NAME ?? 'PlacaPe';
+  const price = tier === 'ULTRA' ? '19.90' : '15.90';
+  const ref = (orderId ?? '').slice(0, 8).toUpperCase();
+  const [checking, setChecking] = useState(false);
+  const [notYet, setNotYet] = useState(false);
+
+  const check = async () => {
+    setChecking(true);
+    setNotYet(false);
+    const t = await onVerify();
+    setChecking(false);
+    if (t === 'BASIC') setNotYet(true);
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true">
+      <div className="w-full max-w-[420px] rounded-2xl bg-surface p-6 shadow-xl">
+        <div className="mb-4 flex items-center justify-between">
+          <h3 className="font-heading text-lg font-bold text-foreground">Paga con Yape</h3>
+          <button onClick={onClose} aria-label="Cerrar" className="text-muted hover:text-foreground">
+            <Icon name="close" className="text-[22px]" />
+          </button>
+        </div>
+        <p className="mb-4 font-body text-sm text-muted">
+          Desbloquea tu reporte <strong className="text-foreground">{tier === 'ULTRA' ? 'Ultra' : 'Pro'}</strong> de la placa{' '}
+          <span className="font-mono font-bold text-foreground">{plate}</span>.
+        </p>
+        <div className="mb-4 rounded-xl border border-border bg-background p-4">
+          <div className="flex items-baseline justify-between">
+            <span className="font-body text-sm text-muted">Monto</span>
+            <span className="font-heading text-2xl font-extrabold text-foreground">S/ {price}</span>
+          </div>
+          <div className="mt-3 flex items-center justify-between">
+            <span className="font-body text-sm text-muted">Yapear a</span>
+            <span className="font-mono text-base font-bold text-foreground">{number || '—'}</span>
+          </div>
+          <p className="mt-0.5 text-right font-body text-[13px] text-muted">{name}</p>
+          {ref && (
+            <div className="mt-3 rounded-lg bg-azul-50 px-3 py-2 text-center">
+              <p className="font-body text-[12px] text-azul-700">En el mensaje del Yape escribe:</p>
+              <p className="font-mono text-base font-bold tracking-wider text-primary">{ref}</p>
+            </div>
+          )}
+        </div>
+        <p className="mb-4 font-body text-[13px] leading-snug text-muted">
+          Apenas confirmemos tu pago (unos minutos) tu reporte se desbloquea. Pulsa «Ya yapeé» para verificar.
+        </p>
+        {notYet && (
+          <p className="mb-3 rounded-md border border-warning/40 bg-warning-bg px-3 py-2 font-body text-[13px] text-warning-fg">
+            Aún no vemos tu pago. Si ya yapeaste, espera unos minutos y verifica de nuevo.
+          </p>
+        )}
+        <div className="flex gap-2.5">
+          <Button variant="accent" block size="md" icon="check" onClick={check} disabled={checking}>
+            {checking ? 'Verificando…' : 'Ya yapeé'}
+          </Button>
+          <Button variant="secondary" size="md" onClick={onClose}>
+            Cerrar
+          </Button>
+        </div>
       </div>
     </div>
   );
