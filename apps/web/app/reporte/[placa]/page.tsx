@@ -29,6 +29,8 @@ import { Card } from '@/components/ui/Card';
 import { Tag } from '@/components/ui/Tag';
 import { RiskGauge } from '@/components/RiskGauge';
 import { StateScreen } from '@/components/StateScreen';
+import { LeadGate } from '@/components/LeadGate';
+import { getStoredLead } from '@/lib/lead';
 
 const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED === 'true';
 
@@ -107,6 +109,13 @@ export default function ReportePage() {
   const state = useConsulta(placa, refreshToken, PRO_ENABLED);
   const actualizar = () => setRefreshToken((n) => n + 1);
 
+  // Pantalla intermedia (lead gate): null mientras leemos localStorage, luego
+  // true si este navegador ya dejó su contacto.
+  const [unlocked, setUnlocked] = useState<boolean | null>(null);
+  useEffect(() => {
+    setUnlocked(getStoredLead() != null);
+  }, []);
+
   // Sin pipeline PRO: invitación restyleada.
   if (!PRO_ENABLED) {
     return (
@@ -114,6 +123,16 @@ export default function ReportePage() {
         <ProGate placa={placa} mode="soon" />
       </div>
     );
+  }
+
+  // Aún resolviendo si pedir contacto: evita el parpadeo gate↔reporte.
+  if (unlocked === null) {
+    return <div className="min-h-[60vh] bg-background" />;
+  }
+
+  // Captura obligatoria: el reporte se genera en background mientras se llena.
+  if (!unlocked) {
+    return <LeadGate placa={placa} ready={state.phase === 'done'} onUnlock={() => setUnlocked(true)} />;
   }
 
   if (state.phase === 'loading') {
