@@ -110,3 +110,103 @@ export function reportReadyEmail(input: ReportReadyInput): { subject: string; ht
 
   return { subject: `Tu reporte PlacaPe de la placa ${plate} está listo`, html };
 }
+
+/* ── Compras / pagos ─────────────────────────────────────────────── */
+
+/** Formatea un monto: PEN → "S/ 15.90"; otra moneda → "USD 15.90". */
+function money(amount: number, currency = 'PEN'): string {
+  return currency === 'PEN' ? `S/ ${amount.toFixed(2)}` : `${currency} ${amount.toFixed(2)}`;
+}
+
+/** Tabla email-safe de pares clave/valor (recibo). */
+function dataRows(rows: ReadonlyArray<readonly [string, string]>): string {
+  const cell = (i: number) => (i ? `border-top:1px solid ${C.border};` : '');
+  return `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:8px 0 4px 0;border:1px solid ${C.border};border-radius:12px;border-collapse:separate">
+    ${rows
+      .map(
+        ([k, v], i) => `<tr>
+      <td style="padding:11px 16px;${cell(i)}font-family:${FONT};font-size:13px;color:${C.muted};width:40%">${k}</td>
+      <td style="padding:11px 16px;${cell(i)}font-family:${FONT};font-size:14px;font-weight:600;color:${C.fg};text-align:right">${v}</td>
+    </tr>`,
+      )
+      .join('')}
+  </table>`;
+}
+
+export interface PurchasePaidInput {
+  plate: string;
+  tier: 'PRO' | 'ULTRA';
+  amount: number;
+  currency?: string;
+  orderId: string;
+  reportUrl: string;
+}
+
+/** Correo "pago confirmado · tu reporte está desbloqueado" (recibo + acceso). */
+export function purchasePaidEmail(input: PurchasePaidInput): { subject: string; html: string } {
+  const { plate, tier, amount, currency = 'PEN', orderId, reportUrl } = input;
+
+  const badge = `<table role="presentation" cellpadding="0" cellspacing="0" style="margin:2px 0 12px 0;background:${C.successBg};border-radius:999px"><tr>
+      <td style="padding:6px 14px">
+        <span style="display:inline-block;width:8px;height:8px;border-radius:50%;background:${C.success};vertical-align:middle"></span>
+        <span style="font-family:${FONT};font-size:13px;font-weight:700;color:${C.successFg};margin-left:7px;vertical-align:middle">Pago confirmado</span>
+      </td></tr></table>`;
+
+  const html = emailLayout({
+    preheader: `Recibimos tu pago. Tu reporte ${tier} de la placa ${plate} ya está desbloqueado.`,
+    heading: `¡Listo! Tu reporte ${tier} está desbloqueado`,
+    bodyHtml: `
+      ${badge}
+      <p style="margin:0 0 4px 0">Recibimos tu pago correctamente. Tu reporte <strong style="color:${C.fg}">${tier}</strong> de la placa <strong style="color:${C.fg}">${plate}</strong> ya está disponible con toda la información ampliada.</p>
+      ${dataRows([
+        ['Plan', tier],
+        ['Placa', plate],
+        ['Monto', money(amount, currency)],
+        ['Referencia', orderId],
+      ])}
+      ${button(reportUrl, 'Ver mi reporte')}
+      <p style="margin:0;font-size:13px;color:${C.muted}">Si el botón no funciona, copia este enlace:<br><a href="${reportUrl}" style="color:${C.azul}">${reportUrl}</a></p>`,
+  });
+
+  return { subject: `Pago confirmado · tu reporte PlacaPe de la placa ${plate}`, html };
+}
+
+export interface YapeReceivedInput {
+  plate: string;
+  tier: 'PRO' | 'ULTRA';
+  amount: number;
+  currency?: string;
+  orderId: string;
+  yapeNumber: string;
+  yapeName?: string;
+  reportUrl?: string;
+}
+
+/** Correo "recibimos tu pedido · completa tu pago con Yape" (instrucciones). */
+export function yapeReceivedEmail(input: YapeReceivedInput): { subject: string; html: string } {
+  const { plate, tier, amount, currency = 'PEN', orderId, yapeNumber, yapeName = 'PlacaPe', reportUrl } = input;
+
+  const payBox = `<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:6px 0 2px 0;background:${C.warningBg};border-radius:12px"><tr>
+      <td style="padding:16px 18px;font-family:${FONT}">
+        <p style="margin:0 0 8px 0;font-size:12px;font-weight:700;color:${C.warningFg};text-transform:uppercase;letter-spacing:.5px">Termina tu pago con Yape</p>
+        <p style="margin:0;font-size:15px;line-height:1.5;color:${C.fg}">Yapea <strong>${money(amount, currency)}</strong> al número<br><strong style="font-size:21px;letter-spacing:1px">${yapeNumber || '—'}</strong> <span style="color:${C.muted}">(${yapeName})</span></p>
+      </td></tr></table>`;
+
+  const html = emailLayout({
+    preheader: `Recibimos tu pedido del reporte ${tier} de la placa ${plate}. Completa el pago con Yape.`,
+    heading: `Recibimos tu pedido de la placa ${plate}`,
+    bodyHtml: `
+      <p style="margin:0 0 6px 0">Estás a un paso de desbloquear tu reporte <strong style="color:${C.fg}">${tier}</strong> de la placa <strong style="color:${C.fg}">${plate}</strong>.</p>
+      ${payBox}
+      <p style="margin:14px 0 4px 0">Importante: escribe esta <strong style="color:${C.fg}">referencia</strong> en el mensaje del Yape para identificar tu pago:</p>
+      ${dataRows([
+        ['Referencia', orderId],
+        ['Plan', tier],
+        ['Monto', money(amount, currency)],
+      ])}
+      <p style="margin:12px 0 0 0">Apenas confirmemos tu pago (normalmente en minutos, en horario de oficina) te avisaremos por correo y tu reporte quedará desbloqueado.</p>
+      ${reportUrl ? button(reportUrl, 'Volver a mi reporte') : ''}`,
+  });
+
+  return { subject: `Tu pedido PlacaPe de la placa ${plate} · completa tu pago con Yape`, html };
+}
