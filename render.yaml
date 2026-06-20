@@ -41,8 +41,15 @@ services:
       # Arranca en demo para validar el pipeline sin CapSolver; luego pásalo a false.
       - key: DEMO_MODE
         value: "true"
+      # SUNARP usa Cloudflare Turnstile. El navegador stealth lo pasa GRATIS en IP
+      # residencial, pero en la IP de datacenter de Render casi seguro NO pasa: ahi
+      # hay que poner CAPTCHA_PROVIDER=capsolver + CAPTCHA_API_KEY (y quizas un proxy
+      # residencial). La data de SUNARP igual se lee por OCR (tesseract), pase quien pase.
       - key: CAPTCHA_PROVIDER
         value: local
+      # Sin display en el contenedor; validar en el primer deploy (o usar xvfb-run + headful).
+      - key: STEALTH_HEADLESS
+        value: "true"
       - key: DATABASE_URL
         sync: false
       - key: REDIS_URL

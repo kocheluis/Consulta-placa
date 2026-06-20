@@ -3,18 +3,20 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./sunarp": "./src/sunarp/index.ts"
+    ".": "./dist/index.js",
+    "./sunarp": "./dist/sunarp/index.js"
   },
   "scripts": {
+    "build": "tsc -p tsconfig.json",
     "test": "vitest run"
   },
   "dependencies": {
     "@app/shared": "*",
     "node-html-parser": "^6.1.13",
+    "patchright": "^1.61.0",
     "playwright": "^1.49.1",
     "tesseract.js": "^5.1.1"
   }
