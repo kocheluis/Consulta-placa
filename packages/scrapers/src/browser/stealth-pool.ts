@@ -15,11 +15,13 @@ export interface StealthPoolOptions {
  * anti-detección) con **contexto persistente** y Chrome real. Esta combinación
  * pasa el Cloudflare Turnstile de SUNARP de forma pasiva, sin pagar un solver.
  *
- * Comparte un único contexto (y su sesión/cookies de Cloudflare) entre páginas;
- * cada consulta abre y cierra su propia página.
+ * Comparte un único contexto (y su sesión/cookies de Cloudflare) entre páginas.
+ * Si el contexto muere (p. ej. en dev cierras la ventana de Chrome) se relanza
+ * automáticamente. La promesa cacheada serializa el arranque (sin carreras de
+ * concurrencia que choquen por el mismo perfil).
  */
 export class StealthBrowserPool {
-  private context: BrowserContext | null = null;
+  private contextPromise: Promise<BrowserContext> | null = null;
   private readonly headless: boolean;
   private readonly userDataDir: string;
   private readonly channel: NonNullable<StealthPoolOptions['channel']>;
@@ -30,22 +32,31 @@ export class StealthBrowserPool {
     this.channel = opts.channel ?? 'chrome';
   }
 
-  private async getContext(): Promise<BrowserContext> {
-    if (!this.context) {
-      this.context = await chromium.launchPersistentContext(this.userDataDir, {
-        channel: this.channel,
-        headless: this.headless,
-        viewport: null,
-        locale: 'es-PE',
-      });
-    }
-    return this.context;
+  private launch(): Promise<BrowserContext> {
+    return chromium.launchPersistentContext(this.userDataDir, {
+      channel: this.channel,
+      headless: this.headless,
+      viewport: null,
+      locale: 'es-PE',
+    });
+  }
+
+  private getContext(): Promise<BrowserContext> {
+    if (!this.contextPromise) this.contextPromise = this.launch();
+    return this.contextPromise;
   }
 
   /** Ejecuta `fn` con una página nueva del contexto stealth y la cierra al terminar. */
   async withPage<T>(fn: (page: Page) => Promise<T>): Promise<T> {
-    const context = await this.getContext();
-    const page = await context.newPage();
+    let page: Page;
+    try {
+      page = await (await this.getContext()).newPage();
+    } catch {
+      // El contexto pudo cerrarse (ventana cerrada en dev) o no haber arrancado:
+      // descarta el cacheado, relanza y reintenta una vez.
+      this.contextPromise = null;
+      page = await (await this.getContext()).newPage();
+    }
     try {
       return await fn(page);
     } finally {
@@ -54,9 +65,14 @@ export class StealthBrowserPool {
   }
 
   async close(): Promise<void> {
-    if (!this.context) return;
-    const ctx = this.context;
-    this.context = null;
-    await ctx.close().catch(() => {});
+    const p = this.contextPromise;
+    this.contextPromise = null;
+    if (!p) return;
+    try {
+      const ctx = await p;
+      await ctx.close();
+    } catch {
+      /* el contexto ya estaba cerrado */
+    }
   }
 }
