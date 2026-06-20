@@ -1,4 +1,13 @@
 /** Cabeceras de seguridad para toda la web. */
+const isDev = process.env.NODE_ENV !== 'production';
+
+// En desarrollo la API corre en http://127.0.0.1:3001 (otro origen y http), así que
+// connect-src debe permitir orígenes locales (y ws: para el HMR de Next). En
+// producción la API es https (Render) y basta con 'self' https:.
+const connectSrc = isDev
+  ? "connect-src 'self' https: http://localhost:* http://127.0.0.1:* ws://localhost:* ws://127.0.0.1:*"
+  : "connect-src 'self' https:";
+
 const securityHeaders = [
   // Evita que la página sea embebida en iframes (clickjacking).
   { key: 'X-Frame-Options', value: 'DENY' },
@@ -15,11 +24,11 @@ const securityHeaders = [
     key: 'Content-Security-Policy',
     value: [
       "default-src 'self'",
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://va.vercel-scripts.com",
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
       "font-src 'self' https://fonts.gstatic.com",
       "img-src 'self' data: blob:",
-      "connect-src 'self' https:",
+      connectSrc,
       "frame-ancestors 'none'",
       "base-uri 'self'",
       "form-action 'self'",
