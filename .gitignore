@@ -36,6 +36,7 @@ __pycache__/
 # Datos de idioma de tesseract OCR (se descargan en runtime) + perfiles de navegador stealth
 *.traineddata
 .pw-profile/
+.stealth-profile/
 
 # Logs
 *.log

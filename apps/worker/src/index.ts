@@ -1,7 +1,7 @@
 import { Worker } from 'bullmq';
 import { Redis } from 'ioredis';
 import { CONSULTA_QUEUE, type ConsultaJobData } from '@app/shared';
-import { BrowserPool } from '@app/scrapers';
+import { BrowserPool, StealthBrowserPool, closeOcr } from '@app/scrapers';
 import { config } from './config.js';
 import { runSunarp } from './processors/sunarp.js';
 import { runSbs } from './processors/sbs.js';
@@ -10,7 +10,12 @@ import { assembleAndPersist } from './assemble.js';
 import { demoSources } from './demo.js';
 
 const connection = new Redis(config.redisUrl, { maxRetriesPerRequest: null });
+// Pool vanilla para SBS/APESEG; pool stealth (patchright) para SUNARP (Turnstile).
 const pool = new BrowserPool();
+const stealthPool = new StealthBrowserPool({
+  headless: config.stealthHeadless,
+  ...(config.stealthChannel ? { channel: config.stealthChannel as 'chrome' | 'chromium' | 'msedge' } : {}),
+});
 
 const redisUrl = new URL(config.redisUrl);
 const bullConnection = {
@@ -39,7 +44,7 @@ const worker = new Worker(
     } else {
       // Scrapers de las fuentes MVP en paralelo; cada uno degrada por separado.
       const settled = await Promise.allSettled([
-        runSunarp(pool, data.plateNormalized),
+        runSunarp(stealthPool, data.plateNormalized),
         runSbs(pool, data.plateNormalized),
         runApeseg(pool, data.plateNormalized),
       ]);
@@ -60,6 +65,8 @@ worker.on('failed', (job, err) => console.error(`[worker] job ${job?.id} falló:
 const shutdown = async () => {
   await worker.close();
   await pool.close();
+  await stealthPool.close();
+  await closeOcr();
   connection.disconnect();
   process.exit(0);
 };
