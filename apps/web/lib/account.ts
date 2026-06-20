@@ -178,6 +178,58 @@ export interface ReportHistoryItem {
 }
 
 /**
+ * Nivel desbloqueado por el usuario para una placa (BASIC si no compró). Lee la
+ * tabla `purchases` con el cliente del navegador (RLS: cada quien ve las suyas).
+ */
+export async function getPaidTier(plate: string): Promise<Tier> {
+  if (!usingSupabase) return 'BASIC';
+  try {
+    const client = await sb();
+    const {
+      data: { user },
+    } = await client.auth.getUser();
+    if (!user) return 'BASIC';
+    const { data } = await client
+      .from('purchases')
+      .select('tier')
+      .eq('user_id', user.id)
+      .eq('plate', plate.toUpperCase())
+      .eq('status', 'paid');
+    const rows = (data ?? []) as { tier: string }[];
+    if (rows.length === 0) return 'BASIC';
+    return rows.some((r) => r.tier === 'ULTRA') ? 'ULTRA' : 'PRO';
+  } catch {
+    return 'BASIC';
+  }
+}
+
+export interface CheckoutResult {
+  status: 'paid' | 'pending';
+  redirectUrl?: string;
+}
+
+/**
+ * Inicia la compra de un reporte (PRO/ULTRA) para una placa vía /api/checkout.
+ * En mock se aprueba al instante (status 'paid'); con IziPay real devuelve
+ * 'pending' + redirectUrl. Lanza 'AUTH_REQUIRED' si falta iniciar sesión.
+ */
+export async function buyReport(plate: string, tier: 'PRO' | 'ULTRA'): Promise<CheckoutResult> {
+  const res = await fetch('/api/checkout', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ plate, tier }),
+  });
+  if (res.status === 401) throw new Error('AUTH_REQUIRED');
+  const data = (await res.json().catch(() => ({}))) as {
+    status?: string;
+    redirectUrl?: string;
+    error?: string;
+  };
+  if (!res.ok) throw new Error(data.error ?? 'No se pudo iniciar la compra.');
+  return { status: data.status === 'paid' ? 'paid' : 'pending', redirectUrl: data.redirectUrl };
+}
+
+/**
  * Reportes comprados por el usuario (tabla `purchases`, RLS). Devuelve [] si
  * Supabase no está configurado o si la tabla aún no existe (migración 0002).
  */
