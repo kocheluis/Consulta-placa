@@ -14,7 +14,7 @@ import { registerHealthRoute } from './routes/health.js';
 import { registerReporteRoutes } from './routes/reportes.js';
 import { registerSolicitudRoutes } from './routes/solicitudes.js';
 import { registerLegalRoutes } from './routes/legal.js';
-import { registerAuthRoutes, requirePro } from './routes/auth.js';
+import { registerAuthRoutes } from './routes/auth.js';
 
 export async function buildServer() {
   const app = Fastify({ logger: true });
@@ -42,8 +42,10 @@ export async function buildServer() {
 
   registerHealthRoute(app, redis);
   registerAuthRoutes(app);
-  // El reporte automático (consultas) queda detrás del gate PRO.
-  registerConsultaRoutes(app, service, requirePro);
+  // BASIC es gratis y abierto (identidad + semáforo de riesgo): cualquiera puede
+  // consultar. El cobro de PRO/ULTRA se hará por reporte (pago → tier en Supabase),
+  // no bloqueando la consulta. Protegido por rate-limit + caché por placa.
+  registerConsultaRoutes(app, service);
   registerReporteRoutes(app, service);
   registerSolicitudRoutes(app);
   registerLegalRoutes(app);
