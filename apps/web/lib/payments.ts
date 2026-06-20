@@ -17,6 +17,7 @@ export async function createPendingPurchase(p: {
   plate: string;
   tier: PaidTier;
   amount: number;
+  provider?: string;
 }): Promise<string> {
   const sb = createAdminClient();
   const { data, error } = await sb
@@ -27,7 +28,7 @@ export async function createPendingPurchase(p: {
       tier: p.tier,
       amount: p.amount,
       status: 'pending',
-      provider: 'izipay',
+      provider: p.provider ?? 'izipay',
     })
     .select('id')
     .single();
@@ -78,6 +79,65 @@ export async function getPurchaseNotice(orderId: string): Promise<PurchaseNotice
     currency: p.currency ?? 'PEN',
     orderId,
   };
+}
+
+export interface PendingPurchase {
+  orderId: string;
+  plate: string;
+  tier: PaidTier;
+  amount: number;
+  currency: string;
+  provider: string;
+  email: string;
+  createdAt: string;
+}
+
+/**
+ * Lista las compras pendientes (panel admin de Yape). Resuelve el correo del
+ * comprador por cada `user_id` (cacheado). Usa el cliente admin (service_role).
+ */
+export async function listPendingPurchases(limit = 100): Promise<PendingPurchase[]> {
+  const sb = createAdminClient();
+  const { data, error } = await sb
+    .from('purchases')
+    .select('id, user_id, plate, tier, amount, currency, provider, created_at')
+    .eq('status', 'pending')
+    .order('created_at', { ascending: false })
+    .limit(limit);
+  if (error || !data) return [];
+
+  const rows = data as Array<{
+    id: string;
+    user_id: string;
+    plate: string;
+    tier: PaidTier;
+    amount: number;
+    currency: string | null;
+    provider: string | null;
+    created_at: string;
+  }>;
+
+  const emailByUser = new Map<string, string>();
+  const out: PendingPurchase[] = [];
+  for (const r of rows) {
+    let email = emailByUser.get(r.user_id);
+    if (email === undefined) {
+      const { data: u } = await sb.auth.admin.getUserById(r.user_id);
+      email = u?.user?.email ?? '';
+      emailByUser.set(r.user_id, email);
+    }
+    out.push({
+      orderId: r.id,
+      plate: r.plate,
+      tier: r.tier,
+      amount: Number(r.amount),
+      currency: r.currency ?? 'PEN',
+      provider: r.provider ?? 'yape',
+      email,
+      createdAt: r.created_at,
+    });
+  }
+  return out;
 }
 
 export async function markPurchaseFailed(orderId: string): Promise<void> {

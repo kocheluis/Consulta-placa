@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { createClient } from '@/lib/supabase/server';
 import { TIER_PRICE, createPendingPurchase, markPurchasePaid, type PaidTier } from '@/lib/payments';
-import { createPaymentSession } from '@/lib/izipay';
+import { createPaymentSession, paymentProvider } from '@/lib/izipay';
 import { notifyPurchasePaid, notifyYapeReceived } from '@/lib/notifications';
 
 export const runtime = 'nodejs';
@@ -35,7 +35,7 @@ export async function POST(request: Request) {
   }
 
   const amount = TIER_PRICE[tier];
-  const orderId = await createPendingPurchase({ userId: user.id, plate, tier, amount });
+  const orderId = await createPendingPurchase({ userId: user.id, plate, tier, amount, provider: paymentProvider() });
   const session = await createPaymentSession({
     orderId,
     amount,

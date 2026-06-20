@@ -15,6 +15,13 @@ export const IZIPAY_CONFIGURED = Boolean(
  *  personal). Se activa al definir NEXT_PUBLIC_YAPE_NUMBER y sin IziPay. */
 export const YAPE_MANUAL_ENABLED = Boolean(process.env.NEXT_PUBLIC_YAPE_NUMBER) && !IZIPAY_CONFIGURED;
 
+/** Proveedor de pago efectivo según la configuración (para etiquetar la compra). */
+export function paymentProvider(): 'izipay' | 'yape' | 'mock' {
+  if (IZIPAY_CONFIGURED) return 'izipay';
+  if (YAPE_MANUAL_ENABLED) return 'yape';
+  return 'mock';
+}
+
 export interface PaymentRequest {
   orderId: string;
   amount: number;
