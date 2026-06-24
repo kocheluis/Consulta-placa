@@ -11,6 +11,7 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
+    "operador": "tsx src/operator-server.ts",
     "test": "vitest run"
   },
   "dependencies": {

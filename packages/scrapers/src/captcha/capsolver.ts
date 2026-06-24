@@ -8,6 +8,9 @@ interface CreateTaskResponse {
   errorId: number;
   errorDescription?: string;
   taskId?: string;
+  // ImageToTextTask es SÍNCRONO: la solución llega aquí mismo, sin taskId.
+  status?: 'idle' | 'processing' | 'ready' | 'failed';
+  solution?: { text?: string };
 }
 interface TaskResultResponse {
   errorId: number;
@@ -65,11 +68,35 @@ export class CapSolverSolver implements CaptchaSolver {
     return solution.gRecaptchaResponse;
   }
 
-  async solveImage(imageBase64: string): Promise<string> {
-    const taskId = await this.createTask({ type: 'ImageToTextTask', body: imageBase64 });
+  async solveRecaptchaV3(sitekey: string, url: string, action: string): Promise<string> {
+    const taskId = await this.createTask({
+      type: 'ReCaptchaV3TaskProxyLess',
+      websiteURL: url,
+      websiteKey: sitekey,
+      pageAction: action,
+    });
     const solution = await this.getResult(taskId);
-    if (!solution?.text) throw new Error('CapSolver: sin texto');
-    return solution.text;
+    if (!solution?.gRecaptchaResponse) throw new Error('CapSolver: sin gRecaptchaResponse (v3)');
+    return solution.gRecaptchaResponse;
+  }
+
+  async solveImage(imageBase64: string): Promise<string> {
+    // ImageToTextTask responde SÍNCRONO: la solución viene en createTask, no por
+    // polling (un getTaskResult posterior da "task data has expired", errorId=1).
+    const res = await post<CreateTaskResponse>('/createTask', {
+      clientKey: this.clientKey,
+      task: { type: 'ImageToTextTask', body: imageBase64 },
+    });
+    if (res.errorId !== 0) {
+      throw new Error(`CapSolver createTask (image): ${res.errorDescription ?? 'error'}`);
+    }
+    if (res.solution?.text) return res.solution.text;
+    // Respaldo: si algún día devolviera taskId (asíncrono), hacemos polling.
+    if (res.taskId) {
+      const solution = await this.getResult(res.taskId);
+      if (solution?.text) return solution.text;
+    }
+    throw new Error('CapSolver: sin texto');
   }
 
   async solveTurnstile(sitekey: string, url: string): Promise<string> {

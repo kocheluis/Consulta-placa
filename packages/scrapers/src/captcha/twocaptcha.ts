@@ -36,6 +36,11 @@ export class TwoCaptchaSolver implements CaptchaSolver {
     return this.poll(id);
   }
 
+  async solveRecaptchaV3(sitekey: string, url: string, action: string): Promise<string> {
+    const id = await this.submit({ method: 'userrecaptcha', version: 'v3', googlekey: sitekey, pageurl: url, action, min_score: '0.3' });
+    return this.poll(id);
+  }
+
   async solveImage(imageBase64: string): Promise<string> {
     const id = await this.submit({ method: 'base64', body: imageBase64 });
     return this.poll(id);

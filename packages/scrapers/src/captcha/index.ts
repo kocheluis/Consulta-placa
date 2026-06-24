@@ -10,6 +10,8 @@ import { LocalImageSolver } from './local.js';
 export interface CaptchaSolver {
   /** Resuelve un reCAPTCHA v2 dado su sitekey y la URL de la página. */
   solveRecaptchaV2(sitekey: string, url: string): Promise<string>;
+  /** Resuelve un reCAPTCHA v3 (por score) dado sitekey, URL y la acción de la página. */
+  solveRecaptchaV3(sitekey: string, url: string, action: string): Promise<string>;
   /** Resuelve un CAPTCHA de imagen (base64) y devuelve el texto. */
   solveImage(imageBase64: string): Promise<string>;
   /** Resuelve un Cloudflare Turnstile dado su sitekey y la URL. Devuelve el token. */
@@ -24,6 +26,9 @@ export interface CaptchaConfig {
 /** Solver no-op para entornos sin clave (lanza si se invoca). Útil en dev/tests. */
 export class NoopCaptchaSolver implements CaptchaSolver {
   async solveRecaptchaV2(): Promise<string> {
+    throw new Error('CAPTCHA solver no configurado (CAPTCHA_API_KEY ausente)');
+  }
+  async solveRecaptchaV3(): Promise<string> {
     throw new Error('CAPTCHA solver no configurado (CAPTCHA_API_KEY ausente)');
   }
   async solveImage(): Promise<string> {
