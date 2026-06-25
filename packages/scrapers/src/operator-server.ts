@@ -16,7 +16,7 @@ const PORT = Number(process.env.OPERATOR_PORT ?? 3010);
 const KEY = process.env.CAPTCHA_API_KEY ?? '';
 const PROVIDER = process.env.CAPTCHA_PROVIDER ?? 'capsolver';
 const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL ?? '';
-const OUT_BASE = 'd:/Jose/Proyecto_Consulta_placa/validacion-fuentes/operador';
+const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_placa/validacion-fuentes/operador';
 if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); process.exit(1); }
 
 const plateDir = (plate: string) => join(OUT_BASE, plate.toUpperCase().replace(/[^A-Z0-9]/g, ''));
