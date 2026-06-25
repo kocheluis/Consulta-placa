@@ -5,8 +5,8 @@ import { join } from 'node:path';
 import { createCaptchaSolver, type CaptchaSolver } from '../captcha/index.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { runHistorialRegistral } from './historial.js';
-import { buscarSuperbid } from './superbid.js';
 import { killEngineChrome } from './chrome-path.js';
+import { superbidLookup, metaGet } from '../db/repo.js';
 import {
   runSatCaptura,
   runCallao,
@@ -253,17 +253,18 @@ async function runSuperbidSource(
   const outDir = shotPath.replace(/[/\\][^/\\]+$/, '');
   startLog(outDir, 'superbid', plate);
   try {
-    const sun = await scrapeSunarpViaCdp(plate, { shotPath: join(outDir, '_sb-sunarp.png'), log: (m) => logLine(outDir, 'superbid', `sunarp: ${m}`) }).catch(() => null);
-    const v = (sun?.data ?? {}) as { brand?: string; model?: string; year?: number };
-    const r = await buscarSuperbid(plate, { brand: v.brand, model: v.model, year: v.year, outDir, log: (m) => logLine(outDir, 'superbid', m) });
-    if (!r.ok) { logLine(outDir, 'superbid', `ERROR ${r.error}`); return { ...base, status: 'ERROR', summary: r.error ?? 'error', ms: Date.now() - t0 }; }
-    if (r.found) {
-      const fl = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.siniestro && 'SINIESTRO'].filter(Boolean).join('/');
-      logLine(outDir, 'superbid', `MATCH ${r.subasta} · ${fl} · ${Date.now() - t0}ms`);
-      return { ...base, status: 'ENCONTRADO', summary: `⚠ EN SUBASTA: ${r.subasta} (${fl || 'remate'})`, data: { ...r }, ms: Date.now() - t0 };
+    // Lookup INSTANTÁNEO en el índice (DB) poblado por superbid-scan (job diario).
+    const hit = superbidLookup(plate);
+    if (hit) {
+      const f = (hit.flags ?? {}) as Record<string, boolean>;
+      const tipo = f.aseguradora ? 'ASEGURADORA (siniestro)' : f.remate ? 'remate/financiera' : 'subasta';
+      const estado = hit.estado === 'cerrada' ? 'cerrada' : 'abierta';
+      logLine(outDir, 'superbid', `MATCH índice: ${hit.subasta ?? ''} · ${tipo} · ${estado} · ${Date.now() - t0}ms`);
+      return { ...base, status: 'ENCONTRADO', summary: `⚠ EN SUBASTA: ${hit.subasta ?? ''} (${tipo}, ${estado})`, data: { ...hit }, ms: Date.now() - t0 };
     }
-    logLine(outDir, 'superbid', `sin match · ${Date.now() - t0}ms`);
-    return { ...base, status: 'SIN_REGISTRO', summary: 'No aparece en subastas de Superbid (hoy)', data: { ...r }, ms: Date.now() - t0 };
+    const upd = metaGet<string>('ultimo_scan_at');
+    logLine(outDir, 'superbid', `sin match en índice (últ. scan ${upd ?? '—'}) · ${Date.now() - t0}ms`);
+    return { ...base, status: 'SIN_REGISTRO', summary: `No aparece en el índice de Superbid${upd ? ` (act. ${upd.slice(0, 10)})` : ''}`, ms: Date.now() - t0 };
   } catch (e) {
     logLine(outDir, 'superbid', `ERROR ${(e as Error).message}`);
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
