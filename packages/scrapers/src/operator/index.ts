@@ -107,25 +107,29 @@ export async function runOperatorReport(
   const wantSuperbid = wanted.includes('superbid');
   const browserSources = wanted.filter((s) => s !== 'sunarp' && s !== 'historial' && s !== 'superbid' && SOURCE_RUNNERS[s]);
 
-  const browser = await chromium.launch({ headless: opts.headless ?? true });
   let results: OperatorSourceResult[] = [];
-  try {
-    const ctx = await browser.newContext({ locale: 'es-PE' });
-    const settled = await Promise.allSettled(
-      browserSources.map((id) => {
-        startLog(opts.outDir, id, plate);
-        return withPage(ctx, (p) => SOURCE_RUNNERS[id]!(p, plate, solver, shot(id)))
-          .then((r) => { logLine(opts.outDir, id, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`); return r; })
-          .catch((e) => { logLine(opts.outDir, id, `ERROR ${(e as Error).message}`); throw e; });
-      }),
-    );
-    results = settled.map((s, i) =>
-      s.status === 'fulfilled'
-        ? s.value
-        : { source: browserSources[i] ?? `SRC_${i}`, label: browserSources[i] ?? 'Fuente', category: 'OTRO', status: 'ERROR' as const, summary: String(s.reason), ms: 0 },
-    );
-  } finally {
-    await browser.close().catch(() => {});
+  // Solo lanzamos el Chromium "burst" (Playwright bundled, headless) si hay fuentes
+  // que lo usan; las fuentes CDP (sunarp/historial/superbid) abren su propio Chrome real.
+  if (browserSources.length > 0) {
+    const browser = await chromium.launch({ headless: opts.headless ?? true });
+    try {
+      const ctx = await browser.newContext({ locale: 'es-PE' });
+      const settled = await Promise.allSettled(
+        browserSources.map((id) => {
+          startLog(opts.outDir, id, plate);
+          return withPage(ctx, (p) => SOURCE_RUNNERS[id]!(p, plate, solver, shot(id)))
+            .then((r) => { logLine(opts.outDir, id, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`); return r; })
+            .catch((e) => { logLine(opts.outDir, id, `ERROR ${(e as Error).message}`); throw e; });
+        }),
+      );
+      results = settled.map((s, i) =>
+        s.status === 'fulfilled'
+          ? s.value
+          : { source: browserSources[i] ?? `SRC_${i}`, label: browserSources[i] ?? 'Fuente', category: 'OTRO', status: 'ERROR' as const, summary: String(s.reason), ms: 0 },
+      );
+    } finally {
+      await browser.close().catch(() => {});
+    }
   }
 
   if (wantSunarp) results.push(await runSunarpSource(plate, solver, shot('sunarp'), opts));
