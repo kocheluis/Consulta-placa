@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Page, type Browser } from 'playwright';
-import { findChrome } from './chrome-path.js';
+import { findChrome, chromeFlags } from './chrome-path.js';
 
 /**
  * Fuente SUPERBID (subastas de vehículos SINIESTRADOS / REMATADOS) — señal LEADING
@@ -87,7 +87,7 @@ export async function buscarSuperbid(plateRaw: string, opts: SuperbidOptions = {
   let browser: Browser | null = null;
   try {
     log(`Chrome Superbid (CDP :${PORT})…`);
-    const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, '--no-first-run', '--no-default-browser-check', AUTOS], { detached: false, stdio: 'ignore' });
+    const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), AUTOS], { detached: false, stdio: 'ignore' });
     proc.on('error', (e) => log(`spawn: ${e.message}`));
     for (let i = 0; i < 20 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${PORT}`); } catch { /* retry */ } }
     if (!browser) return { ...out, error: 'no conecté al Chrome Superbid' };

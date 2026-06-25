@@ -7,7 +7,7 @@ import { SectionStatus, SourceId, type SourceResult } from '@app/shared';
 import { ocrImage } from '../ocr/index.js';
 import { parseSunarpOcr } from '../sunarp/ocr-parser.js';
 import { PORTAL_SELECTORS } from '../selectors.js';
-import { findChrome } from './chrome-path.js';
+import { findChrome, chromeFlags } from './chrome-path.js';
 
 /**
  * SUNARP por HÍBRIDO CDP — la vía que reemplaza al StealthBrowserPool flaky.
@@ -69,8 +69,7 @@ async function connectOrLaunch(
       [
         `--remote-debugging-port=${port}`,
         `--user-data-dir=${profileDir}`,
-        '--no-first-run',
-        '--no-default-browser-check',
+        ...chromeFlags(),
         URL,
       ],
       { detached: false, stdio: 'ignore' },

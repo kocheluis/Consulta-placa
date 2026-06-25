@@ -1,4 +1,5 @@
 import { existsSync } from 'node:fs';
+import { platform } from 'node:os';
 
 /**
  * Localiza el binario de Google Chrome de forma cross-platform:
@@ -25,4 +26,22 @@ export function findChrome(): string | null {
   const fromEnv = process.env.CHROME_PATH;
   if (fromEnv && existsSync(fromEnv)) return fromEnv;
   return CANDIDATES.find((p) => p && existsSync(p)) ?? null;
+}
+
+/**
+ * Flags comunes para lanzar Chrome con depuración remota (CDP).
+ * - `--disable-extensions`: quita el target *service-worker* de extensiones que
+ *   CUELGA `connectOverCDP` de Playwright con Chrome reciente (validado en el VPS).
+ * - en Linux (VPS) añade `--no-sandbox` (corre como root) y `--disable-dev-shm-usage`
+ *   (/dev/shm pequeño). En Windows/macOS no se agregan.
+ */
+export function chromeFlags(): string[] {
+  const flags = [
+    '--no-first-run',
+    '--no-default-browser-check',
+    '--disable-extensions',
+    '--disable-component-extensions-with-background-pages',
+  ];
+  if (platform() === 'linux') flags.push('--no-sandbox', '--disable-dev-shm-usage');
+  return flags;
 }

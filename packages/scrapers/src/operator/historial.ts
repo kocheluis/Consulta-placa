@@ -6,7 +6,7 @@ import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser } from 'playwright';
 import { parseAsiento, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
-import { findChrome } from './chrome-path.js';
+import { findChrome, chromeFlags } from './chrome-path.js';
 
 /**
  * HISTORIAL REGISTRAL completo (SUNARP → SPRL → Síguelo) por HÍBRIDO CDP.
@@ -90,7 +90,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   // el SUNARP (igual que el probe que funciona) → evita el race de login.
   let browser: Browser | null = null;
   log(`Chrome SPRL (CDP :${PORT})…`);
-  const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, '--no-first-run', '--no-default-browser-check', INGRESO], { detached: false, stdio: 'ignore' });
+  const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
   proc.on('error', (e) => log(`spawn: ${e.message}`));
 
   // ── [1] SUNARP → SEDE (mientras el Chrome SPRL carga/asienta la sesión) ──
