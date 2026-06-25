@@ -55,3 +55,9 @@ tmp-design-handoff/
 .cdp-*/
 # Salidas/validacion local del scraping (screenshots, OCR, reportes, boletas)
 validacion-fuentes/
+# Base de datos local SQLite (PlacaPe) + boletas guardadas
+data/
+*.db
+*.db-shm
+*.db-wal
+*.sqlite

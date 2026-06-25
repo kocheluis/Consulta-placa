@@ -12,13 +12,19 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "operador": "tsx src/operator-server.ts",
+    "db": "tsx src/db-cli.ts",
     "test": "vitest run"
   },
   "dependencies": {
     "@app/shared": "*",
+    "better-sqlite3": "^11.0.0",
+    "drizzle-orm": "^0.36.0",
     "node-html-parser": "^6.1.13",
     "patchright": "^1.61.0",
     "playwright": "^1.49.1",
     "tesseract.js": "^5.1.1"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.11"
   }
 }
