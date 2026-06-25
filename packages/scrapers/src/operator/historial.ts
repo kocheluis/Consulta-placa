@@ -6,6 +6,7 @@ import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser } from 'playwright';
 import { parseAsiento, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
+import { findChrome } from './chrome-path.js';
 
 /**
  * HISTORIAL REGISTRAL completo (SUNARP → SPRL → Síguelo) por HÍBRIDO CDP.
@@ -27,11 +28,7 @@ const SIGUELO = 'https://sigueloplus.sunarp.gob.pe/siguelo/';
 const SG_PASS = 'sV2zUWiuNo@3uv8nu9ir4'; // CryptoJS passphrase del bundle de Síguelo
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const CHROME = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-].find((p) => existsSync(p));
+const CHROME = findChrome();
 
 export interface HistorialOptions {
   sprlUser?: string;

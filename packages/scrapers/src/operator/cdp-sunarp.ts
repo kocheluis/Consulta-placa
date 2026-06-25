@@ -1,12 +1,13 @@
 /* eslint-disable no-console */
 import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Browser } from 'playwright';
 import { SectionStatus, SourceId, type SourceResult } from '@app/shared';
 import { ocrImage } from '../ocr/index.js';
 import { parseSunarpOcr } from '../sunarp/ocr-parser.js';
 import { PORTAL_SELECTORS } from '../selectors.js';
+import { findChrome } from './chrome-path.js';
 
 /**
  * SUNARP por HÍBRIDO CDP — la vía que reemplaza al StealthBrowserPool flaky.
@@ -25,15 +26,6 @@ const S = PORTAL_SELECTORS.sunarp;
 const URL = 'https://consultavehicular.sunarp.gob.pe/';
 const DATA_ENDPOINT = 'getDatosVehiculo';
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
-
-const CHROME_CANDIDATES = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-];
-function findChrome(): string | null {
-  return CHROME_CANDIDATES.find((p) => existsSync(p)) ?? null;
-}
 
 export interface CdpSunarpOptions {
   /** Dónde guardar la imagen-tarjeta de SUNARP como screenshot para la consola. */

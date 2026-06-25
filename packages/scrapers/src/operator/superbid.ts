@@ -3,6 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Page, type Browser } from 'playwright';
+import { findChrome } from './chrome-path.js';
 
 /**
  * Fuente SUPERBID (subastas de vehículos SINIESTRADOS / REMATADOS) — señal LEADING
@@ -41,11 +42,7 @@ const BASE = 'https://www.superbid.com.pe';
 const AUTOS = 'https://www.superbid.com.pe/categorias/autos-y-motos';
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-const CHROME = [
-  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
-  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
-  `${process.env.LOCALAPPDATA}\\Google\\Chrome\\Application\\chrome.exe`,
-].find((p) => existsSync(p));
+const CHROME = findChrome();
 
 const RX_ASEG = /\b(RIMAC|R[IÍ]MAC|PAC[IÍ]FICO|LA POSITIVA|MAPFRE|INTERSEGURO|QU[AÁ]LITAS|SEGUROS|ASEGURADORA)\b/i;
 const RX_REMATE = /\b(REMATE|SUBASTA|FINANCIERA|MARTILLER[OA]|ADJUDICACI[OÓ]N|BANCO|LEASING)\b/i;
