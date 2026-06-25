@@ -13,6 +13,7 @@
     "build": "tsc -p tsconfig.json",
     "operador": "tsx src/operator-server.ts",
     "db": "tsx src/db-cli.ts",
+    "superbid:scan": "tsx src/superbid-scan.ts",
     "test": "vitest run"
   },
   "dependencies": {
