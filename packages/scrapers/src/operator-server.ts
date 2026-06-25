@@ -1,16 +1,16 @@
 /* eslint-disable no-console */
 import { createServer } from 'node:http';
-import { readFile } from 'node:fs/promises';
+import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import { runOperatorReport, runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './operator/index.js';
+import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './operator/index.js';
+import { killEngineChrome } from './operator/chrome-path.js';
 
 /**
- * Herramienta web LOCAL del operador PlacaPe (corre en la PC del operador,
- * IP residencial). Servidor Node nativo (sin Fastify/Redis/deploy). El operador
- * abre http://localhost:3010, pega la placa, corre el motor, reintenta por fuente,
- * pega el historial del SPRL (manual) y marca el pedido como listo (→ n8n/Supabase).
+ * Consola web del operador PlacaPe. Servidor Node nativo. El operador abre la UI,
+ * pega la placa, corre el motor con **barra de progreso (SSE) y botón Cancelar**,
+ * pega el historial SPRL (manual) y marca el pedido listo (→ n8n/Supabase).
  *
- * Uso:  CAPTCHA_API_KEY=... npx tsx packages/scrapers/src/operator-server.ts
+ * Uso:  CAPTCHA_API_KEY=... [OPERATOR_OUT_BASE=...] npx tsx packages/scrapers/src/operator-server.ts
  */
 const PORT = Number(process.env.OPERATOR_PORT ?? 3010);
 const KEY = process.env.CAPTCHA_API_KEY ?? '';
@@ -20,7 +20,66 @@ const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_pla
 if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); process.exit(1); }
 
 const plateDir = (plate: string) => join(OUT_BASE, plate.toUpperCase().replace(/[^A-Z0-9]/g, ''));
-const baseOpts = (plate: string) => ({ outDir: plateDir(plate), captchaProvider: PROVIDER, captchaApiKey: KEY });
+const baseOpts = (plate: string, source?: string) => ({
+  outDir: plateDir(plate), captchaProvider: PROVIDER, captchaApiKey: KEY,
+  ...(source && source !== 'sunarp' ? { headless: true } : {}),
+});
+
+// Pesos (segundos estimados) para que la barra avance de forma realista por fuente.
+const WEIGHT: Record<string, number> = { sunarp: 25, historial: 240, superbid: 80 };
+const weightOf = (id: string) => WEIGHT[id] ?? 30;
+
+interface Job {
+  id: string; plate: string; sources: string[];
+  results: OperatorSourceResult[]; percent: number; current: string; step: string;
+  done: boolean; cancelled: boolean; error?: string;
+}
+const jobs = new Map<string, Job>();
+const newId = () => `j${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
+
+/** Última línea del log de la fuente (sin timestamp) → texto de "paso" en la barra. */
+async function lastLogLine(plate: string, id: string): Promise<string> {
+  try {
+    const txt = await readFile(join(plateDir(plate), `${id}.log`), 'utf8');
+    const lines = txt.trim().split('\n');
+    return (lines[lines.length - 1] ?? '').replace(/^\S+\s/, '').slice(0, 90);
+  } catch { return ''; }
+}
+
+async function runJob(job: Job): Promise<void> {
+  const total = job.sources.reduce((s, id) => s + weightOf(id), 0) || 1;
+  let doneW = 0;
+  for (const src of job.sources) {
+    if (job.cancelled) break;
+    job.current = src;
+    const t0 = Date.now();
+    const tick = setInterval(() => {
+      const cur = Math.min((Date.now() - t0) / 1000, weightOf(src));
+      job.percent = Math.min(99, Math.round(((doneW + cur) / total) * 100));
+      void lastLogLine(job.plate, src).then((l) => { if (l) job.step = l; });
+    }, 700);
+    let result: OperatorSourceResult;
+    try {
+      result = await runSingleSource(job.plate, src, baseOpts(job.plate, src));
+    } catch (e) {
+      result = { source: src.toUpperCase(), label: src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+    }
+    clearInterval(tick);
+    doneW += weightOf(src);
+    job.results.push(result);
+    job.percent = Math.round((doneW / total) * 100);
+  }
+  job.step = '';
+  job.done = true;
+  if (!job.cancelled) {
+    job.percent = 100;
+    try {
+      await mkdir(plateDir(job.plate), { recursive: true });
+      await writeFile(join(plateDir(job.plate), 'reporte.json'),
+        JSON.stringify({ plate: job.plate, generatedAt: new Date().toISOString(), results: job.results }, null, 2), 'utf8');
+    } catch { /* noop */ }
+  }
+}
 
 function readBody(req: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
@@ -45,14 +104,39 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/sources' && req.method === 'GET') return sendJson(res, 200, OPERATOR_SOURCES);
 
+    // Inicia un job y devuelve su id (el progreso se sigue por SSE).
     if (path === '/api/run' && req.method === 'POST') {
       const body = await readBody(req);
       const plate = String(body.placa ?? '').trim();
       if (!plate) return sendJson(res, 400, { error: 'falta placa' });
-      const sources = Array.isArray(body.sources) ? (body.sources as string[]) : undefined;
-      console.log(`[operador] run ${plate} ${sources ? '(' + sources.join(',') + ')' : ''}`);
-      const report = await runOperatorReport(plate, { ...baseOpts(plate), ...(sources ? { sources } : {}) });
-      return sendJson(res, 200, report);
+      const sources = Array.isArray(body.sources) && body.sources.length ? (body.sources as string[]) : ['sunarp'];
+      const job: Job = { id: newId(), plate, sources, results: [], percent: 0, current: sources[0], step: 'iniciando…', done: false, cancelled: false };
+      jobs.set(job.id, job);
+      console.log(`[operador] run ${plate} (${sources.join(',')}) job=${job.id}`);
+      void runJob(job).catch((e) => { job.error = (e as Error).message; job.done = true; });
+      return sendJson(res, 200, { jobId: job.id });
+    }
+
+    // Progreso en vivo (Server-Sent Events).
+    if (path.startsWith('/api/progress/') && req.method === 'GET') {
+      const job = jobs.get(path.split('/').pop() ?? '');
+      if (!job) return sendJson(res, 404, { error: 'job no encontrado' });
+      res.writeHead(200, { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive' });
+      const send = () => res.write(`data: ${JSON.stringify({ percent: job.percent, current: job.current, step: job.step, results: job.results, done: job.done, cancelled: job.cancelled, error: job.error })}\n\n`);
+      send();
+      const iv = setInterval(() => {
+        send();
+        if (job.done) { clearInterval(iv); res.end(); setTimeout(() => jobs.delete(job.id), 60000); }
+      }, 700);
+      req.on('close', () => clearInterval(iv));
+      return;
+    }
+
+    // Cancela un job: marca cancelado y mata el Chrome del motor → la fuente en curso aborta.
+    if (path.startsWith('/api/cancel/') && req.method === 'POST') {
+      const job = jobs.get(path.split('/').pop() ?? '');
+      if (job && !job.done) { job.cancelled = true; killEngineChrome(); console.log(`[operador] cancel job=${job.id}`); }
+      return sendJson(res, 200, { cancelled: true });
     }
 
     if (path === '/api/retry' && req.method === 'POST') {
@@ -61,7 +145,7 @@ const server = createServer(async (req, res) => {
       const source = String(body.source ?? '').trim();
       if (!plate || !source) return sendJson(res, 400, { error: 'falta placa o source' });
       console.log(`[operador] retry ${plate} · ${source}`);
-      const result = await runSingleSource(plate, source, { ...baseOpts(plate), headless: source !== 'sunarp' });
+      const result = await runSingleSource(plate, source, baseOpts(plate, source));
       return sendJson(res, 200, result);
     }
 
@@ -71,7 +155,6 @@ const server = createServer(async (req, res) => {
         plate: body.placa, whatsapp: body.whatsapp, email: body.email,
         sprl: body.sprl, precioCompra: body.precioCompra, results: body.results, at: new Date().toISOString(),
       };
-      // Punto de integración con n8n: si hay webhook, dispara la entrega (WhatsApp/correo).
       let sent = false;
       if (N8N_WEBHOOK) {
         try {
@@ -85,9 +168,8 @@ const server = createServer(async (req, res) => {
       return sendJson(res, 200, { sent, n8n: !!N8N_WEBHOOK });
     }
 
-    // Logs por fuente: /log/<PLACA>/<id>
     if (path.startsWith('/log/') && req.method === 'GET') {
-      const parts = path.split('/').filter(Boolean); // ['log', PLACA, id]
+      const parts = path.split('/').filter(Boolean);
       const plate = (parts[1] ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       const id = (parts[2] ?? '').replace(/[^a-z0-9-]/gi, '');
       if (!plate || !id) return sendJson(res, 404, { error: 'no encontrado' });
@@ -98,9 +180,8 @@ const server = createServer(async (req, res) => {
       } catch { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('(sin log todavía)'); }
     }
 
-    // Screenshots: /shot/<PLACA>/<archivo.png>
     if (path.startsWith('/shot/') && req.method === 'GET') {
-      const parts = path.split('/').filter(Boolean); // ['shot', PLACA, file.png]
+      const parts = path.split('/').filter(Boolean);
       const plate = (parts[1] ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       const file = (parts[2] ?? '').replace(/[^A-Za-z0-9._-]/g, '');
       if (!plate || !file.endsWith('.png')) return sendJson(res, 404, { error: 'no encontrado' });
@@ -136,7 +217,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   input#placa{font:600 18px ui-monospace,monospace;letter-spacing:2px;text-transform:uppercase;width:160px}
   button{font:600 14px inherit;padding:10px 16px;border:0;border-radius:10px;background:var(--azul);color:#fff;cursor:pointer}
   button.sec{background:#fff;color:var(--azul);border:1px solid var(--bd)}
-  button.ok{background:var(--teal)} button:disabled{opacity:.5;cursor:not-allowed}
+  button.ok{background:var(--teal)} button.danger{background:#fff;color:var(--err);border:1px solid #FCA5A5} button:disabled{opacity:.5;cursor:not-allowed}
   .src{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--mut);margin-right:8px}
   .cards{display:grid;grid-template-columns:repeat(auto-fill,minmax(320px,1fr));gap:12px;margin-top:16px}
   .card{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px}
@@ -158,8 +239,12 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .tl-b{font-size:13px;color:#334155}
   .tl-p{color:#0C6F64;font-weight:700}
   .tl-o{font-size:12px;color:var(--mut);margin-top:2px}
+  .barwrap{height:12px;background:#E2E8F0;border-radius:999px;overflow:hidden;margin-top:10px}
+  #bar{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--azul));transition:width .4s ease}
+  #prog .row{justify-content:space-between;align-items:center}
+  #step{font-size:13px;color:var(--mut)} #pct{font:700 15px ui-monospace,monospace;color:var(--azul)}
 </style></head><body>
-<header><b>🛠 Consola del operador · PlacaPe</b><span>scraping local · IP residencial</span></header>
+<header><b>🛠 Consola del operador · PlacaPe</b><span>scraping · VPS Perú</span></header>
 <main>
   <div class="row">
     <input id="placa" placeholder="ABC123" maxlength="8">
@@ -167,6 +252,15 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
     <button class="sec" onclick="toggleSrc()">Fuentes ▾</button>
   </div>
   <div id="srcbox" class="row" style="display:none;margin-top:10px"></div>
+
+  <div class="panel" id="prog" style="display:none">
+    <div class="row">
+      <b id="step">…</b>
+      <div class="row"><span id="pct">0%</span><button class="danger" onclick="cancelRun()">Cancelar</button></div>
+    </div>
+    <div class="barwrap"><div id="bar"></div></div>
+  </div>
+
   <div id="cards" class="cards"></div>
 
   <div class="panel" id="sprlPanel" style="display:none">
@@ -185,7 +279,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   <div id="log"></div>
 </main>
 <script>
-var SOURCES=[]; var LAST=null;
+var SOURCES=[], LAST=null, ES=null, JOB=null;
 function log(m){var l=document.getElementById('log');l.textContent+= (new Date().toLocaleTimeString())+'  '+m+'\\n';l.scrollTop=l.scrollHeight;}
 function plate(){return document.getElementById('placa').value.toUpperCase().replace(/[^A-Z0-9]/g,'');}
 fetch('/api/sources').then(function(r){return r.json()}).then(function(s){SOURCES=s;var b=document.getElementById('srcbox');
@@ -203,6 +297,7 @@ function timelineHtml(r){if(!r.data||!r.data.timeline)return'';
     '<div class="tl-b"><b>'+esc(a.acto||a.tipo||'')+'</b>'+(a.precio?' · <span class="tl-p">'+esc(a.precio)+'</span>':'')+
     (a.formaPago?' · '+esc(a.formaPago):'')+'<div class="tl-o">'+esc((a.participantes||'').slice(0,100))+'</div></div></div>';
   }).join('')+'</div>';}
+function srcId(code){return code.toLowerCase().replace(/_/g,'-');}
 function card(r){
   var actions='<div style="margin-top:8px"><button class="sec" onclick="retry(\\''+r.source+'\\')">Reintentar</button> <a href="/log/'+plate()+'/'+srcId(r.source)+'" target="_blank" style="font-size:13px;color:#0C6F64;margin-left:8px">ver log</a></div>';
   if(r.source==='HISTORIAL'&&r.data&&r.data.timeline){
@@ -211,20 +306,34 @@ function card(r){
   var img=r.screenshot?'<img src="/shot/'+plate()+'/'+r.source.toLowerCase().replace(/_/g,"-")+'.png?t='+Date.now()+'" onclick="window.open(this.src)">':'';
   return '<div class="card" id="c-'+r.source+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
   '<div class="meta">'+(r.ms/1000).toFixed(1)+'s</div>'+img+actions+'</div>';}
-// map source id (con guiones) ↔ source code (MAYUS_GUIONBAJO) para el shot
-function srcId(code){return code.toLowerCase().replace(/_/g,'-');}
+function renderCards(results){if(!results)return;document.getElementById('cards').innerHTML=results.map(card).join('');
+  results.forEach(function(r){var im=document.querySelector('#c-'+r.source+' img'); if(im){im.src='/shot/'+plate()+'/'+srcId(r.source)+'.png?t='+Date.now();}});}
+function showProg(on){document.getElementById('prog').style.display=on?'block':'none';}
+function setBar(pct,txt){document.getElementById('bar').style.width=pct+'%';document.getElementById('pct').textContent=pct+'%';document.getElementById('step').textContent=txt||'';}
 function run(){var p=plate();if(!p){alert('Pon una placa');return;}
   var go=document.getElementById('go');go.disabled=true;go.textContent='Corriendo…';
-  document.getElementById('cards').innerHTML='';log('▶ generando '+p+' …');
+  document.getElementById('cards').innerHTML='';document.getElementById('sprlPanel').style.display='none';LAST=null;
+  showProg(true);setBar(0,'iniciando…');log('▶ generando '+p+' …');
   fetch('/api/run',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,sources:chosen()})})
-   .then(function(r){return r.json()}).then(function(rep){LAST=rep;
-     document.getElementById('cards').innerHTML=rep.results.map(card).join('');
-     // arregla src de imágenes (usar id con guiones)
-     rep.results.forEach(function(r){var im=document.querySelector('#c-'+r.source+' img'); if(im){im.src='/shot/'+p+'/'+srcId(r.source)+'.png?t='+Date.now();}});
-     document.getElementById('sprlPanel').style.display='block';
-     var ok=rep.results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
-     log('✔ '+ok+'/'+rep.results.length+' fuentes respondieron');
-   }).catch(function(e){log('✖ '+e)}).finally(function(){go.disabled=false;go.textContent='Generar reporte';});}
+   .then(function(r){return r.json()}).then(function(o){
+     if(!o.jobId){throw new Error(o.error||'sin jobId');}
+     JOB=o.jobId; ES=new EventSource('/api/progress/'+JOB);
+     ES.onmessage=function(ev){var s=JSON.parse(ev.data);
+       setBar(s.percent, esc(s.current||'')+(s.step?' · '+esc(s.step):''));
+       renderCards(s.results);
+       if(s.done){ES.close();ES=null;finish(s);}
+     };
+     ES.onerror=function(){/* el SSE cierra al terminar; si no terminó, reintenta el navegador */};
+   }).catch(function(e){log('✖ '+e);endRun();});}
+function finish(s){endRun();
+  if(s.error){log('✖ '+s.error);return;}
+  if(s.cancelled){log('⏹ cancelado por el operador');renderCards(s.results);return;}
+  LAST={results:s.results};renderCards(s.results);
+  document.getElementById('sprlPanel').style.display='block';
+  var ok=s.results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
+  log('✔ '+ok+'/'+s.results.length+' fuentes respondieron');}
+function endRun(){var go=document.getElementById('go');go.disabled=false;go.textContent='Generar reporte';showProg(false);if(ES){ES.close();ES=null;}}
+function cancelRun(){if(!JOB)return;log('⏹ cancelando…');fetch('/api/cancel/'+JOB,{method:'POST'});}
 function retry(code){var id=srcId(code);log('↻ reintentando '+code+' …');
   fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:plate(),source:id})})
    .then(function(r){return r.json()}).then(function(res){var el=document.getElementById('c-'+res.source);

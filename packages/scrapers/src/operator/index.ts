@@ -6,6 +6,7 @@ import { createCaptchaSolver, type CaptchaSolver } from '../captcha/index.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { runHistorialRegistral } from './historial.js';
 import { buscarSuperbid } from './superbid.js';
+import { killEngineChrome } from './chrome-path.js';
 import {
   runSatCaptura,
   runCallao,
@@ -138,6 +139,7 @@ export async function runOperatorReport(
 
   const report: OperatorReport = { plate, generatedAt, results };
   writeFileSync(join(opts.outDir, 'reporte.json'), JSON.stringify(report, null, 2), 'utf8');
+  killEngineChrome(); // libera RAM en el VPS (no-op en la PC del operador)
   return report;
 }
 
@@ -152,23 +154,26 @@ export async function runSingleSource(
   const solver = createCaptchaSolver({ provider: opts.captchaProvider ?? 'capsolver', apiKey: opts.captchaApiKey });
   const shot = join(opts.outDir, `${sourceId}.png`);
   startLog(opts.outDir, sourceId, plate);
-  logLine(opts.outDir, sourceId, 'REINTENTO manual');
-  if (sourceId === 'sunarp') return runSunarpSource(plate, solver, shot, opts);
-  if (sourceId === 'historial') return runHistorialSource(plate, shot, opts);
-  if (sourceId === 'superbid') return runSuperbidSource(plate, shot, opts);
-  const runner = SOURCE_RUNNERS[sourceId];
-  if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
-  const browser = await chromium.launch({ headless: opts.headless ?? true });
   try {
-    const ctx = await browser.newContext({ locale: 'es-PE' });
-    const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
-    logLine(opts.outDir, sourceId, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`);
-    return r;
-  } catch (e) {
-    logLine(opts.outDir, sourceId, `ERROR ${(e as Error).message}`);
-    throw e;
+    if (sourceId === 'sunarp') return await runSunarpSource(plate, solver, shot, opts);
+    if (sourceId === 'historial') return await runHistorialSource(plate, shot, opts);
+    if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
+    const runner = SOURCE_RUNNERS[sourceId];
+    if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
+    const browser = await chromium.launch({ headless: opts.headless ?? true });
+    try {
+      const ctx = await browser.newContext({ locale: 'es-PE' });
+      const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
+      logLine(opts.outDir, sourceId, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`);
+      return r;
+    } catch (e) {
+      logLine(opts.outDir, sourceId, `ERROR ${(e as Error).message}`);
+      throw e;
+    } finally {
+      await browser.close().catch(() => {});
+    }
   } finally {
-    await browser.close().catch(() => {});
+    killEngineChrome(); // libera RAM tras cada fuente en el VPS (no-op en Windows)
   }
 }
 

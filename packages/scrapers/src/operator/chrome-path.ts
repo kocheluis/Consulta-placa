@@ -1,5 +1,6 @@
 import { existsSync } from 'node:fs';
 import { platform } from 'node:os';
+import { execFile } from 'node:child_process';
 
 /**
  * Localiza el binario de Google Chrome de forma cross-platform:
@@ -44,4 +45,23 @@ export function chromeFlags(): string[] {
   ];
   if (platform() === 'linux') flags.push('--no-sandbox', '--disable-dev-shm-usage');
   return flags;
+}
+
+/**
+ * Mata los Chrome lanzados por el motor (los que tienen `--remote-debugging-port`)
+ * para liberar RAM tras cada reporte. SOLO en Linux (VPS) — en la PC del operador
+ * se reusa Chrome (RAM de sobra y conserva clearance en caliente). Apunta a los
+ * puertos de ESTE proceso (env `CDP_*_PORT`) → seguro con workers concurrentes.
+ * El clearance no se pierde: vive en el perfil persistente en disco.
+ */
+export function killEngineChrome(): void {
+  if (platform() !== 'linux') return;
+  const ports = [
+    Number(process.env.CDP_SUNARP_PORT ?? 9222),
+    Number(process.env.CDP_SPRL_PORT ?? 9224),
+    Number(process.env.CDP_SUPERBID_PORT ?? 9225),
+  ];
+  for (const p of ports) {
+    try { execFile('pkill', ['-f', `remote-debugging-port=${p}`], () => {}); } catch { /* noop */ }
+  }
 }
