@@ -154,26 +154,24 @@ export async function runSingleSource(
   const solver = createCaptchaSolver({ provider: opts.captchaProvider ?? 'capsolver', apiKey: opts.captchaApiKey });
   const shot = join(opts.outDir, `${sourceId}.png`);
   startLog(opts.outDir, sourceId, plate);
+  if (sourceId === 'sunarp') return await runSunarpSource(plate, solver, shot, opts);
+  if (sourceId === 'historial') return await runHistorialSource(plate, shot, opts);
+  if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
+  const runner = SOURCE_RUNNERS[sourceId];
+  if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
+  // El Chrome del motor se libera al FINAL del job (runJob/runOperatorReport), NO por
+  // fuente: así no se mata el Chrome de las fuentes que corren en paralelo.
+  const browser = await chromium.launch({ headless: opts.headless ?? true });
   try {
-    if (sourceId === 'sunarp') return await runSunarpSource(plate, solver, shot, opts);
-    if (sourceId === 'historial') return await runHistorialSource(plate, shot, opts);
-    if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
-    const runner = SOURCE_RUNNERS[sourceId];
-    if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
-    const browser = await chromium.launch({ headless: opts.headless ?? true });
-    try {
-      const ctx = await browser.newContext({ locale: 'es-PE' });
-      const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
-      logLine(opts.outDir, sourceId, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`);
-      return r;
-    } catch (e) {
-      logLine(opts.outDir, sourceId, `ERROR ${(e as Error).message}`);
-      throw e;
-    } finally {
-      await browser.close().catch(() => {});
-    }
+    const ctx = await browser.newContext({ locale: 'es-PE' });
+    const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
+    logLine(opts.outDir, sourceId, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`);
+    return r;
+  } catch (e) {
+    logLine(opts.outDir, sourceId, `ERROR ${(e as Error).message}`);
+    throw e;
   } finally {
-    killEngineChrome(); // libera RAM tras cada fuente en el VPS (no-op en Windows)
+    await browser.close().catch(() => {});
   }
 }
 

@@ -59,6 +59,10 @@ const baseOpts = (plate: string, source?: string) => ({
 // Pesos (segundos estimados) para que la barra avance de forma realista por fuente.
 const WEIGHT: Record<string, number> = { sunarp: 25, historial: 240, superbid: 80 };
 const weightOf = (id: string) => WEIGHT[id] ?? 30;
+// Fuentes en paralelo. Con 2 ya se toca el piso (SPRL ~168s domina); en 2GB es seguro.
+// Sube tras pasar el VPS a 4GB. Tuneable: OPERATOR_CONCURRENCY.
+const CONCURRENCY = Math.max(1, Number(process.env.OPERATOR_CONCURRENCY ?? 2));
+const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
   id: string; plate: string; sources: string[];
@@ -80,27 +84,39 @@ async function lastLogLine(plate: string, id: string): Promise<string> {
 async function runJob(job: Job): Promise<void> {
   const total = job.sources.reduce((s, id) => s + weightOf(id), 0) || 1;
   let doneW = 0;
-  for (const src of job.sources) {
-    if (job.cancelled) break;
-    job.current = src;
+  // Barra de progreso por peso completado (las fuentes corren en paralelo).
+  const tick = setInterval(() => {
+    job.percent = Math.min(99, Math.round((doneW / total) * 100));
+    const running = job.sources.filter((s) => !srcDone(job, s));
+    job.current = running[0] ?? '';
+    if (running[0]) void lastLogLine(job.plate, running[0]).then((l) => { if (l) job.step = l; });
+  }, 800);
+
+  const pending = [...job.sources];
+  const runOne = async (src: string): Promise<void> => {
     const t0 = Date.now();
-    const tick = setInterval(() => {
-      const cur = Math.min((Date.now() - t0) / 1000, weightOf(src));
-      job.percent = Math.min(99, Math.round(((doneW + cur) / total) * 100));
-      void lastLogLine(job.plate, src).then((l) => { if (l) job.step = l; });
-    }, 700);
     let result: OperatorSourceResult;
     try {
       result = await runSingleSource(job.plate, src, baseOpts(job.plate, src));
     } catch (e) {
       result = { source: src.toUpperCase(), label: src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
     }
-    clearInterval(tick);
     doneW += weightOf(src);
     job.results.push(result);
-    job.percent = Math.round((doneW / total) * 100);
-  }
+  };
+  // Pool de workers: hasta CONCURRENCY fuentes a la vez.
+  const worker = async (): Promise<void> => {
+    while (pending.length && !job.cancelled) {
+      const src = pending.shift();
+      if (src) await runOne(src);
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, job.sources.length) }, worker));
+
+  clearInterval(tick);
+  killEngineChrome(); // libera el Chrome del motor UNA vez, ya que todas las fuentes terminaron
   job.step = '';
+  job.current = '';
   job.done = true;
   if (!job.cancelled) {
     job.percent = 100;
