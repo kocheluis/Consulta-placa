@@ -10,6 +10,10 @@ import type {
   SiniestroIndicator,
   SectionCatalogEntry,
   OwnerInfo,
+  PapeletasPayload,
+  CapturaIndicator,
+  RevisionTecnica,
+  GravamenesPayload,
 } from '@app/shared';
 import {
   formatPlateDisplay,
@@ -32,7 +36,8 @@ import { StateScreen } from '@/components/StateScreen';
 import { LeadGate } from '@/components/LeadGate';
 import { getStoredLead } from '@/lib/lead';
 
-const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED === 'true';
+// Activo por defecto (el pipeline ya está vivo). Kill-switch: NEXT_PUBLIC_PRO_ENABLED=false.
+const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED !== 'false';
 
 /* ── Mapeos de presentación ───────────────────────────────────────── */
 type GaugeLevel = 'limpio' | 'revisar' | 'alerta';
@@ -576,7 +581,76 @@ function SectionBody({
     return section ? <SiniestroBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
+  if (entry.key === 'papeletas') {
+    return section ? <PapeletasBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'captura') {
+    return section ? <CapturaBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'revision_tecnica') {
+    return section ? <RevisionBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'gravamenes') {
+    return section ? <GravamenesBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
   return <ComingSoon blurb={entry.blurb} />;
+}
+
+function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const p = section.payload as PapeletasPayload | undefined;
+  if (!p) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  if (p.total === 0) return <StatusLine tone="success" icon="verified">Sin papeletas pendientes registradas</StatusLine>;
+  return (
+    <div className="flex flex-col gap-3">
+      <StatusLine tone="warning" icon="receipt_long">
+        {`${p.total} concepto(s) con papeletas${p.pendingAmount > 0 ? ` · S/ ${p.pendingAmount.toFixed(2)} pendiente` : ''}`}
+      </StatusLine>
+      <DefGrid items={p.items.map((it) => [it.entity, it.amount > 0 ? `S/ ${it.amount.toFixed(2)}` : 'Pendiente (revisar en el portal)'] as [string, string])} />
+    </div>
+  );
+}
+
+function CapturaBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const c = section.payload as CapturaIndicator | undefined;
+  if (!c) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  return c.hasCapture ? (
+    <StatusLine tone="danger" icon="gavel">Registra orden de captura — verifica con la autoridad</StatusLine>
+  ) : (
+    <StatusLine tone="success" icon="verified">Sin orden de captura</StatusLine>
+  );
+}
+
+function RevisionBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const r = section.payload as RevisionTecnica | undefined;
+  if (!r) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  return (
+    <div className="flex flex-col gap-3">
+      {r.hasValid ? (
+        <StatusLine tone="success" icon="fact_check">Revisión técnica vigente</StatusLine>
+      ) : (
+        <StatusLine tone="warning" icon="warning">Revisión técnica vencida o sin registro vigente</StatusLine>
+      )}
+      <DefGrid items={[['Estado', r.status], ['Última', r.lastInspection], ['Vence', r.validUntil], ['Resultado', r.result]]} />
+    </div>
+  );
+}
+
+function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const g = section.payload as GravamenesPayload | undefined;
+  if (!g) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  return g.hasLiens ? (
+    <StatusLine tone="warning" icon="account_balance">Registra gravamen/carga — el vehículo podría estar en garantía de un crédito</StatusLine>
+  ) : (
+    <StatusLine tone="success" icon="verified">Sin gravámenes ni cargas registradas</StatusLine>
+  );
 }
 
 function PropietariosBody({ owner }: { owner: OwnerInfo }) {

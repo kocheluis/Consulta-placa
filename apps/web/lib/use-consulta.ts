@@ -1,63 +1,49 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import type { ConsultaResponse } from '@app/shared';
-import { crearConsulta, obtenerJob, ApiError } from './api';
+import type { Report } from '@app/shared';
 
 type State =
   | { phase: 'loading'; report: null; error: null }
-  | { phase: 'done'; report: ConsultaResponse['report']; error: null; cached: boolean }
+  | { phase: 'done'; report: Report | null; error: null; cached: boolean }
   | { phase: 'error'; report: null; error: string; needsPro: boolean };
 
 /**
- * Crea la consulta y hace polling del job hasta COMPLETED/PARTIAL/FAILED.
- * `refreshToken` permite re-disparar la consulta (Actualizar/Reintentar);
- * cuando es > 0 se fuerza el refresco ignorando la caché.
+ * Lee el reporte de la placa desde `/api/reporte/[placa]` (Supabase vía route handler,
+ * recortado por el nivel pagado). Hace polling cada 3 s mientras el motor del VPS lo
+ * genera. `refreshToken` re-dispara la lectura (botón Actualizar).
  */
 export function useConsulta(placa: string, refreshToken = 0, enabled = true): State {
-  const forceRefresh = refreshToken > 0;
   const [state, setState] = useState<State>({ phase: 'loading', report: null, error: null });
 
   useEffect(() => {
-    if (!enabled) return;
+    if (!enabled || !placa) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
 
-    const poll = async (jobId: string) => {
+    const load = async () => {
       try {
-        const res = await obtenerJob(jobId);
+        const r = await fetch(`/api/reporte/${encodeURIComponent(placa)}`, { cache: 'no-store' });
         if (cancelled) return;
-        if (res.status === 'COMPLETED' || res.status === 'PARTIAL') {
-          setState({ phase: 'done', report: res.report, error: null, cached: res.cached });
-        } else if (res.status === 'FAILED') {
-          setState({ phase: 'error', report: null, error: 'La consulta falló. Intenta de nuevo.', needsPro: false });
+        const d = (await r.json()) as { generating?: boolean; report?: Report | null };
+        if (cancelled) return;
+        if (d.report) {
+          setState({ phase: 'done', report: d.report, error: null, cached: false });
+        } else if (d.generating) {
+          setState({ phase: 'loading', report: null, error: null });
+          timer = setTimeout(load, 3000);
         } else {
-          timer = setTimeout(() => poll(jobId), 1500);
+          setState({ phase: 'error', report: null, error: 'Aún no has generado este reporte.', needsPro: true });
         }
       } catch (e) {
-        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message, needsPro: e instanceof ApiError && e.needsPro });
+        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message, needsPro: false });
       }
     };
 
-    (async () => {
-      try {
-        const res = await crearConsulta(placa, forceRefresh);
-        if (cancelled) return;
-        if (res.report && (res.status === 'COMPLETED' || res.status === 'PARTIAL')) {
-          setState({ phase: 'done', report: res.report, error: null, cached: res.cached });
-        } else if (res.jobId) {
-          poll(res.jobId);
-        }
-      } catch (e) {
-        if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message, needsPro: e instanceof ApiError && e.needsPro });
-      }
-    })();
-
-    return () => {
-      cancelled = true;
-      clearTimeout(timer);
-    };
-  }, [placa, forceRefresh, refreshToken, enabled]);
+    setState({ phase: 'loading', report: null, error: null });
+    load();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [placa, refreshToken, enabled]);
 
   return state;
 }

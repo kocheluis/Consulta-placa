@@ -24,6 +24,7 @@ export interface Pedido {
   startedAt?: string | null;
   reportPath?: string | null;
   error?: string | null;
+  userId?: string | null;
 }
 
 export interface PedidoQueue {
@@ -61,7 +62,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
   const map = (r: Record<string, unknown>): Pedido => ({
     id: r.id as string, placa: r.placa as string, whatsapp: r.whatsapp as string, email: r.email as string,
     estado: r.estado as string, createdAt: r.created_at as string, startedAt: r.started_at as string,
-    reportPath: r.report_path as string, error: r.error as string,
+    reportPath: r.report_path as string, error: r.error as string, userId: (r.user_id as string) ?? null,
   });
   const patch = async (id: Pedido['id'], body: Record<string, unknown>) => {
     const r = await fetch(`${base}?id=eq.${id}`, { method: 'PATCH', headers, body: JSON.stringify(body) });

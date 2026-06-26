@@ -6,6 +6,8 @@ import { join } from 'node:path';
 import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './operator/index.js';
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
+import { toWebReport } from './operator/report-transform.js';
+import { publishReport } from './operator/report-store.js';
 import { metaGet, metaSet } from './db/repo.js';
 
 // Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, etc.), sin hornearlos en
@@ -123,6 +125,12 @@ async function processPedido(p: Pedido): Promise<void> {
     } else {
       await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
       console.log(`[motor-auto] pedido ${p.id} LISTO (${ok}/${job.results.length} fuentes)`);
+      // Publica el reporte normalizado en Supabase para que el cliente lo vea en placape.pe.
+      try {
+        const report = toWebReport(p.placa, job.results, new Date().toISOString(), String(p.id));
+        const pub = await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: String(p.id) });
+        console.log(`[reportes] publicado para ${p.placa}: ${pub ? 'sí' : 'no (¿Supabase sin configurar?)'}`);
+      } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
       if (N8N_WEBHOOK) {
         try {
           await fetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },

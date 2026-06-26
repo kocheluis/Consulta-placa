@@ -1,0 +1,58 @@
+import { NextResponse } from 'next/server';
+import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
+import { getPaidTier } from '@/lib/payments';
+import {
+  SECTION_CATALOG, TIER_RANK, ReportTier, ReportStatus, DISCLAIMER_TEXT,
+  type Report, type SectionResult,
+} from '@app/shared';
+
+export const runtime = 'nodejs';
+export const dynamic = 'force-dynamic';
+
+const norm = (p: string): string => p.toUpperCase().replace(/[^A-Z0-9]/g, '');
+
+/** Reporte vacío (sin datos): la web muestra el dashboard con la invitación a comprar. */
+function stub(placa: string): Report {
+  return {
+    id: '', placa, status: ReportStatus.PARTIAL, generatedAt: new Date().toISOString(),
+    disclaimer: DISCLAIMER_TEXT, vehicle: null, sections: [],
+  };
+}
+
+/** Paywall server-side: quita el payload de las secciones por encima del nivel pagado. */
+function stripByTier(report: Report, tier: 'BASIC' | 'PRO' | 'ULTRA'): Report {
+  const rank = TIER_RANK[tier as ReportTier] ?? 1;
+  const kindTier = new Map<string, ReportTier>();
+  for (const e of SECTION_CATALOG) if (e.dataKind) kindTier.set(e.dataKind, e.tier);
+  const sections: SectionResult[] = report.sections.map((s) => {
+    const t = kindTier.get(s.kind);
+    return t && TIER_RANK[t] > rank ? { ...s, payload: undefined } : s;
+  });
+  return { ...report, sections };
+}
+
+/**
+ * Devuelve el reporte de una placa para el cliente. Lee de Supabase (service_role) y
+ * recorta por el nivel pagado del usuario. Estados: `generating` (hay un pedido en curso)
+ * o `report` (listo o stub-vacío para invitar a comprar).
+ */
+export async function GET(_req: Request, { params }: { params: Promise<{ placa: string }> }) {
+  const { placa: raw } = await params;
+  const placa = norm(raw);
+  if (!placa) return NextResponse.json({ generating: false, report: null });
+  if (!isAdminConfigured) return NextResponse.json({ generating: false, report: stub(placa) });
+
+  let tier: 'BASIC' | 'PRO' | 'ULTRA' = 'BASIC';
+  try { tier = await getPaidTier(placa); } catch { /* anónimo → BASIC */ }
+
+  const admin = createAdminClient();
+  const { data: rep } = await admin.from('reportes').select('report,status').eq('placa', placa).maybeSingle();
+  if (rep?.report) {
+    return NextResponse.json({ generating: false, report: stripByTier(rep.report as Report, tier) });
+  }
+
+  const { data: ped } = await admin
+    .from('pedidos').select('id').eq('placa', placa).in('estado', ['pendiente', 'procesando']).limit(1);
+  const generating = !!(ped && ped.length);
+  return NextResponse.json({ generating, report: generating ? null : stub(placa) });
+}
