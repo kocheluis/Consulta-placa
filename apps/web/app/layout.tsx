@@ -70,6 +70,7 @@ const jsonLd = {
 
 const NAV_LINKS = [
   { label: 'Consultar', href: '/' },
+  { label: 'Portales sugeridos', href: '/portales' },
   { label: 'Planes', href: '/planes' },
   { label: 'Empresas', href: '/empresas' },
   { label: 'Ayuda', href: '/ayuda' },

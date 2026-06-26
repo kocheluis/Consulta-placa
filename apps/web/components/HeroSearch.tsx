@@ -5,8 +5,11 @@ import { useState } from 'react';
 import { isValidPlate, normalizePlate } from '@app/shared';
 import { Button } from './ui/Button';
 
-/** Buscador del hero: placa estilo placa peruana + "Verificar placa". */
-export function HeroSearch() {
+/**
+ * Buscador del hero: placa estilo placa peruana. Navega por defecto al reporte
+ * (`/reporte/[placa]`); con `to` se reutiliza para otros destinos (p. ej. `/guiada`).
+ */
+export function HeroSearch({ to = '/reporte', cta = 'Verificar placa' }: { to?: string; cta?: string } = {}) {
   const router = useRouter();
   const [value, setValue] = useState('');
   const [error, setError] = useState<string | null>(null);
@@ -18,7 +21,7 @@ export function HeroSearch() {
       return;
     }
     setError(null);
-    router.push(`/reporte/${normalized}`);
+    router.push(`${to}/${normalized}`);
   };
 
   return (
@@ -45,7 +48,7 @@ export function HeroSearch() {
           />
         </div>
         <Button variant="accent" size="lg" iconRight="arrow_forward" onClick={go}>
-          Verificar placa
+          {cta}
         </Button>
       </div>
       {error && (
