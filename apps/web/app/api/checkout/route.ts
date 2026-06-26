@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { createClient } from '@/lib/supabase/server';
-import { TIER_PRICE, createPendingPurchase, markPurchasePaid, type PaidTier } from '@/lib/payments';
+import { TIER_PRICE, createPendingPurchase, enqueueReportForPurchase, markPurchasePaid, type PaidTier } from '@/lib/payments';
 import { createPaymentSession, paymentProvider } from '@/lib/izipay';
 import { notifyPurchasePaid, notifyYapeReceived } from '@/lib/notifications';
 
@@ -50,7 +50,10 @@ export async function POST(request: Request) {
   // Mock: el pago se aprueba inline (en real, lo confirma el webhook de IziPay).
   if (session.status === 'paid') {
     const paid = await markPurchasePaid(orderId, `mock-${orderId}`);
-    if (paid) await notifyPurchasePaid({ email, plate, tier, amount, orderId });
+    if (paid) {
+      await enqueueReportForPurchase(orderId); // encola el reporte también en mock (auto-aprobado)
+      await notifyPurchasePaid({ email, plate, tier, amount, orderId });
+    }
     return NextResponse.json({ ok: true, status: 'paid', orderId, provider: session.provider });
   }
 
