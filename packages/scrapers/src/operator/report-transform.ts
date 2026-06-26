@@ -78,7 +78,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   // ── SINIESTRALIDAD (accidentes SBS o subasta de siniestro Superbid/VMC) ──
   const superbid = by('SUPERBID');
   const sbsAccidentes = sbs?.status === 'ENCONTRADO' ? num(data(sbs).accidentes) : null;
-  const subFound = (data(superbid).found as boolean) === true;
+  // La fuente Superbid es un lookup en el índice (DB): ENCONTRADO = la placa salió en una
+  // subasta; sus banderas (siniestro/aseguradora/remate) vienen en data.flags.
+  const subFound = superbid?.status === 'ENCONTRADO';
   const subFlags = (data(superbid).flags ?? {}) as Record<string, boolean>;
   if (sbsAccidentes != null || subFound) {
     const hasSiniestro = (sbsAccidentes != null && sbsAccidentes > 0) || (subFound && (subFlags.siniestro || subFlags.aseguradora));
