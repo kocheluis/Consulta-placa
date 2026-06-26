@@ -59,9 +59,10 @@ const baseOpts = (plate: string, source?: string) => ({
 // Pesos (segundos estimados) para que la barra avance de forma realista por fuente.
 const WEIGHT: Record<string, number> = { sunarp: 25, historial: 240, superbid: 80 };
 const weightOf = (id: string) => WEIGHT[id] ?? 30;
-// Fuentes en paralelo. Con 2 ya se toca el piso (SPRL ~168s domina); en 2GB es seguro.
-// Sube tras pasar el VPS a 4GB. Tuneable: OPERATOR_CONCURRENCY.
-const CONCURRENCY = Math.max(1, Number(process.env.OPERATOR_CONCURRENCY ?? 2));
+// Fuentes en paralelo. DEFAULT 1 (secuencial) porque el VPS actual tiene 1 vCPU: con un
+// solo núcleo, 2+ navegadores compiten por CPU y va MÁS LENTO (medido: 386s/6-8 vs ~330s
+// secuencial). Sube OPERATOR_CONCURRENCY a 2-4 SOLO tras ampliar el VPS a más vCPUs.
+const CONCURRENCY = Math.max(1, Number(process.env.OPERATOR_CONCURRENCY ?? 1));
 const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
