@@ -294,7 +294,9 @@ const server = createServer(async (req, res) => {
   }
 });
 
-server.listen(PORT, () => {
+// Escucha SOLO en loopback: el panel no tiene auth propia, su seguridad ES el túnel SSH.
+// (Acceso: ssh -L 3010:localhost:3010 root@VPS → http://localhost:3010). No exponer al internet.
+server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n🛠  Panel del operador PlacaPe → http://localhost:${PORT}`);
   console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}`);
   console.log(`   Cola: ${queue.kind} · motor automático: ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} · fuentes auto: ${AUTO_SOURCES.join(',')}\n`);
