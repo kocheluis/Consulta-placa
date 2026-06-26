@@ -10,15 +10,17 @@ import { toWebReport } from './operator/report-transform.js';
 import { publishReport } from './operator/report-store.js';
 import { metaGet, metaSet } from './db/repo.js';
 
-// Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, etc.), sin hornearlos en
-// pm2. Corre antes de leer el entorno (getQueue/consts de abajo). No pisa variables ya
-// definidas. Default /root/placape.env (override con OPERATOR_ENV_FILE). Dev/Windows → no-op.
+// Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, CapSolver…), sin hornearlos
+// en pm2. Es la FUENTE DE VERDAD: el archivo GANA sobre el entorno de pm2 (así un valor
+// viejo/truncado en pm2 no pisa el correcto). Corre antes de leer el entorno (getQueue/consts).
+// Solo afecta a las claves presentes en el archivo. Default /root/placape.env
+// (override con OPERATOR_ENV_FILE). Dev/Windows (sin archivo) → no-op.
 (function loadEnvFile() {
   const f = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
   try {
     for (const line of readFileSync(f, 'utf8').split('\n')) {
       const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
-      if (m && m[1] && !process.env[m[1]]) process.env[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
+      if (m && m[1]) process.env[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
     }
   } catch { /* sin archivo → nada */ }
 })();
