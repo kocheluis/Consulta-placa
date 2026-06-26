@@ -54,6 +54,44 @@ export async function markPurchasePaid(orderId: string, providerRef: string | nu
 }
 
 /**
+ * Encola el pedido de reporte para el motor del VPS (cola `pedidos` = broker, modelo B).
+ * Se llama UNA vez tras confirmar el pago (transición pending→paid). Resiliente: si falla
+ * NO rompe la confirmación del pago (el reporte se puede reprocesar). Evita duplicar si ya
+ * existe un pedido activo para esa placa+usuario.
+ */
+export async function enqueueReportForPurchase(orderId: string): Promise<void> {
+  try {
+    const sb = createAdminClient();
+    const { data: purchase } = await sb
+      .from('purchases')
+      .select('user_id, plate')
+      .eq('id', orderId)
+      .maybeSingle();
+    if (!purchase) return;
+    const p = purchase as { user_id: string; plate: string };
+
+    const { data: existing } = await sb
+      .from('pedidos')
+      .select('id')
+      .eq('user_id', p.user_id)
+      .eq('placa', p.plate)
+      .in('estado', ['pendiente', 'procesando', 'listo'])
+      .limit(1);
+    if (existing && existing.length) return; // ya encolado/atendido
+
+    const { data: u } = await sb.auth.admin.getUserById(p.user_id);
+    await sb.from('pedidos').insert({
+      placa: p.plate,
+      email: u?.user?.email ?? null,
+      user_id: p.user_id,
+      estado: 'pendiente',
+    });
+  } catch (e) {
+    console.error('[pedidos] enqueue falló (no bloquea el pago):', (e as Error).message);
+  }
+}
+
+/**
  * Datos de una compra + email del comprador, para notificar (webhook/panel admin,
  * que solo conocen el orderId). Usa el cliente admin (service_role + Auth admin).
  * Devuelve null si la compra no existe o no es de un tier de pago.

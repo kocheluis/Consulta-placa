@@ -1,23 +1,50 @@
 /* eslint-disable no-console */
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './operator/index.js';
 import { killEngineChrome } from './operator/chrome-path.js';
+import { getQueue, type Pedido } from './operator/queue.js';
+import { metaGet, metaSet } from './db/repo.js';
+
+// Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, etc.), sin hornearlos en
+// pm2. Corre antes de leer el entorno (getQueue/consts de abajo). No pisa variables ya
+// definidas. Default /root/placape.env (override con OPERATOR_ENV_FILE). Dev/Windows → no-op.
+(function loadEnvFile() {
+  const f = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
+  try {
+    for (const line of readFileSync(f, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
+      if (m && m[1] && !process.env[m[1]]) process.env[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
+    }
+  } catch { /* sin archivo → nada */ }
+})();
 
 /**
- * Consola web del operador PlacaPe. Servidor Node nativo. El operador abre la UI,
- * pega la placa, corre el motor con **barra de progreso (SSE) y botón Cancelar**,
- * pega el historial SPRL (manual) y marca el pedido listo (→ n8n/Supabase).
+ * Panel de control del operador PlacaPe. Servidor Node nativo. Dos modos conviven:
+ *  - **Motor automático** (cableado central): un runner toma pedidos de la cola por
+ *    orden de llegada y corre el reporte completo solo (SPRL ya es automático). Se
+ *    enciende/apaga desde el panel; el estado se persiste. Una **marquesina** muestra
+ *    los pedidos pendientes/en-proceso con su fecha y hora.
+ *  - **Manual**: el operador pega una placa y corre el motor a mano (QA / reprocesos),
+ *    con barra de progreso (SSE) y Cancelar.
  *
- * Uso:  CAPTCHA_API_KEY=... [OPERATOR_OUT_BASE=...] npx tsx packages/scrapers/src/operator-server.ts
+ * Uso:  CAPTCHA_API_KEY=... PLACAPE_DB=/root/data/placape.db npx tsx packages/scrapers/src/operator-server.ts
  */
 const PORT = Number(process.env.OPERATOR_PORT ?? 3010);
 const KEY = process.env.CAPTCHA_API_KEY ?? '';
 const PROVIDER = process.env.CAPTCHA_PROVIDER ?? 'capsolver';
 const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL ?? '';
 const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_placa/validacion-fuentes/operador';
+// Fuentes que corre el motor automático por pedido (reporte completo; SPRL incluido).
+const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
 if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); process.exit(1); }
+
+const queue = getQueue();
+let autoEngine = metaGet<boolean>('auto_engine_enabled') ?? false; // persistido: sobrevive reinicios
+let engineBusy = false; // un solo reporte a la vez (lo que aguanta el VPS); serializa auto + manual
 
 const plateDir = (plate: string) => join(OUT_BASE, plate.toUpperCase().replace(/[^A-Z0-9]/g, ''));
 const baseOpts = (plate: string, source?: string) => ({
@@ -81,6 +108,52 @@ async function runJob(job: Job): Promise<void> {
   }
 }
 
+/** Atiende un pedido de la cola: corre el reporte completo y actualiza su estado. */
+async function processPedido(p: Pedido): Promise<void> {
+  console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa}`);
+  await queue.setProcessing(p.id);
+  const job: Job = { id: newId(), plate: p.placa, sources: AUTO_SOURCES, results: [], percent: 0, current: AUTO_SOURCES[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false };
+  jobs.set(job.id, job);
+  try {
+    await runJob(job);
+    const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
+    if (job.error || ok === 0) {
+      await queue.setError(p.id, job.error ?? 'ninguna fuente respondió');
+      console.log(`[motor-auto] pedido ${p.id} ERROR`);
+    } else {
+      await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
+      console.log(`[motor-auto] pedido ${p.id} LISTO (${ok}/${job.results.length} fuentes)`);
+      if (N8N_WEBHOOK) {
+        try {
+          await fetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plate: p.placa, whatsapp: p.whatsapp, email: p.email, results: job.results, at: new Date().toISOString() }) });
+          await queue.setDelivered(p.id);
+          console.log(`[motor-auto] pedido ${p.id} ENTREGADO (n8n)`);
+        } catch (e) { console.warn('[motor-auto] entrega n8n falló:', (e as Error).message); }
+      }
+    }
+  } catch (e) {
+    await queue.setError(p.id, (e as Error).message);
+  } finally {
+    setTimeout(() => jobs.delete(job.id), 60000);
+  }
+}
+
+/** Bucle del motor automático: si está encendido y libre, atiende el siguiente pedido (FIFO). */
+function startRunner(): void {
+  setInterval(() => {
+    if (!autoEngine || engineBusy) return;
+    engineBusy = true; // toma el lock sincrónicamente para evitar carreras con /api/run
+    void (async () => {
+      try {
+        const p = await queue.next();
+        if (p) await processPedido(p);
+      } catch (e) { console.warn('[motor-auto] ciclo:', (e as Error).message); }
+      finally { engineBusy = false; }
+    })();
+  }, 5000);
+}
+
 function readBody(req: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let b = '';
@@ -104,16 +177,38 @@ const server = createServer(async (req, res) => {
     }
     if (path === '/api/sources' && req.method === 'GET') return sendJson(res, 200, OPERATOR_SOURCES);
 
+    // Motor automático: estado + encender/apagar (persistido en meta).
+    if (path === '/api/engine' && req.method === 'GET') {
+      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES });
+    }
+    if (path === '/api/engine/toggle' && req.method === 'POST') {
+      autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
+      console.log(`[motor-auto] ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} por el operador`);
+      return sendJson(res, 200, { enabled: autoEngine });
+    }
+    // Cola: tablero (marquesina) + encolar pedido (lo usa la web/Supabase; aquí también para QA).
+    if (path === '/api/pedidos' && req.method === 'GET') return sendJson(res, 200, await queue.board());
+    if (path === '/api/pedido' && req.method === 'POST') {
+      const body = await readBody(req);
+      const placa = String(body.placa ?? '').trim();
+      if (!placa) return sendJson(res, 400, { error: 'falta placa' });
+      const p = await queue.enqueue({ placa, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined });
+      console.log(`[cola] pedido encolado ${p.id} · ${p.placa}`);
+      return sendJson(res, 200, p);
+    }
+
     // Inicia un job y devuelve su id (el progreso se sigue por SSE).
     if (path === '/api/run' && req.method === 'POST') {
       const body = await readBody(req);
       const plate = String(body.placa ?? '').trim();
       if (!plate) return sendJson(res, 400, { error: 'falta placa' });
+      if (engineBusy) return sendJson(res, 409, { error: 'motor ocupado (otro reporte en curso), intenta en un momento' });
       const sources = Array.isArray(body.sources) && body.sources.length ? (body.sources as string[]) : ['sunarp'];
-      const job: Job = { id: newId(), plate, sources, results: [], percent: 0, current: sources[0], step: 'iniciando…', done: false, cancelled: false };
+      const job: Job = { id: newId(), plate, sources, results: [], percent: 0, current: sources[0] ?? 'sunarp', step: 'iniciando…', done: false, cancelled: false };
       jobs.set(job.id, job);
+      engineBusy = true;
       console.log(`[operador] run ${plate} (${sources.join(',')}) job=${job.id}`);
-      void runJob(job).catch((e) => { job.error = (e as Error).message; job.done = true; });
+      void runJob(job).catch((e) => { job.error = (e as Error).message; job.done = true; }).finally(() => { engineBusy = false; });
       return sendJson(res, 200, { jobId: job.id });
     }
 
@@ -200,8 +295,10 @@ const server = createServer(async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  console.log(`\n🛠  Consola del operador PlacaPe → http://localhost:${PORT}`);
-  console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}\n`);
+  console.log(`\n🛠  Panel del operador PlacaPe → http://localhost:${PORT}`);
+  console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}`);
+  console.log(`   Cola: ${queue.kind} · motor automático: ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} · fuentes auto: ${AUTO_SOURCES.join(',')}\n`);
+  startRunner();
 });
 
 const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -243,12 +340,39 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   #bar{height:100%;width:0;background:linear-gradient(90deg,var(--teal),var(--azul));transition:width .4s ease}
   #prog .row{justify-content:space-between;align-items:center}
   #step{font-size:13px;color:var(--mut)} #pct{font:700 15px ui-monospace,monospace;color:var(--azul)}
+  .ctlbar{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:12px 14px;margin-bottom:16px}
+  .ctl-lbl{font-weight:700;margin-right:4px}
+  .sw{min-width:104px} .sw.on{background:var(--ok)} .sw.off{background:#94A3B8}
+  .ctlbar input{padding:8px 10px}
+  .marquee{overflow:hidden;white-space:nowrap;background:#0F172A;color:#cbd5e1;border-radius:10px;padding:9px 0;margin-top:11px}
+  .marquee .track{display:inline-block;padding-left:100%;animation:mq 28s linear infinite}
+  .marquee:hover .track{animation-play-state:paused}
+  @keyframes mq{from{transform:translateX(0)}to{transform:translateX(-100%)}}
+  .mq-i{margin:0 22px;font:13px ui-monospace,monospace}
+  .mq-proc{color:#FCD34D;font-weight:700} .mq-pend{color:#93C5FD} .mq-empty{color:#64748B}
 </style></head><body>
 <header><b>🛠 Consola del operador · PlacaPe</b><span>scraping · VPS Perú</span></header>
 <main>
+  <div class="ctlbar">
+    <div class="row" style="justify-content:space-between">
+      <div class="row">
+        <span class="ctl-lbl">Motor automático</span>
+        <button id="engBtn" class="sw off" onclick="toggleEngine()">…</button>
+        <span id="engInfo" class="meta"></span>
+      </div>
+      <div class="row">
+        <input id="qplaca" placeholder="placa" maxlength="8" style="width:120px;text-transform:uppercase">
+        <input id="qwa" placeholder="WhatsApp" style="width:130px">
+        <input id="qmail" placeholder="correo" style="width:160px">
+        <button class="sec" onclick="enqueue()">Encolar pedido</button>
+      </div>
+    </div>
+    <div class="marquee"><div id="mqtrack" class="track"><span class="mq-i mq-empty">Sin pedidos en cola</span></div></div>
+  </div>
+
   <div class="row">
     <input id="placa" placeholder="ABC123" maxlength="8">
-    <button id="go" onclick="run()">Generar reporte</button>
+    <button id="go" onclick="run()">Generar reporte (manual)</button>
     <button class="sec" onclick="toggleSrc()">Fuentes ▾</button>
   </div>
   <div id="srcbox" class="row" style="display:none;margin-top:10px"></div>
@@ -345,4 +469,28 @@ function send(){if(!LAST){alert('Genera el reporte primero');return;}
   fetch('/api/send',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)})
    .then(function(r){return r.json()}).then(function(x){log(x.sent?'✉ enviado por n8n':'✓ marcado listo (n8n sin configurar)');}).catch(function(e){log('✖ '+e)});}
 document.getElementById('placa').addEventListener('keydown',function(e){if(e.key==='Enter')run();});
+
+// ── Motor automático + cola (marquesina) ─────────────────────────────────────
+function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
+  var b=document.getElementById('engBtn');
+  b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='sw '+(s.enabled?'on':'off');
+  document.getElementById('engInfo').textContent=(s.busy?'· atendiendo un pedido ':'· libre ')+'· cola: '+esc(s.queue);
+}).catch(function(){});}
+function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
+  log(s.enabled?'⚙ motor automático ENCENDIDO':'⚙ motor automático APAGADO');loadEngine();});}
+function fmtTime(iso){if(!iso)return'';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}
+function loadPedidos(){fetch('/api/pedidos').then(function(r){return r.json()}).then(function(list){
+  var t=document.getElementById('mqtrack');
+  if(!list||!list.length){t.innerHTML='<span class="mq-i mq-empty">Sin pedidos en cola</span>';return;}
+  var n=0;
+  t.innerHTML=list.map(function(p){
+    var proc=p.estado==='procesando';if(!proc)n++;
+    var tag=proc?'⏳ EN PROCESO':('#'+n+' en cola');
+    return '<span class="mq-i '+(proc?'mq-proc':'mq-pend')+'">'+tag+' · '+esc(p.placa)+' · '+esc(fmtTime(p.createdAt))+'</span>';
+  }).join('');
+}).catch(function(){});}
+function enqueue(){var p=document.getElementById('qplaca').value.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!p){alert('Pon una placa');return;}
+  fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
+   .then(function(r){return r.json()}).then(function(x){log('＋ pedido encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadPedidos();}).catch(function(e){log('✖ '+e)});}
+loadEngine();loadPedidos();setInterval(loadEngine,4000);setInterval(loadPedidos,4000);
 </script></body></html>`;

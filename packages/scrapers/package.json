@@ -14,6 +14,7 @@
     "operador": "tsx src/operator-server.ts",
     "db": "tsx src/db-cli.ts",
     "superbid:scan": "tsx src/superbid-scan.ts",
+    "vmc:scan": "tsx src/vmc-scan.ts",
     "test": "vitest run"
   },
   "dependencies": {

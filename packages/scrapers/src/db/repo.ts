@@ -1,4 +1,4 @@
-import { eq } from 'drizzle-orm';
+import { eq, and, asc, inArray } from 'drizzle-orm';
 import { getDb, schema } from './index.js';
 
 /** Capa de datos de PlacaPe. Funciones de alto nivel sobre el esquema Drizzle. */
@@ -10,29 +10,48 @@ type SuperbidRow = typeof schema.superbidIndex.$inferInsert;
 type BoletaRow = typeof schema.boletas.$inferInsert;
 type PedidoRow = typeof schema.pedidos.$inferInsert;
 
-// ── Índice Superbid ──────────────────────────────────────────────────────────
-/** Inserta/actualiza un lote en el índice (marca visto_at). */
-export function superbidUpsert(row: SuperbidRow): void {
+// ── Índice de subastas (multi-fuente) ─────────────────────────────────────────
+/** Inserta/actualiza un lote en el índice (clave placa+fuente, marca visto_at). */
+export function subastaUpsert(row: SuperbidRow): void {
   const db = getDb();
-  const v = { ...row, placa: norm(row.placa), vistoAt: now() };
+  const v = { ...row, placa: norm(row.placa), fuente: row.fuente ?? 'superbid', vistoAt: now() };
   db.insert(schema.superbidIndex).values(v)
-    .onConflictDoUpdate({ target: schema.superbidIndex.placa, set: v })
+    .onConflictDoUpdate({ target: [schema.superbidIndex.placa, schema.superbidIndex.fuente], set: v })
     .run();
 }
-/** Busca una placa en el índice (null si no está). */
-export function superbidLookup(placa: string): SuperbidRow | undefined {
+/** Alias retrocompatible: upsert con fuente 'superbid' por defecto. */
+export const superbidUpsert = subastaUpsert;
+
+/** Todas las apariciones de una placa en cualquier subasta/portal. */
+export function subastaLookupAll(placa: string): SuperbidRow[] {
   return getDb().select().from(schema.superbidIndex)
-    .where(eq(schema.superbidIndex.placa, norm(placa))).get();
+    .where(eq(schema.superbidIndex.placa, norm(placa))).all();
 }
-/** Marca un lote como cerrado (conserva la fila = histórico). */
-export function superbidMarkClosed(placa: string): void {
+/**
+ * Mejor coincidencia de una placa en el índice (una sola fila): prioriza subastas
+ * ABIERTAS y, entre iguales, la vista más recientemente. `undefined` si no está.
+ */
+export function superbidLookup(placa: string): SuperbidRow | undefined {
+  const rows = subastaLookupAll(placa);
+  if (rows.length === 0) return undefined;
+  return rows.sort((a, b) => {
+    const open = (r: SuperbidRow) => (r.estado === 'cerrada' ? 0 : 1);
+    if (open(a) !== open(b)) return open(b) - open(a);
+    return (b.vistoAt ?? '').localeCompare(a.vistoAt ?? '');
+  })[0];
+}
+/** Marca un lote como cerrado (conserva la fila = histórico). Si se omite `fuente`, marca todas. */
+export function superbidMarkClosed(placa: string, fuente?: string): void {
+  const where = fuente
+    ? and(eq(schema.superbidIndex.placa, norm(placa)), eq(schema.superbidIndex.fuente, fuente))
+    : eq(schema.superbidIndex.placa, norm(placa));
   getDb().update(schema.superbidIndex)
-    .set({ estado: 'cerrada', cerradoAt: now() })
-    .where(eq(schema.superbidIndex.placa, norm(placa))).run();
+    .set({ estado: 'cerrada', cerradoAt: now() }).where(where).run();
 }
-/** Cuántos lotes hay en el índice. */
-export function superbidCount(): number {
-  return getDb().select().from(schema.superbidIndex).all().length;
+/** Cuántos lotes hay en el índice (opcionalmente filtrado por fuente). */
+export function superbidCount(fuente?: string): number {
+  const q = getDb().select().from(schema.superbidIndex);
+  return (fuente ? q.where(eq(schema.superbidIndex.fuente, fuente)).all() : q.all()).length;
 }
 
 // ── Boletas ──────────────────────────────────────────────────────────────────
@@ -49,7 +68,7 @@ export function boletaGet(placa: string): BoletaRow | undefined {
     .where(eq(schema.boletas.placa, norm(placa))).get();
 }
 
-// ── Pedidos ──────────────────────────────────────────────────────────────────
+// ── Pedidos (cola del motor) ──────────────────────────────────────────────────
 export function pedidoCreate(p: Omit<PedidoRow, 'id' | 'estado' | 'createdAt'>): number {
   const r = getDb().insert(schema.pedidos)
     .values({ ...p, placa: norm(p.placa), estado: 'pendiente', createdAt: now() }).run();
@@ -60,9 +79,39 @@ export function pedidoSetEstado(id: number, estado: string, reportPath?: string)
     .set({ estado, ...(reportPath ? { reportPath } : {}) })
     .where(eq(schema.pedidos.id, id)).run();
 }
+export function pedidoGet(id: number): PedidoRow | undefined {
+  return getDb().select().from(schema.pedidos).where(eq(schema.pedidos.id, id)).get();
+}
 export function pedidosPendientes(): PedidoRow[] {
   return getDb().select().from(schema.pedidos)
     .where(eq(schema.pedidos.estado, 'pendiente')).all();
+}
+/** El pedido pendiente más antiguo (FIFO) — lo que el motor debe atender ahora. */
+export function pedidoNext(): PedidoRow | undefined {
+  return getDb().select().from(schema.pedidos)
+    .where(eq(schema.pedidos.estado, 'pendiente'))
+    .orderBy(asc(schema.pedidos.createdAt)).limit(1).get();
+}
+/** Tablero (marquesina): pendientes + en proceso, por orden de llegada. */
+export function pedidoBoard(): PedidoRow[] {
+  return getDb().select().from(schema.pedidos)
+    .where(inArray(schema.pedidos.estado, ['pendiente', 'procesando']))
+    .orderBy(asc(schema.pedidos.createdAt)).all();
+}
+export function pedidoSetProcessing(id: number): void {
+  getDb().update(schema.pedidos)
+    .set({ estado: 'procesando', startedAt: now() }).where(eq(schema.pedidos.id, id)).run();
+}
+export function pedidoSetDone(id: number, reportPath?: string): void {
+  getDb().update(schema.pedidos)
+    .set({ estado: 'listo', reportPath, finishedAt: now() }).where(eq(schema.pedidos.id, id)).run();
+}
+export function pedidoSetError(id: number, error: string): void {
+  getDb().update(schema.pedidos)
+    .set({ estado: 'error', error, finishedAt: now() }).where(eq(schema.pedidos.id, id)).run();
+}
+export function pedidoSetDelivered(id: number): void {
+  getDb().update(schema.pedidos).set({ estado: 'entregado' }).where(eq(schema.pedidos.id, id)).run();
 }
 
 // ── Meta (control del índice) ─────────────────────────────────────────────────

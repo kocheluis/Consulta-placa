@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { verifyWebhookSignature } from '@/lib/izipay';
-import { getPurchaseNotice, markPurchaseFailed, markPurchasePaid } from '@/lib/payments';
+import { enqueueReportForPurchase, getPurchaseNotice, markPurchaseFailed, markPurchasePaid } from '@/lib/payments';
 import { notifyPurchasePaid } from '@/lib/notifications';
 
 export const runtime = 'nodejs';
@@ -42,6 +42,7 @@ export async function POST(request: Request) {
       // ante reintentos del IPN).
       const transitioned = await markPurchasePaid(orderId, event.transactionId ?? null);
       if (transitioned) {
+        await enqueueReportForPurchase(orderId); // encola el reporte para el motor del VPS
         const notice = await getPurchaseNotice(orderId);
         if (notice) await notifyPurchasePaid(notice);
       }

@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { isAdminEmail } from '@/lib/admin';
-import { getPurchaseNotice, markPurchaseFailed, markPurchasePaid } from '@/lib/payments';
+import { enqueueReportForPurchase, getPurchaseNotice, markPurchaseFailed, markPurchasePaid } from '@/lib/payments';
 import { notifyPurchasePaid } from '@/lib/notifications';
 
 export const runtime = 'nodejs';
@@ -38,6 +38,7 @@ export async function POST(request: Request) {
     if (action === 'confirm') {
       const transitioned = await markPurchasePaid(orderId, 'yape-admin');
       if (transitioned) {
+        await enqueueReportForPurchase(orderId); // encola el reporte para el motor del VPS
         const notice = await getPurchaseNotice(orderId);
         if (notice) await notifyPurchasePaid(notice);
       }

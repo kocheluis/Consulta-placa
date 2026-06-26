@@ -253,18 +253,20 @@ async function runSuperbidSource(
   const outDir = shotPath.replace(/[/\\][^/\\]+$/, '');
   startLog(outDir, 'superbid', plate);
   try {
-    // Lookup INSTANTÁNEO en el índice (DB) poblado por superbid-scan (job diario).
+    // Lookup INSTANTÁNEO en el índice multi-fuente (DB) poblado por los scans (Superbid/VMC, job diario).
     const hit = superbidLookup(plate);
     if (hit) {
       const f = (hit.flags ?? {}) as Record<string, boolean>;
-      const tipo = f.aseguradora ? 'ASEGURADORA (siniestro)' : f.remate ? 'remate/financiera' : 'subasta';
+      const tipo = f.siniestro ? 'SINIESTRO' : f.aseguradora ? 'ASEGURADORA (siniestro)' : f.remate ? 'remate/financiera' : 'subasta';
       const estado = hit.estado === 'cerrada' ? 'cerrada' : 'abierta';
-      logLine(outDir, 'superbid', `MATCH índice: ${hit.subasta ?? ''} · ${tipo} · ${estado} · ${Date.now() - t0}ms`);
-      return { ...base, status: 'ENCONTRADO', summary: `⚠ EN SUBASTA: ${hit.subasta ?? ''} (${tipo}, ${estado})`, data: { ...hit }, ms: Date.now() - t0 };
+      const fuente = (hit.fuente ?? 'superbid').toUpperCase();
+      logLine(outDir, 'superbid', `MATCH índice [${fuente}]: ${hit.subasta ?? ''} · ${tipo} · ${estado} · ${Date.now() - t0}ms`);
+      return { ...base, status: 'ENCONTRADO', summary: `⚠ EN SUBASTA [${fuente}]: ${hit.subasta ?? ''} (${tipo}, ${estado})`, data: { ...hit }, ms: Date.now() - t0 };
     }
     const upd = metaGet<string>('ultimo_scan_at');
-    logLine(outDir, 'superbid', `sin match en índice (últ. scan ${upd ?? '—'}) · ${Date.now() - t0}ms`);
-    return { ...base, status: 'SIN_REGISTRO', summary: `No aparece en el índice de Superbid${upd ? ` (act. ${upd.slice(0, 10)})` : ''}`, ms: Date.now() - t0 };
+    const updVmc = metaGet<string>('vmc_ultimo_scan_at');
+    logLine(outDir, 'superbid', `sin match en índice (Superbid ${upd ?? '—'} · VMC ${updVmc ?? '—'}) · ${Date.now() - t0}ms`);
+    return { ...base, status: 'SIN_REGISTRO', summary: `No aparece en el índice de subastas (Superbid/VMC)${upd ? `, act. ${upd.slice(0, 10)}` : ''}`, ms: Date.now() - t0 };
   } catch (e) {
     logLine(outDir, 'superbid', `ERROR ${(e as Error).message}`);
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
