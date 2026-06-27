@@ -89,9 +89,16 @@ async function lastLogLine(plate: string, id: string): Promise<string> {
   } catch { return ''; }
 }
 
+// Tope duro por job: si una fuente se cuelga (p. ej. Síguelo sin responder), el motor
+// no debe quedar bloqueado para siempre. Por defecto 15 min (override JOB_TIMEOUT_MS).
+const JOB_TIMEOUT_MS = Number(process.env.JOB_TIMEOUT_MS ?? 15 * 60 * 1000);
+
 async function runJob(job: Job): Promise<void> {
   const total = job.sources.reduce((s, id) => s + weightOf(id), 0) || 1;
   let doneW = 0;
+  const killer = setTimeout(() => {
+    if (!job.done) { job.cancelled = true; job.error = 'timeout (job excedió el tope)'; killEngineChrome(); }
+  }, JOB_TIMEOUT_MS);
   // Barra de progreso por peso completado (las fuentes corren en paralelo).
   const tick = setInterval(() => {
     job.percent = Math.min(99, Math.round((doneW / total) * 100));
@@ -122,6 +129,7 @@ async function runJob(job: Job): Promise<void> {
   await Promise.all(Array.from({ length: Math.min(CONCURRENCY, job.sources.length) }, worker));
 
   clearInterval(tick);
+  clearTimeout(killer);
   killEngineChrome(); // libera el Chrome del motor UNA vez, ya que todas las fuentes terminaron
   job.step = '';
   job.current = '';
@@ -217,7 +225,7 @@ const server = createServer(async (req, res) => {
     if (path === '/api/engine' && req.method === 'GET') {
       const cj = currentAutoJobId ? jobs.get(currentAutoJobId) : null;
       const current = cj
-        ? { placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done }
+        ? { jobId: cj.id, placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done }
         : null;
       return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current });
     }
@@ -478,6 +486,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
       <div class="top"><span class="pl" id="p2pl">Motor libre</span><span class="pc" id="p2pc"></span></div>
       <div class="st" id="p2st">Sin pedidos en proceso</div>
       <div class="bw"><div class="bf" id="p2bf"></div></div>
+      <div id="p2act" style="margin-top:9px"></div>
     </div>
   </div>
 
@@ -607,15 +616,22 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
     document.getElementById('p2pc').textContent=(c.percent||0)+'%';
     document.getElementById('p2st').textContent=esc((c.source||'')+(c.step?' · '+c.step:''))||'procesando…';
     document.getElementById('p2bf').style.width=(c.percent||0)+'%';
+    document.getElementById('p2act').innerHTML=
+      (c.source?'<a href="/log/'+encodeURIComponent(c.placa)+'/'+srcId(c.source)+'" target="_blank" style="color:#7DD3FC;margin-right:14px">ver log de '+esc(c.source)+'</a>':'')+
+      (c.jobId?'<button class="danger" style="padding:5px 12px;font-size:13px" onclick="cancelAuto(\\''+c.jobId+'\\')">Cancelar</button>':'');
   }else{box.className='prog2 idle';
     document.getElementById('p2pl').textContent='Motor '+(s.enabled?'encendido':'apagado');
     document.getElementById('p2pc').textContent='';
     document.getElementById('p2st').textContent=s.enabled?'Esperando pedidos…':'Motor apagado';
     document.getElementById('p2bf').style.width='0%';
+    document.getElementById('p2act').innerHTML='';
   }
 }).catch(function(){});}
 function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
   log(s.enabled?'⚙ motor automático ENCENDIDO':'⚙ motor automático APAGADO');loadEngine();});}
+function cancelAuto(jid){if(!confirm('¿Cancelar el reporte en proceso? Se guardará lo que ya se obtuvo.'))return;
+  log('⏹ cancelando job '+jid+' …');
+  fetch('/api/cancel/'+jid,{method:'POST'}).then(function(){log('⏹ cancelado');loadEngine();loadHistory();}).catch(function(e){log('✖ '+e)});}
 function fmtTime(iso){if(!iso)return'—';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}
 function fmtDur(a,b){if(!a||!b)return'—';try{var ms=new Date(b)-new Date(a);if(ms<0)return'—';var s=Math.round(ms/1000);return s<60?s+'s':(Math.floor(s/60)+'m '+(s%60)+'s');}catch(e){return'—';}}
 function showTab(t){
@@ -646,19 +662,30 @@ function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=
 function hHeader(pl){return '<h2>'+esc(pl)+' <button class="sec" style="font-size:13px;padding:6px 12px" onclick="requeuePedido()">↻ Re-generar reporte</button></h2>';}
 function selectPedido(pl,id){SELECTED=pl;SELECTED_ID=id;markSel();
   var d=document.getElementById('pdetail');
-  d.innerHTML=hHeader(pl)+'<div class="pmeta">Cargando reporte…</div>';
+  d.innerHTML=hHeader(pl)+'<div class="pmeta">Cargando…</div>';
   fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
     var results=rep.results||[];
+    if(!results.length){return showLiveLogs(pl,rep);}  // sin reporte.json → logs en vivo
     var ok=results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
     var err=results.filter(function(x){return x.status==='ERROR'}).length;
     d.innerHTML=hHeader(pl)+
       '<div class="pmeta"><span>'+results.length+' fuentes</span>'+
       '<span style="color:#15803D">'+ok+' ok</span>'+(err?'<span style="color:#B91C1C">'+err+' con error</span>':'')+
       (rep.generatedAt?'<span>generado '+esc(fmtTime(rep.generatedAt))+'</span>':'')+
-      (rep.missing?'<span style="color:#B45309">⚠ aún sin reporte.json (en proceso, o pedido viejo/otra máquina)</span>':'')+
       '</div><div id="hcards" class="cards"></div>';
     renderCards(results, pl, 'hcards', true, 'h');
   }).catch(function(e){d.innerHTML=hHeader(pl)+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
+// Sin reporte.json (en proceso o pedido viejo): ofrece los logs en vivo por fuente.
+function showLiveLogs(pl,rep){var d=document.getElementById('pdetail');
+  fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
+    var proc=s.current&&s.current.placa===pl;
+    var srcs=s.autoSources||[];
+    var links=srcs.map(function(x){return '<a href="/log/'+encodeURIComponent(pl)+'/'+x+'" target="_blank" style="margin:0 12px 6px 0;display:inline-block;color:#0C6F64">'+esc(x)+'</a>';}).join('');
+    d.innerHTML=hHeader(pl)+
+      '<div class="pmeta">'+(proc?('⏳ En proceso · '+(s.current.percent||0)+'% · '+esc(s.current.source||'')):'⚠ aún sin reporte.json (¿en proceso o pedido viejo/otra máquina?)')+'</div>'+
+      '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>'+
+      '<div class="meta">El reporte consolidado aparece al terminar; mientras tanto abre los logs para ver avance/errores.</div>';
+  }).catch(function(){d.innerHTML=hHeader(pl)+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
 function requeuePedido(){if(!SELECTED_ID){alert('Selecciona un pedido');return;}
   log('↻ re-generando pedido '+SELECTED+' (#'+SELECTED_ID+') …');
   fetch('/api/pedido/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SELECTED_ID})})
