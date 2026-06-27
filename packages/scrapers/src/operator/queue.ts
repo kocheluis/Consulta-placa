@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import {
-  pedidoCreate, pedidoGet, pedidoNext, pedidoBoard,
+  pedidoCreate, pedidoGet, pedidoNext, pedidoBoard, pedidoHistory,
   pedidoSetProcessing, pedidoSetDone, pedidoSetError, pedidoSetDelivered,
 } from '../db/repo.js';
 
@@ -22,6 +22,7 @@ export interface Pedido {
   estado: string;
   createdAt?: string | null;
   startedAt?: string | null;
+  finishedAt?: string | null;
   reportPath?: string | null;
   error?: string | null;
   userId?: string | null;
@@ -32,6 +33,8 @@ export interface PedidoQueue {
   enqueue(p: { placa: string; whatsapp?: string; email?: string }): Promise<Pedido>;
   next(): Promise<Pedido | null>;
   board(): Promise<Pedido[]>;
+  /** Historial completo (todos los estados), más recientes primero. */
+  history(limit?: number): Promise<Pedido[]>;
   setProcessing(id: Pedido['id']): Promise<void>;
   setDone(id: Pedido['id'], reportPath?: string): Promise<void>;
   setError(id: Pedido['id'], msg: string): Promise<void>;
@@ -49,6 +52,7 @@ const sqliteQueue: PedidoQueue = {
   },
   async next() { return (pedidoNext() as Pedido) ?? null; },
   async board() { return pedidoBoard() as Pedido[]; },
+  async history(limit = 100) { return pedidoHistory(limit) as Pedido[]; },
   async setProcessing(id) { pedidoSetProcessing(Number(id)); },
   async setDone(id, reportPath) { pedidoSetDone(Number(id), reportPath); },
   async setError(id, msg) { pedidoSetError(Number(id), msg); },
@@ -62,6 +66,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
   const map = (r: Record<string, unknown>): Pedido => ({
     id: r.id as string, placa: r.placa as string, whatsapp: r.whatsapp as string, email: r.email as string,
     estado: r.estado as string, createdAt: r.created_at as string, startedAt: r.started_at as string,
+    finishedAt: (r.finished_at as string) ?? null,
     reportPath: r.report_path as string, error: r.error as string, userId: (r.user_id as string) ?? null,
   });
   const patch = async (id: Pedido['id'], body: Record<string, unknown>) => {
@@ -84,6 +89,11 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     },
     async board() {
       const r = await fetch(`${base}?estado=in.(pendiente,procesando)&order=created_at.asc`, { headers });
+      if (!r.ok) throw new Error(`supabase GET ${r.status}`);
+      return ((await r.json()) as Record<string, unknown>[]).map(map);
+    },
+    async history(limit = 100) {
+      const r = await fetch(`${base}?order=created_at.desc&limit=${limit}`, { headers });
       if (!r.ok) throw new Error(`supabase GET ${r.status}`);
       return ((await r.json()) as Record<string, unknown>[]).map(map);
     },

@@ -49,6 +49,7 @@ if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); p
 const queue = getQueue();
 let autoEngine = metaGet<boolean>('auto_engine_enabled') ?? false; // persistido: sobrevive reinicios
 let engineBusy = false; // un solo reporte a la vez (lo que aguanta el VPS); serializa auto + manual
+let currentAutoJobId: string | null = null; // job del pedido que el motor automático atiende ahora
 
 const plateDir = (plate: string) => join(OUT_BASE, plate.toUpperCase().replace(/[^A-Z0-9]/g, ''));
 const baseOpts = (plate: string, source?: string) => ({
@@ -135,6 +136,7 @@ async function processPedido(p: Pedido): Promise<void> {
   await queue.setProcessing(p.id);
   const job: Job = { id: newId(), plate: p.placa, sources: AUTO_SOURCES, results: [], percent: 0, current: AUTO_SOURCES[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false };
   jobs.set(job.id, job);
+  currentAutoJobId = job.id;
   try {
     await runJob(job);
     const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
@@ -162,6 +164,7 @@ async function processPedido(p: Pedido): Promise<void> {
   } catch (e) {
     await queue.setError(p.id, (e as Error).message);
   } finally {
+    currentAutoJobId = null;
     setTimeout(() => jobs.delete(job.id), 60000);
   }
 }
@@ -206,7 +209,11 @@ const server = createServer(async (req, res) => {
 
     // Motor automático: estado + encender/apagar (persistido en meta).
     if (path === '/api/engine' && req.method === 'GET') {
-      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES });
+      const cj = currentAutoJobId ? jobs.get(currentAutoJobId) : null;
+      const current = cj
+        ? { placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done }
+        : null;
+      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current });
     }
     if (path === '/api/engine/toggle' && req.method === 'POST') {
       autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
@@ -215,6 +222,17 @@ const server = createServer(async (req, res) => {
     }
     // Cola: tablero (marquesina) + encolar pedido (lo usa la web/Supabase; aquí también para QA).
     if (path === '/api/pedidos' && req.method === 'GET') return sendJson(res, 200, await queue.board());
+    // Historial completo de pedidos (todos los estados) para la tabla de la consola.
+    if (path === '/api/pedidos/history' && req.method === 'GET') return sendJson(res, 200, await queue.history(100));
+    // Resultados crudos de un pedido (reporte.json de su placa) para ver fuentes + logs.
+    if (path === '/api/pedido-report' && req.method === 'GET') {
+      const placa = (url.searchParams.get('placa') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!placa) return sendJson(res, 400, { error: 'falta placa' });
+      try {
+        const txt = await readFile(join(plateDir(placa), 'reporte.json'), 'utf8');
+        return sendJson(res, 200, JSON.parse(txt));
+      } catch { return sendJson(res, 200, { plate: placa, results: [], missing: true }); }
+    }
     if (path === '/api/pedido' && req.method === 'POST') {
       const body = await readBody(req);
       const placa = String(body.placa ?? '').trim();
@@ -379,6 +397,27 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   @keyframes mq{from{transform:translateX(0)}to{transform:translateX(-100%)}}
   .mq-i{margin:0 22px;font:13px ui-monospace,monospace}
   .mq-proc{color:#FCD34D;font-weight:700} .mq-pend{color:#93C5FD} .mq-empty{color:#64748B}
+  .tabs{display:flex;gap:6px;margin:18px 0 12px;border-bottom:1px solid var(--bd)}
+  .tab{padding:9px 18px;background:transparent;color:var(--mut);border:1px solid transparent;border-bottom:0;border-radius:10px 10px 0 0;cursor:pointer;font-weight:700;font-size:14px;margin-bottom:-1px}
+  .tab.active{background:var(--card);color:var(--azul);border-color:var(--bd);border-bottom:1px solid var(--card)}
+  table.ped{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--bd);border-radius:12px;overflow:hidden;font-size:13.5px}
+  table.ped th{text-align:left;padding:9px 12px;background:#F8FAFC;color:var(--mut);font-size:11.5px;text-transform:uppercase;letter-spacing:.04em}
+  table.ped td{padding:9px 12px;border-top:1px solid var(--bd)}
+  table.ped tbody tr{cursor:pointer} table.ped tbody tr:hover td{background:#F1F5F9}
+  table.ped tr.sel td{background:#EFF6FF;box-shadow:inset 3px 0 0 var(--azul)}
+  .pill{font:700 11px ui-monospace,monospace;padding:2px 8px;border-radius:999px;white-space:nowrap}
+  .p-listo,.p-entregado{background:#DCFCE7;color:var(--ok)} .p-procesando{background:#FEF9C3;color:var(--warn)}
+  .p-pendiente{background:#E0F2FE;color:#0369A1} .p-error{background:#FEE2E2;color:var(--err)}
+  .prog2{margin-top:11px;background:#0F172A;color:#E2E8F0;border-radius:10px;padding:11px 14px}
+  .prog2 .top{display:flex;justify-content:space-between;align-items:center;font-size:13px}
+  .prog2 .pl{font:700 14px ui-monospace,monospace;color:#fff}
+  .prog2 .pc{font:700 15px ui-monospace,monospace;color:#7DD3FC}
+  .prog2 .st{color:#94A3B8;font-size:12.5px;margin-top:4px;min-height:16px}
+  .prog2 .bw{height:10px;background:#1E293B;border-radius:999px;overflow:hidden;margin-top:8px}
+  .prog2 .bf{height:100%;width:0;background:linear-gradient(90deg,var(--teal),#3B82F6);transition:width .5s ease}
+  .prog2.idle{background:#F1F5F9;color:var(--mut)} .prog2.idle .pl{color:#334155}
+  .pmeta{font-size:13px;color:var(--mut);margin:6px 0 12px;display:flex;gap:14px;flex-wrap:wrap}
+  .pdetail h2{font-size:16px;margin:4px 0 2px}
 </style></head><body>
 <header><b>🛠 Consola del operador · PlacaPe</b><span>scraping · VPS Perú</span></header>
 <main>
@@ -396,8 +435,24 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
         <button class="sec" onclick="enqueue()">Encolar pedido</button>
       </div>
     </div>
-    <div class="marquee"><div id="mqtrack" class="track"><span class="mq-i mq-empty">Sin pedidos en cola</span></div></div>
+    <div id="prog2" class="prog2 idle">
+      <div class="top"><span class="pl" id="p2pl">Motor libre</span><span class="pc" id="p2pc"></span></div>
+      <div class="st" id="p2st">Sin pedidos en proceso</div>
+      <div class="bw"><div class="bf" id="p2bf"></div></div>
+    </div>
   </div>
+
+  <div class="tabs">
+    <button class="tab active" id="tab-b-hist" onclick="showTab('hist')">Historial de pedidos</button>
+    <button class="tab" id="tab-b-manual" onclick="showTab('manual')">Manual / QA</button>
+  </div>
+
+  <section id="tab-hist">
+    <table class="ped"><thead><tr><th>Placa</th><th>Estado</th><th>Creado</th><th>Fuentes</th><th></th></tr></thead><tbody id="histbody"><tr><td colspan="5" style="color:#64748B">Cargando…</td></tr></tbody></table>
+    <div class="pdetail" id="pdetail"></div>
+  </section>
+
+  <section id="tab-manual" style="display:none">
 
   <div class="row">
     <input id="placa" placeholder="ABC123" maxlength="8">
@@ -429,6 +484,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
       <div style="align-self:flex-end"><button class="ok" onclick="send()">Marcar listo y enviar</button></div>
     </div>
   </div>
+  </section>
   <div id="log"></div>
 </main>
 <script>
@@ -451,16 +507,17 @@ function timelineHtml(r){if(!r.data||!r.data.timeline)return'';
     (a.formaPago?' · '+esc(a.formaPago):'')+'<div class="tl-o">'+esc((a.participantes||'').slice(0,100))+'</div></div></div>';
   }).join('')+'</div>';}
 function srcId(code){return code.toLowerCase().replace(/_/g,'-');}
-function card(r){
-  var actions='<div style="margin-top:8px"><button class="sec" onclick="retry(\\''+r.source+'\\')">Reintentar</button> <a href="/log/'+plate()+'/'+srcId(r.source)+'" target="_blank" style="font-size:13px;color:#0C6F64;margin-left:8px">ver log</a></div>';
+function card(r,pl,withRetry,pfx){pl=pl||plate();pfx=pfx||'c';var cid=pfx+'-'+r.source;
+  var logLink='<a href="/log/'+pl+'/'+srcId(r.source)+'" target="_blank" style="font-size:13px;color:#0C6F64;margin-left:8px">ver log</a>';
+  var actions='<div style="margin-top:8px">'+(withRetry?'<button class="sec" onclick="retry(\\''+r.source+'\\',\\''+pl+'\\',\\''+pfx+'\\')">Reintentar</button> ':'')+logLink+'</div>';
   if(r.source==='HISTORIAL'&&r.data&&r.data.timeline){
-    return '<div class="card wide" id="c-'+r.source+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
+    return '<div class="card wide" id="'+cid+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
     timelineHtml(r)+'<div class="meta">'+(r.ms/1000).toFixed(1)+'s · sede '+esc((r.data.sede||''))+'</div>'+actions+'</div>';}
-  var img=r.screenshot?'<img src="/shot/'+plate()+'/'+r.source.toLowerCase().replace(/_/g,"-")+'.png?t='+Date.now()+'" onclick="window.open(this.src)">':'';
-  return '<div class="card" id="c-'+r.source+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
+  var img=r.screenshot?'<img src="/shot/'+pl+'/'+srcId(r.source)+'.png?t='+Date.now()+'" onclick="window.open(this.src)">':'';
+  return '<div class="card" id="'+cid+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
   '<div class="meta">'+(r.ms/1000).toFixed(1)+'s</div>'+img+actions+'</div>';}
-function renderCards(results){if(!results)return;document.getElementById('cards').innerHTML=results.map(card).join('');
-  results.forEach(function(r){var im=document.querySelector('#c-'+r.source+' img'); if(im){im.src='/shot/'+plate()+'/'+srcId(r.source)+'.png?t='+Date.now();}});}
+function renderCards(results,pl,cont,withRetry,pfx){cont=cont||'cards';pfx=pfx||'c';var box=document.getElementById(cont);if(!box)return;
+  box.innerHTML=(results&&results.length)?results.map(function(r){return card(r,pl,withRetry,pfx)}).join(''):'<div class="meta">Sin resultados de fuentes para esta placa.</div>';}
 function showProg(on){document.getElementById('prog').style.display=on?'block':'none';}
 function setBar(pct,txt){document.getElementById('bar').style.width=pct+'%';document.getElementById('pct').textContent=pct+'%';document.getElementById('step').textContent=txt||'';}
 function run(){var p=plate();if(!p){alert('Pon una placa');return;}
@@ -473,24 +530,24 @@ function run(){var p=plate();if(!p){alert('Pon una placa');return;}
      JOB=o.jobId; ES=new EventSource('/api/progress/'+JOB);
      ES.onmessage=function(ev){var s=JSON.parse(ev.data);
        setBar(s.percent, esc(s.current||'')+(s.step?' · '+esc(s.step):''));
-       renderCards(s.results);
+       renderCards(s.results, plate(), 'cards', true, 'm');
        if(s.done){ES.close();ES=null;finish(s);}
      };
      ES.onerror=function(){/* el SSE cierra al terminar; si no terminó, reintenta el navegador */};
    }).catch(function(e){log('✖ '+e);endRun();});}
 function finish(s){endRun();
   if(s.error){log('✖ '+s.error);return;}
-  if(s.cancelled){log('⏹ cancelado por el operador');renderCards(s.results);return;}
-  LAST={results:s.results};renderCards(s.results);
+  if(s.cancelled){log('⏹ cancelado por el operador');renderCards(s.results, plate(), 'cards', true, 'm');return;}
+  LAST={results:s.results};renderCards(s.results, plate(), 'cards', true, 'm');
   document.getElementById('sprlPanel').style.display='block';
   var ok=s.results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
   log('✔ '+ok+'/'+s.results.length+' fuentes respondieron');}
 function endRun(){var go=document.getElementById('go');go.disabled=false;go.textContent='Generar reporte';showProg(false);if(ES){ES.close();ES=null;}}
 function cancelRun(){if(!JOB)return;log('⏹ cancelando…');fetch('/api/cancel/'+JOB,{method:'POST'});}
-function retry(code){var id=srcId(code);log('↻ reintentando '+code+' …');
-  fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:plate(),source:id})})
-   .then(function(r){return r.json()}).then(function(res){var el=document.getElementById('c-'+res.source);
-     if(el){el.outerHTML=card(res);var im=document.querySelector('#c-'+res.source+' img');if(im){im.src='/shot/'+plate()+'/'+srcId(res.source)+'.png?t='+Date.now();}}
+function retry(code,pl,pfx){pl=pl||plate();pfx=pfx||'c';var id=srcId(code);log('↻ reintentando '+code+' ('+pl+') …');
+  fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:pl,source:id})})
+   .then(function(r){return r.json()}).then(function(res){var el=document.getElementById(pfx+'-'+res.source);
+     if(el){el.outerHTML=card(res,pl,true,pfx);}
      log('↻ '+res.source+' → '+res.status);}).catch(function(e){log('✖ '+e)});}
 function send(){if(!LAST){alert('Genera el reporte primero');return;}
   var body={placa:plate(),whatsapp:document.getElementById('wa').value,email:document.getElementById('mail').value,sprl:document.getElementById('sprl').value,precioCompra:document.getElementById('precio').value,results:LAST.results};
@@ -499,27 +556,67 @@ function send(){if(!LAST){alert('Genera el reporte primero');return;}
    .then(function(r){return r.json()}).then(function(x){log(x.sent?'✉ enviado por n8n':'✓ marcado listo (n8n sin configurar)');}).catch(function(e){log('✖ '+e)});}
 document.getElementById('placa').addEventListener('keydown',function(e){if(e.key==='Enter')run();});
 
-// ── Motor automático + cola (marquesina) ─────────────────────────────────────
+// ── Motor automático + progreso + historial ──────────────────────────────────
 function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
   var b=document.getElementById('engBtn');
   b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='sw '+(s.enabled?'on':'off');
   document.getElementById('engInfo').textContent=(s.busy?'· atendiendo un pedido ':'· libre ')+'· cola: '+esc(s.queue);
+  var box=document.getElementById('prog2'), c=s.current;
+  if(c){box.className='prog2';
+    document.getElementById('p2pl').textContent='⚙ '+esc(c.placa);
+    document.getElementById('p2pc').textContent=(c.percent||0)+'%';
+    document.getElementById('p2st').textContent=esc((c.source||'')+(c.step?' · '+c.step:''))||'procesando…';
+    document.getElementById('p2bf').style.width=(c.percent||0)+'%';
+  }else{box.className='prog2 idle';
+    document.getElementById('p2pl').textContent='Motor '+(s.enabled?'encendido':'apagado');
+    document.getElementById('p2pc').textContent='';
+    document.getElementById('p2st').textContent=s.enabled?'Esperando pedidos…':'Motor apagado';
+    document.getElementById('p2bf').style.width='0%';
+  }
 }).catch(function(){});}
 function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
   log(s.enabled?'⚙ motor automático ENCENDIDO':'⚙ motor automático APAGADO');loadEngine();});}
-function fmtTime(iso){if(!iso)return'';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}
-function loadPedidos(){fetch('/api/pedidos').then(function(r){return r.json()}).then(function(list){
-  var t=document.getElementById('mqtrack');
-  if(!list||!list.length){t.innerHTML='<span class="mq-i mq-empty">Sin pedidos en cola</span>';return;}
-  var n=0;
-  t.innerHTML=list.map(function(p){
-    var proc=p.estado==='procesando';if(!proc)n++;
-    var tag=proc?'⏳ EN PROCESO':('#'+n+' en cola');
-    return '<span class="mq-i '+(proc?'mq-proc':'mq-pend')+'">'+tag+' · '+esc(p.placa)+' · '+esc(fmtTime(p.createdAt))+'</span>';
+function fmtTime(iso){if(!iso)return'—';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}
+function showTab(t){
+  document.getElementById('tab-hist').style.display=t==='hist'?'block':'none';
+  document.getElementById('tab-manual').style.display=t==='manual'?'block':'none';
+  document.getElementById('tab-b-hist').className='tab'+(t==='hist'?' active':'');
+  document.getElementById('tab-b-manual').className='tab'+(t==='manual'?' active':'');
+}
+var SELECTED=null, HISTSEEN=false;
+function pestado(e){return '<span class="pill p-'+esc(e)+'">'+esc(e)+'</span>';}
+function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.json()}).then(function(list){
+  var tb=document.getElementById('histbody');
+  if(!list||!list.length){tb.innerHTML='<tr><td colspan="5" style="color:#64748B">Sin pedidos todavía</td></tr>';return;}
+  tb.innerHTML=list.map(function(p){
+    return '<tr data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\')">'+
+      '<td style="font:700 13px ui-monospace,monospace">'+esc(p.placa)+'</td>'+
+      '<td>'+pestado(p.estado)+'</td>'+
+      '<td>'+esc(fmtTime(p.createdAt))+'</td>'+
+      '<td>'+(p.error?'<span style="color:#B91C1C">'+esc((p.error||'').slice(0,46))+'</span>':'<span class="meta">ver detalle ›</span>')+'</td>'+
+      '<td style="color:#1E3A8A">›</td></tr>';
   }).join('');
+  if(!HISTSEEN){HISTSEEN=true; if(list[0]) selectPedido(list[0].placa);}  // por defecto: el último pedido
+  markSel();
 }).catch(function(){});}
+function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=0;i<rows.length;i++){rows[i].className=(rows[i].getAttribute('data-placa')===SELECTED)?'sel':'';}}
+function selectPedido(pl){SELECTED=pl;markSel();
+  var d=document.getElementById('pdetail');
+  d.innerHTML='<h2>'+esc(pl)+'</h2><div class="pmeta">Cargando reporte…</div>';
+  fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
+    var results=rep.results||[];
+    var ok=results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
+    var err=results.filter(function(x){return x.status==='ERROR'}).length;
+    d.innerHTML='<h2>'+esc(pl)+'</h2>'+
+      '<div class="pmeta"><span>'+results.length+' fuentes</span>'+
+      '<span style="color:#15803D">'+ok+' ok</span>'+(err?'<span style="color:#B91C1C">'+err+' con error</span>':'')+
+      (rep.generatedAt?'<span>generado '+esc(fmtTime(rep.generatedAt))+'</span>':'')+
+      (rep.missing?'<span style="color:#B45309">⚠ reporte.json no está en este VPS (pedido viejo o de otra máquina)</span>':'')+
+      '</div><div id="hcards" class="cards"></div>';
+    renderCards(results, pl, 'hcards', true, 'h');
+  }).catch(function(e){d.innerHTML='<h2>'+esc(pl)+'</h2><div class="pmeta">✖ '+esc(e)+'</div>';});}
 function enqueue(){var p=document.getElementById('qplaca').value.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!p){alert('Pon una placa');return;}
   fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
-   .then(function(r){return r.json()}).then(function(x){log('＋ pedido encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadPedidos();}).catch(function(e){log('✖ '+e)});}
-loadEngine();loadPedidos();setInterval(loadEngine,4000);setInterval(loadPedidos,4000);
+   .then(function(r){return r.json()}).then(function(x){log('＋ pedido encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadHistory();}).catch(function(e){log('✖ '+e)});}
+showTab('hist');loadEngine();loadHistory();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
 </script></body></html>`;

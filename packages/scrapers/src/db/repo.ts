@@ -1,4 +1,4 @@
-import { eq, and, asc, inArray } from 'drizzle-orm';
+import { eq, and, asc, desc, inArray } from 'drizzle-orm';
 import { getDb, schema } from './index.js';
 
 /** Capa de datos de PlacaPe. Funciones de alto nivel sobre el esquema Drizzle. */
@@ -97,6 +97,11 @@ export function pedidoBoard(): PedidoRow[] {
   return getDb().select().from(schema.pedidos)
     .where(inArray(schema.pedidos.estado, ['pendiente', 'procesando']))
     .orderBy(asc(schema.pedidos.createdAt)).all();
+}
+/** Historial completo de pedidos (todos los estados), más recientes primero. */
+export function pedidoHistory(limit = 100): PedidoRow[] {
+  return getDb().select().from(schema.pedidos)
+    .orderBy(desc(schema.pedidos.createdAt)).limit(limit).all();
 }
 export function pedidoSetProcessing(id: number): void {
   getDb().update(schema.pedidos)
