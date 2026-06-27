@@ -13,17 +13,18 @@ type State =
  * recortado por el nivel pagado). Hace polling cada 3 s mientras el motor del VPS lo
  * genera. `refreshToken` re-dispara la lectura (botón Actualizar).
  */
-export function useConsulta(placa: string, refreshToken = 0, enabled = true): State {
+export function useConsulta(placa: string, refreshToken = 0, enabled = true, preview?: string): State {
   const [state, setState] = useState<State>({ phase: 'loading', report: null, error: null });
 
   useEffect(() => {
     if (!enabled || !placa) return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout>;
+    const qs = preview ? `?preview=${encodeURIComponent(preview)}` : '';
 
     const load = async () => {
       try {
-        const r = await fetch(`/api/reporte/${encodeURIComponent(placa)}`, { cache: 'no-store' });
+        const r = await fetch(`/api/reporte/${encodeURIComponent(placa)}${qs}`, { cache: 'no-store' });
         if (cancelled) return;
         const d = (await r.json()) as { generating?: boolean; report?: Report | null };
         if (cancelled) return;
@@ -43,7 +44,7 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true): St
     setState({ phase: 'loading', report: null, error: null });
     load();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [placa, refreshToken, enabled]);
+  }, [placa, refreshToken, enabled, preview]);
 
   return state;
 }

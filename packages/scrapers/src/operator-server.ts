@@ -44,6 +44,11 @@ const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_pla
 // Fuentes que corre el motor automático por pedido (reporte completo; SPRL incluido).
 const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
   ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
+// Para incrustar el reporte del cliente en la consola (pestaña "Reporte al usuario").
+// WEB_REPORT_URL = base de la web (p. ej. https://placape.vercel.app); el token debe
+// coincidir con OPERATOR_PREVIEW_TOKEN configurado en la web (Vercel).
+const WEB_REPORT_URL = (process.env.WEB_REPORT_URL ?? '').replace(/\/+$/, '');
+const OPERATOR_PREVIEW_TOKEN = process.env.OPERATOR_PREVIEW_TOKEN ?? '';
 if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); process.exit(1); }
 
 const queue = getQueue();
@@ -227,7 +232,7 @@ const server = createServer(async (req, res) => {
       const current = cj
         ? { jobId: cj.id, placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done }
         : null;
-      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current });
+      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current, web: { base: WEB_REPORT_URL, token: OPERATOR_PREVIEW_TOKEN } });
     }
     if (path === '/api/engine/toggle' && req.method === 'POST') {
       autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
@@ -546,7 +551,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   <div id="log"></div>
 </main>
 <script>
-var SOURCES=[], LAST=null, ES=null, JOB=null;
+var SOURCES=[], LAST=null, ES=null, JOB=null, WEB_BASE='', WEB_TOKEN='';
 function log(m){var l=document.getElementById('log');l.textContent+= (new Date().toLocaleTimeString())+'  '+m+'\\n';l.scrollTop=l.scrollHeight;}
 function plate(){return document.getElementById('placa').value.toUpperCase().replace(/[^A-Z0-9]/g,'');}
 fetch('/api/sources').then(function(r){return r.json()}).then(function(s){SOURCES=s;var b=document.getElementById('srcbox');
@@ -617,6 +622,7 @@ document.getElementById('placa').addEventListener('keydown',function(e){if(e.key
 
 // ── Motor automático + progreso + historial ──────────────────────────────────
 function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
+  if(s.web){WEB_BASE=s.web.base||'';WEB_TOKEN=s.web.token||'';}
   var b=document.getElementById('engBtn');
   b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='sw '+(s.enabled?'on':'off');
   document.getElementById('engInfo').textContent=(s.busy?'· atendiendo un pedido ':'· libre ')+'· cola: '+esc(s.queue);
@@ -690,6 +696,16 @@ function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');
   }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
 function loadWebReport(){var pl=SELECTED,d=document.getElementById('pdetail');
+  // Si hay WEB_REPORT_URL: incrusta el reporte REAL del cliente (mismo formato) en iframe,
+  // con ?preview=TOKEN (modo operador, ve todo sin candado).
+  if(WEB_BASE){
+    var url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(WEB_TOKEN?'?preview='+encodeURIComponent(WEB_TOKEN):'');
+    d.innerHTML=hHeader(pl)+detailTabs()+
+      '<div class="meta" style="margin-bottom:8px">Reporte tal como lo ve el cliente · <a href="'+url+'" target="_blank" style="color:#0C6F64">abrir en pestaña ↗</a></div>'+
+      '<iframe src="'+url+'" style="width:100%;height:1600px;border:1px solid var(--bd);border-radius:12px;background:#fff"></iframe>';
+    return;
+  }
+  // Fallback (sin WEB_REPORT_URL): render nativo compacto.
   d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando reporte…</div>';
   fetch('/api/pedido-webreport?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
     d.innerHTML=hHeader(pl)+detailTabs()+((rep&&!rep.missing)?renderWebReport(rep):'<div class="pmeta">Aún sin reporte consolidado (el pedido no ha terminado).</div>');

@@ -36,11 +36,17 @@ function stripByTier(report: Report, tier: 'BASIC' | 'PRO' | 'ULTRA'): Report {
  * recorta por el nivel pagado del usuario. Estados: `generating` (hay un pedido en curso)
  * o `report` (listo o stub-vacío para invitar a comprar).
  */
-export async function GET(_req: Request, { params }: { params: Promise<{ placa: string }> }) {
+export async function GET(req: Request, { params }: { params: Promise<{ placa: string }> }) {
   const { placa: raw } = await params;
   const placa = norm(raw);
   if (!placa) return NextResponse.json({ generating: false, report: null });
   if (!isAdminConfigured) return NextResponse.json({ generating: false, report: stub(placa) });
+
+  // Modo operador: ?preview=TOKEN (= OPERATOR_PREVIEW_TOKEN) devuelve el reporte COMPLETO
+  // sin recortar por tier, para previsualizarlo en la consola del operador.
+  const preview = new URL(req.url).searchParams.get('preview');
+  const opToken = process.env.OPERATOR_PREVIEW_TOKEN;
+  const operatorPreview = !!opToken && preview === opToken;
 
   let tier: 'BASIC' | 'PRO' | 'ULTRA' = 'BASIC';
   try { tier = await getPaidTier(placa); } catch { /* anónimo → BASIC */ }
@@ -48,7 +54,8 @@ export async function GET(_req: Request, { params }: { params: Promise<{ placa: 
   const admin = createAdminClient();
   const { data: rep } = await admin.from('reportes').select('report,status').eq('placa', placa).maybeSingle();
   if (rep?.report) {
-    return NextResponse.json({ generating: false, report: stripByTier(rep.report as Report, tier) });
+    const report = operatorPreview ? (rep.report as Report) : stripByTier(rep.report as Report, tier);
+    return NextResponse.json({ generating: false, report });
   }
 
   const { data: ped } = await admin

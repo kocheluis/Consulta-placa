@@ -113,18 +113,24 @@ export default function ReportePage() {
   const params = useParams<{ placa: string }>();
   const placa = (params.placa ?? '').toUpperCase();
   const [refreshToken, setRefreshToken] = useState(0);
-  const state = useConsulta(placa, refreshToken, PRO_ENABLED);
+  // Modo operador: ?preview=TOKEN muestra el reporte COMPLETO (sin candado ni lead gate)
+  // para incrustarlo en la consola del operador; el token lo valida el route handler.
+  const [preview, setPreview] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    try { setPreview(new URLSearchParams(window.location.search).get('preview') || undefined); } catch { /* noop */ }
+  }, []);
+  const state = useConsulta(placa, refreshToken, PRO_ENABLED, preview);
   const actualizar = () => setRefreshToken((n) => n + 1);
 
-  // Pantalla intermedia (lead gate): null mientras leemos localStorage, luego
-  // true si este navegador ya dejó su contacto.
+  // Pantalla intermedia (lead gate): null mientras leemos localStorage, luego true si
+  // este navegador ya dejó su contacto (o si es preview de operador).
   const [unlocked, setUnlocked] = useState<boolean | null>(null);
   useEffect(() => {
-    setUnlocked(getStoredLead() != null);
-  }, []);
+    setUnlocked(preview ? true : getStoredLead() != null);
+  }, [preview]);
 
-  // Sin pipeline PRO: invitación restyleada.
-  if (!PRO_ENABLED) {
+  // Sin pipeline PRO: invitación restyleada. (En preview de operador se omite.)
+  if (!PRO_ENABLED && !preview) {
     return (
       <div className="bg-background px-4 py-12 sm:py-16">
         <ProGate placa={placa} mode="soon" />
@@ -190,11 +196,11 @@ export default function ReportePage() {
     );
   }
 
-  return <ReportView report={state.report} cached={state.cached} onRetry={actualizar} />;
+  return <ReportView report={state.report} cached={state.cached} onRetry={actualizar} preview={preview} />;
 }
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
-function ReportView({ report, cached, onRetry }: { report: Report; cached: boolean; onRetry: () => void }) {
+function ReportView({ report, cached, onRetry, preview }: { report: Report; cached: boolean; onRetry: () => void; preview?: string }) {
   const router = useRouter();
   const v = report.vehicle;
   const score = computeScore(report);
@@ -202,14 +208,16 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
     kind ? report.sections.find((s) => s.kind === kind) : undefined;
 
   // Nivel desbloqueado por el usuario para esta placa (pago por reporte).
-  const [currentTier, setCurrentTier] = useState<Tier>('BASIC');
+  // En preview de operador se fuerza ULTRA para mostrar todas las secciones.
+  const [currentTier, setCurrentTier] = useState<Tier>(preview ? 'ULTRA' : 'BASIC');
   const [buying, setBuying] = useState<'PRO' | 'ULTRA' | null>(null);
   const [pendingYape, setPendingYape] = useState<{ tier: 'PRO' | 'ULTRA'; orderId?: string } | null>(null);
   useEffect(() => {
+    if (preview) { setCurrentTier('ULTRA'); return; }
     getPaidTier(report.placa)
       .then(setCurrentTier)
       .catch(() => {});
-  }, [report.placa]);
+  }, [report.placa, preview]);
 
   const comprar = async (tier: 'PRO' | 'ULTRA') => {
     setBuying(tier);
