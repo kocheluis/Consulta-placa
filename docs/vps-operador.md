@@ -165,14 +165,18 @@ NO se reaplica.
 
 - **`git pull` aborta por cambios locales/untracked** → ver "El repo del VPS está
   divergido" arriba. No descartes a ciegas.
-- **`EADDRINUSE: address already in use :::3010`** → al reiniciar, el proceso viejo no
-  soltó el puerto. Verifica qué lo ocupa y reinicia limpio:
+- **`EADDRINUSE: address already in use :::3010`** → el proceso viejo no soltó el puerto
+  antes de que arranque el nuevo. Desde el commit con apagado ordenado (SIGINT/SIGTERM
+  cierran el server y matan Chrome), `pm2 restart operador` debería bastar. Si vienes de
+  una instancia colgada que aún ocupa el puerto, haz un reinicio LIMPIO:
   ```
-  ss -ltnp | grep 3010
-  pm2 restart operador
+  pm2 stop operador
+  sleep 2
+  ss -ltnp | grep 3010        # ¿sigue ocupado? mata al intruso:
+  fuser -k 3010/tcp           # (o: kill <PID de ss>)
+  pm2 start operador
+  ss -ltnp | grep 3010        # debe quedar UN solo listener (el de pm2)
   ```
-  Si persiste (proceso huérfano): `pm2 delete operador` y vuelve a iniciarlo, o mata el
-  PID que aparezca en `ss -ltnp`.
 
 - **"syntax error near unexpected token newline"** → pegaste un `<nombre>`/`<...>` o un
   comentario con caracteres especiales. Usa el nombre literal `operador`.

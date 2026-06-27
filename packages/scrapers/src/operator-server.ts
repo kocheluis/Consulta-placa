@@ -339,8 +339,32 @@ const server = createServer(async (req, res) => {
   }
 });
 
-// Escucha SOLO en loopback: el panel no tiene auth propia, su seguridad ES el túnel SSH.
-// (Acceso: ssh -L 3010:localhost:3010 root@VPS → http://localhost:3010). No exponer al internet.
+// Si el puerto sigue ocupado por la instancia anterior (reinicio de pm2), sal con código
+// !=0 para que pm2 reintente; no dejes el proceso colgado emitiendo 'error'.
+server.on('error', (err: NodeJS.ErrnoException) => {
+  if (err.code === 'EADDRINUSE') {
+    console.error(`[operador] puerto ${PORT} ocupado (la instancia anterior aún no soltó el puerto). Saliendo para que pm2 reintente.`);
+    process.exit(1);
+  }
+  throw err;
+});
+
+// Apagado ordenado: al reiniciar/parar (pm2 manda SIGINT/SIGTERM) cierra el servidor
+// —liberando el puerto al instante— y mata el Chrome del motor. Evita el EADDRINUSE.
+let shuttingDown = false;
+function shutdown(sig: string): void {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`[operador] ${sig} recibido → cerrando servidor y Chrome…`);
+  try { killEngineChrome(); } catch { /* noop */ }
+  server.close(() => process.exit(0));
+  setTimeout(() => process.exit(0), 3000).unref(); // forzar salida si close() se cuelga
+}
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+
+// Escucha SOLO en loopback: el panel no tiene auth propia, su seguridad ES el túnel SSH /
+// el reverse proxy. (Acceso: ssh -L 3010:localhost:3010 root@VPS). No exponer al internet.
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n🛠  Panel del operador PlacaPe → http://localhost:${PORT}`);
   console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}`);
