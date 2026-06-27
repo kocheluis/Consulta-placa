@@ -103,6 +103,17 @@ export function pedidoHistory(limit = 100): PedidoRow[] {
   return getDb().select().from(schema.pedidos)
     .orderBy(desc(schema.pedidos.createdAt)).limit(limit).all();
 }
+/** Re-encola un pedido (vuelve a 'pendiente') para re-generarlo. */
+export function pedidoRequeue(id: number): void {
+  getDb().update(schema.pedidos)
+    .set({ estado: 'pendiente', startedAt: null, error: null }).where(eq(schema.pedidos.id, id)).run();
+}
+/** Recupera pedidos 'procesando' huérfanos (interrumpidos por un reinicio) → 'pendiente'. */
+export function pedidoRequeueStuck(): number {
+  const r = getDb().update(schema.pedidos)
+    .set({ estado: 'pendiente', startedAt: null }).where(eq(schema.pedidos.estado, 'procesando')).run();
+  return Number((r as { changes?: number }).changes ?? 0);
+}
 export function pedidoSetProcessing(id: number): void {
   getDb().update(schema.pedidos)
     .set({ estado: 'procesando', startedAt: now() }).where(eq(schema.pedidos.id, id)).run();

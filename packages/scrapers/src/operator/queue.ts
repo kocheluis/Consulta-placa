@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import {
   pedidoCreate, pedidoGet, pedidoNext, pedidoBoard, pedidoHistory,
+  pedidoRequeue, pedidoRequeueStuck,
   pedidoSetProcessing, pedidoSetDone, pedidoSetError, pedidoSetDelivered,
 } from '../db/repo.js';
 
@@ -35,6 +36,10 @@ export interface PedidoQueue {
   board(): Promise<Pedido[]>;
   /** Historial completo (todos los estados), más recientes primero. */
   history(limit?: number): Promise<Pedido[]>;
+  /** Re-encola un pedido (vuelve a 'pendiente') para re-generarlo. */
+  requeue(id: Pedido['id']): Promise<void>;
+  /** Recupera pedidos 'procesando' huérfanos (tras un reinicio) → 'pendiente'. Devuelve cuántos. */
+  requeueStuck(): Promise<number>;
   setProcessing(id: Pedido['id']): Promise<void>;
   setDone(id: Pedido['id'], reportPath?: string): Promise<void>;
   setError(id: Pedido['id'], msg: string): Promise<void>;
@@ -53,6 +58,8 @@ const sqliteQueue: PedidoQueue = {
   async next() { return (pedidoNext() as Pedido) ?? null; },
   async board() { return pedidoBoard() as Pedido[]; },
   async history(limit = 100) { return pedidoHistory(limit) as Pedido[]; },
+  async requeue(id) { pedidoRequeue(Number(id)); },
+  async requeueStuck() { return pedidoRequeueStuck(); },
   async setProcessing(id) { pedidoSetProcessing(Number(id)); },
   async setDone(id, reportPath) { pedidoSetDone(Number(id), reportPath); },
   async setError(id, msg) { pedidoSetError(Number(id), msg); },
@@ -96,6 +103,13 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
       const r = await fetch(`${base}?order=created_at.desc&limit=${limit}`, { headers });
       if (!r.ok) throw new Error(`supabase GET ${r.status}`);
       return ((await r.json()) as Record<string, unknown>[]).map(map);
+    },
+    async requeue(id) { await patch(id, { estado: 'pendiente', started_at: null, error: null }); },
+    async requeueStuck() {
+      const r = await fetch(`${base}?estado=eq.procesando`, { method: 'PATCH',
+        headers: { ...headers, Prefer: 'return=representation' }, body: JSON.stringify({ estado: 'pendiente', started_at: null }) });
+      if (!r.ok) throw new Error(`supabase PATCH ${r.status}: ${await r.text()}`);
+      return ((await r.json()) as unknown[]).length;
     },
     async setProcessing(id) { await patch(id, { estado: 'procesando', started_at: now() }); },
     async setDone(id, reportPath) { await patch(id, { estado: 'listo', report_path: reportPath ?? null, finished_at: now() }); },

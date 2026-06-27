@@ -51,6 +51,12 @@ let autoEngine = metaGet<boolean>('auto_engine_enabled') ?? false; // persistido
 let engineBusy = false; // un solo reporte a la vez (lo que aguanta el VPS); serializa auto + manual
 let currentAutoJobId: string | null = null; // job del pedido que el motor automático atiende ahora
 
+// Recuperación: pedidos que quedaron 'procesando' por un reinicio del motor (pm2 restart a
+// medio reporte) → re-encolar a 'pendiente' para que el runner los retome (si no, quedan colgados).
+void queue.requeueStuck()
+  .then((n) => { if (n) console.log(`[cola] ${n} pedido(s) 'procesando' huérfano(s) → re-encolado(s) a 'pendiente'`); })
+  .catch((e) => console.warn('[cola] requeueStuck:', (e as Error).message));
+
 const plateDir = (plate: string) => join(OUT_BASE, plate.toUpperCase().replace(/[^A-Z0-9]/g, ''));
 const baseOpts = (plate: string, source?: string) => ({
   outDir: plateDir(plate), captchaProvider: PROVIDER, captchaApiKey: KEY,
@@ -240,6 +246,15 @@ const server = createServer(async (req, res) => {
       const p = await queue.enqueue({ placa, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined });
       console.log(`[cola] pedido encolado ${p.id} · ${p.placa}`);
       return sendJson(res, 200, p);
+    }
+    // Re-generar un pedido existente: lo vuelve a 'pendiente' (el runner lo retoma si el motor está ON).
+    if (path === '/api/pedido/requeue' && req.method === 'POST') {
+      const body = await readBody(req);
+      const id = body.id;
+      if (id === undefined || id === null || id === '') return sendJson(res, 400, { error: 'falta id' });
+      await queue.requeue(id as string | number);
+      console.log(`[cola] pedido ${id} re-encolado por el operador`);
+      return sendJson(res, 200, { ok: true });
     }
 
     // Inicia un job y devuelve su id (el progreso se sigue por SSE).
@@ -609,13 +624,13 @@ function showTab(t){
   document.getElementById('tab-b-hist').className='tab'+(t==='hist'?' active':'');
   document.getElementById('tab-b-manual').className='tab'+(t==='manual'?' active':'');
 }
-var SELECTED=null, HISTSEEN=false;
+var SELECTED=null, SELECTED_ID=null, HISTSEEN=false;
 function pestado(e){return '<span class="pill p-'+esc(e)+'">'+esc(e)+'</span>';}
 function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.json()}).then(function(list){
   var tb=document.getElementById('histbody');
   if(!list||!list.length){tb.innerHTML='<tr><td colspan="7" style="color:#64748B">Sin pedidos todavía</td></tr>';return;}
   tb.innerHTML=list.map(function(p){
-    return '<tr data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\')">'+
+    return '<tr data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\',\\''+esc(p.id)+'\\')">'+
       '<td style="font:700 13px ui-monospace,monospace">'+esc(p.placa)+'</td>'+
       '<td>'+pestado(p.estado)+'</td>'+
       '<td>'+esc(fmtTime(p.createdAt))+'</td>'+
@@ -624,25 +639,30 @@ function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.j
       '<td>'+(p.error?'<span style="color:#B91C1C">'+esc((p.error||'').slice(0,46))+'</span>':'<span class="meta">ver detalle ›</span>')+'</td>'+
       '<td style="color:#1E3A8A">›</td></tr>';
   }).join('');
-  if(!HISTSEEN){HISTSEEN=true; if(list[0]) selectPedido(list[0].placa);}  // por defecto: el último pedido
+  if(!HISTSEEN){HISTSEEN=true; if(list[0]) selectPedido(list[0].placa,list[0].id);}  // por defecto: el último pedido
   markSel();
 }).catch(function(){});}
 function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=0;i<rows.length;i++){rows[i].className=(rows[i].getAttribute('data-placa')===SELECTED)?'sel':'';}}
-function selectPedido(pl){SELECTED=pl;markSel();
+function hHeader(pl){return '<h2>'+esc(pl)+' <button class="sec" style="font-size:13px;padding:6px 12px" onclick="requeuePedido()">↻ Re-generar reporte</button></h2>';}
+function selectPedido(pl,id){SELECTED=pl;SELECTED_ID=id;markSel();
   var d=document.getElementById('pdetail');
-  d.innerHTML='<h2>'+esc(pl)+'</h2><div class="pmeta">Cargando reporte…</div>';
+  d.innerHTML=hHeader(pl)+'<div class="pmeta">Cargando reporte…</div>';
   fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
     var results=rep.results||[];
     var ok=results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
     var err=results.filter(function(x){return x.status==='ERROR'}).length;
-    d.innerHTML='<h2>'+esc(pl)+'</h2>'+
+    d.innerHTML=hHeader(pl)+
       '<div class="pmeta"><span>'+results.length+' fuentes</span>'+
       '<span style="color:#15803D">'+ok+' ok</span>'+(err?'<span style="color:#B91C1C">'+err+' con error</span>':'')+
       (rep.generatedAt?'<span>generado '+esc(fmtTime(rep.generatedAt))+'</span>':'')+
-      (rep.missing?'<span style="color:#B45309">⚠ reporte.json no está en este VPS (pedido viejo o de otra máquina)</span>':'')+
+      (rep.missing?'<span style="color:#B45309">⚠ aún sin reporte.json (en proceso, o pedido viejo/otra máquina)</span>':'')+
       '</div><div id="hcards" class="cards"></div>';
     renderCards(results, pl, 'hcards', true, 'h');
-  }).catch(function(e){d.innerHTML='<h2>'+esc(pl)+'</h2><div class="pmeta">✖ '+esc(e)+'</div>';});}
+  }).catch(function(e){d.innerHTML=hHeader(pl)+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
+function requeuePedido(){if(!SELECTED_ID){alert('Selecciona un pedido');return;}
+  log('↻ re-generando pedido '+SELECTED+' (#'+SELECTED_ID+') …');
+  fetch('/api/pedido/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SELECTED_ID})})
+   .then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('↻ re-encolado — el motor lo tomará si está ENCENDIDO');loadHistory();}).catch(function(e){log('✖ '+e)});}
 function enqueue(){var p=document.getElementById('qplaca').value.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!p){alert('Pon una placa');return;}
   fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
    .then(function(r){return r.json()}).then(function(x){log('＋ pedido encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadHistory();}).catch(function(e){log('✖ '+e)});}
