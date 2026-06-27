@@ -472,7 +472,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   </div>
 
   <section id="tab-hist">
-    <table class="ped"><thead><tr><th>Placa</th><th>Estado</th><th>Creado</th><th>Fuentes</th><th></th></tr></thead><tbody id="histbody"><tr><td colspan="5" style="color:#64748B">Cargando…</td></tr></tbody></table>
+    <table class="ped"><thead><tr><th>Placa</th><th>Estado</th><th>Creado</th><th>Terminado</th><th>Duración</th><th>Fuentes</th><th></th></tr></thead><tbody id="histbody"><tr><td colspan="7" style="color:#64748B">Cargando…</td></tr></tbody></table>
     <div class="pdetail" id="pdetail"></div>
   </section>
 
@@ -538,8 +538,9 @@ function card(r,pl,withRetry,pfx){pl=pl||plate();pfx=pfx||'c';var cid=pfx+'-'+r.
     return '<div class="card wide" id="'+cid+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
     timelineHtml(r)+'<div class="meta">'+(r.ms/1000).toFixed(1)+'s · sede '+esc((r.data.sede||''))+'</div>'+actions+'</div>';}
   var img=r.screenshot?'<img src="/shot/'+pl+'/'+srcId(r.source)+'.png?t='+Date.now()+'" onclick="window.open(this.src)">':'';
+  var capTxt=(r.data&&r.data.captcha)?' · captcha: '+esc(r.data.captcha):'';
   return '<div class="card" id="'+cid+'"><h3>'+r.label+' '+badge(r.status)+'</h3><div class="sum">'+esc(r.summary||'')+'</div>'+
-  '<div class="meta">'+(r.ms/1000).toFixed(1)+'s</div>'+img+actions+'</div>';}
+  '<div class="meta">'+(r.ms/1000).toFixed(1)+'s'+capTxt+'</div>'+img+actions+'</div>';}
 function renderCards(results,pl,cont,withRetry,pfx){cont=cont||'cards';pfx=pfx||'c';var box=document.getElementById(cont);if(!box)return;
   box.innerHTML=(results&&results.length)?results.map(function(r){return card(r,pl,withRetry,pfx)}).join(''):'<div class="meta">Sin resultados de fuentes para esta placa.</div>';}
 function showProg(on){document.getElementById('prog').style.display=on?'block':'none';}
@@ -601,6 +602,7 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
 function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
   log(s.enabled?'⚙ motor automático ENCENDIDO':'⚙ motor automático APAGADO');loadEngine();});}
 function fmtTime(iso){if(!iso)return'—';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}
+function fmtDur(a,b){if(!a||!b)return'—';try{var ms=new Date(b)-new Date(a);if(ms<0)return'—';var s=Math.round(ms/1000);return s<60?s+'s':(Math.floor(s/60)+'m '+(s%60)+'s');}catch(e){return'—';}}
 function showTab(t){
   document.getElementById('tab-hist').style.display=t==='hist'?'block':'none';
   document.getElementById('tab-manual').style.display=t==='manual'?'block':'none';
@@ -611,12 +613,14 @@ var SELECTED=null, HISTSEEN=false;
 function pestado(e){return '<span class="pill p-'+esc(e)+'">'+esc(e)+'</span>';}
 function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.json()}).then(function(list){
   var tb=document.getElementById('histbody');
-  if(!list||!list.length){tb.innerHTML='<tr><td colspan="5" style="color:#64748B">Sin pedidos todavía</td></tr>';return;}
+  if(!list||!list.length){tb.innerHTML='<tr><td colspan="7" style="color:#64748B">Sin pedidos todavía</td></tr>';return;}
   tb.innerHTML=list.map(function(p){
     return '<tr data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\')">'+
       '<td style="font:700 13px ui-monospace,monospace">'+esc(p.placa)+'</td>'+
       '<td>'+pestado(p.estado)+'</td>'+
       '<td>'+esc(fmtTime(p.createdAt))+'</td>'+
+      '<td>'+esc(fmtTime(p.finishedAt))+'</td>'+
+      '<td style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+fmtDur(p.startedAt||p.createdAt,p.finishedAt)+'</td>'+
       '<td>'+(p.error?'<span style="color:#B91C1C">'+esc((p.error||'').slice(0,46))+'</span>':'<span class="meta">ver detalle ›</span>')+'</td>'+
       '<td style="color:#1E3A8A">›</td></tr>';
   }).join('');

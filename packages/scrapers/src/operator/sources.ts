@@ -45,11 +45,13 @@ export async function runSatCaptura(
     const submit = page.locator('#ctl00_cplPrincipal_CaptchaContinue');
     const RESULT = new RegExp(`el veh[ií]culo de placa\\s*${plate}[^]*?orden de captura[^.]*\\.`, 'i');
     const ERR = /c[oó]digo de seguridad incorrect/i;
+    let cap = '';
 
     for (let i = 1; i <= 3; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(800); }
       await plateInput.fill(plate);
-      await capInput.fill(await readCaptcha(solver, img));
+      cap = await readCaptcha(solver, img);
+      await capInput.fill(cap);
       await Promise.all([page.waitForLoadState('networkidle').catch(() => {}), submit.click()]);
       let body = '';
       for (let k = 0; k < 10; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (RESULT.test(body) || ERR.test(body)) break; }
@@ -57,11 +59,11 @@ export async function runSatCaptura(
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         const line = body.match(RESULT)![0].replace(/\s+/g, ' ').trim();
         const tiene = /\bs[ií]\b.*orden|tiene orden de captura/i.test(line) && !/no tiene/i.test(line);
-        return { ...base, status: tiene ? 'ENCONTRADO' : 'SIN_REGISTRO', summary: line, data: { ordenDeCaptura: tiene, detalle: line }, screenshot: shot, ms: Date.now() - t0 };
+        return { ...base, status: tiene ? 'ENCONTRADO' : 'SIN_REGISTRO', summary: line, data: { ordenDeCaptura: tiene, detalle: line, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
@@ -95,6 +97,7 @@ export async function runCallao(
     const capImg = page.locator('img[src^="data:image"]').first();
     const ERR = /error al ingresar el c[oó]digo de seguridad/i;
     const NODATA = /no hay resultados para mostrar/i;
+    let cap = '';
 
     for (let i = 1; i <= 5; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); }
@@ -103,18 +106,19 @@ export async function runCallao(
       dialog = '';
       await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
       await wait(400);
-      await capInput.fill(await readCaptcha(solver, capImg));
+      cap = await readCaptcha(solver, capImg);
+      await capInput.fill(cap);
       await page.locator('button:has-text("Buscar"), input[value*="Buscar" i]').first().click().catch(() => {});
       await wait(4500);
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
       if (ERR.test(body) || /captcha|seguridad/i.test(dialog)) continue;
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       const total = body.match(/TOTAL:\s*S\/\.?\s*([0-9.,]+)/i)?.[1] ?? null;
-      if (NODATA.test(body)) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Callao', data: { total: total ?? '0.00' }, screenshot: shot, ms: Date.now() - t0 };
-      return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Callao (TOTAL S/ ${total ?? '?'})`, data: { total }, screenshot: shot, ms: Date.now() - t0 };
+      if (NODATA.test(body)) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Callao', data: { total: total ?? '0.00', captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Callao (TOTAL S/ ${total ?? '?'})`, data: { total, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
@@ -141,6 +145,7 @@ export async function runMtcCitv(
     const plateInput = page.locator('#texFiltro');
     const buscar = page.locator('#btnBuscar');
     const OK = /ÚLTIMO DOCUMENTO|ultimo documento|NRO DE CERTIFICADO|certificad/i;
+    let cap = '';
 
     for (let i = 1; i <= 4; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1000); }
@@ -149,7 +154,8 @@ export async function runMtcCitv(
       dialog = '';
       await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       await wait(500); // el #imgCaptcha es base64 puesto por JS; deja que termine
-      await capInput.fill(await readCaptcha(solver, img));
+      cap = await readCaptcha(solver, img);
+      await capInput.fill(cap);
       await buscar.click();
       let body = '';
       for (let k = 0; k < 10; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; }
@@ -162,11 +168,11 @@ export async function runMtcCitv(
         // Lunas polarizadas: el dato legítimo aparece (si aplica) en el CITV; no hay
         // consulta oficial por placa aparte (los sitios "PNP" son terceros no oficiales).
         const lunas = /lunas|polariza|oscurec/i.test(body) ? 'mención en CITV (revisar)' : 'sin mención en CITV';
-        return { ...base, status: 'ENCONTRADO', summary: vig ? `CITV ${vig.estado} hasta ${vig.vigenteHasta}` : `${certs.length} certificado(s) CITV`, data: { certificados: certs, observaciones, lunasPolarizadas: lunas }, screenshot: shot, ms: Date.now() - t0 };
+        return { ...base, status: 'ENCONTRADO', summary: vig ? `CITV ${vig.estado} hasta ${vig.vigenteHasta}` : `${certs.length} certificado(s) CITV`, data: { certificados: certs, observaciones, lunasPolarizadas: lunas, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o sin datos tras varios intentos', screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o sin datos tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
@@ -198,6 +204,7 @@ export async function runApeseg(
     const plateInput = fl.locator('#placa, input[id*="laca" i]').first();
     const capInput = fl.locator('#captcha, input[id*="aptcha" i]').first();
     const img = fl.locator('img.captcha-img, img[class*="aptcha" i]').first();
+    let cap = '';
 
     for (let i = 1; i <= 5; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(2500); }
@@ -205,7 +212,8 @@ export async function runApeseg(
       await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       await wait(400);
       await plateInput.fill(plate);
-      await capInput.fill(await readCaptcha(solver, img));
+      cap = await readCaptcha(solver, img);
+      await capInput.fill(cap);
       await fl.locator('button:has-text("Consultar"), button[type="submit"]').first().click().catch(() => {});
       await wait(5000);
       const body = (await fl.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
@@ -215,12 +223,12 @@ export async function runApeseg(
       const noData = /no\s+(se\s+)?(encontr|registr|existe|cuenta)/i.test(body);
       if (Object.keys(soat).length >= 2 || noData) {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        if (noData && Object.keys(soat).length < 2) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin SOAT registrado', screenshot: shot, ms: Date.now() - t0 };
-        return { ...base, status: 'ENCONTRADO', summary: `SOAT ${soat.estado ?? ''} · ${soat.compania ?? ''}`.trim(), data: soat, screenshot: shot, ms: Date.now() - t0 };
+        if (noData && Object.keys(soat).length < 2) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin SOAT registrado', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+        return { ...base, status: 'ENCONTRADO', summary: `SOAT ${soat.estado ?? ''} · ${soat.compania ?? ''}`.trim(), data: { ...soat, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o sin datos tras varios intentos', screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o sin datos tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
@@ -340,6 +348,10 @@ export async function runAtu(
   try {
     await page.goto('https://soluciones.atu.gob.pe/ConsultaVehiculo', { waitUntil: 'networkidle', timeout: 60000 });
     await wait(1500);
+    // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
+    await page.locator('button:has-text("Acepto cookies"), button:has-text("Aceptar"), button:has-text("Acepto"), a:has-text("Acepto cookies")').first().click({ timeout: 5000 }).catch(() => {});
+    await wait(600);
+    let cap = '';
     const plateInput = page.locator('input#placa, input[name*="laca" i], input[placeholder*="laca" i], input[formcontrolname*="laca" i]').first();
     const capInput = page.locator('input#captcha, input[name*="aptcha" i], input[placeholder*="erifica" i], input[placeholder*="ódigo" i], input[formcontrolname*="aptcha" i]').first();
     const capImg = page.locator('img[src*="aptcha" i], img[id*="aptcha" i], img[src^="data:image"]').first();
@@ -353,7 +365,7 @@ export async function runAtu(
       if (await capImg.count()) {
         await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
         await wait(400);
-        if (await capInput.count()) await capInput.fill(await readCaptcha(solver, capImg));
+        if (await capInput.count()) { cap = await readCaptcha(solver, capImg); await capInput.fill(cap); }
       }
       await page.locator('button:has-text("Buscar"), button:has-text("Consultar"), button[type="submit"], input[value*="Buscar" i]').first().click().catch(() => {});
       await wait(4000);
@@ -362,11 +374,11 @@ export async function runAtu(
       if (/(c[oó]digo|captcha|verificaci)[^]{0,40}(incorrect|inv[aá]lid|err[oó])/i.test(body)) continue;
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       if (NODATA.test(body) && !OK.test(body)) {
-        return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como taxi/transporte autorizado', data: { isPublicTransport: false }, screenshot: shot, ms: Date.now() - t0 };
+        return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como taxi/transporte autorizado', data: { isPublicTransport: false, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
       if (OK.test(body)) {
         const atu = parseAtuBody(body);
-        return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, ...atu }, screenshot: shot, ms: Date.now() - t0 };
+        return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, ...atu, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});

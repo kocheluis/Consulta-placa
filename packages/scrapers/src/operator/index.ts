@@ -88,6 +88,11 @@ function startLog(outDir: string, id: string, plate: string): void {
 function logLine(outDir: string, id: string, msg: string): void {
   try { appendFileSync(join(outDir, `${id}.log`), `${new Date().toISOString()} ${msg}\n`); } catch { /* noop */ }
 }
+/** Línea RESULTADO con el captcha que insertó el OCR (para validar lecturas). */
+function resultLog(r: OperatorSourceResult): string {
+  const cap = (r.data as Record<string, unknown> | undefined)?.captcha;
+  return `RESULTADO ${r.status} · ${r.summary}${cap ? ` · captcha="${String(cap)}"` : ''} · ${r.ms}ms`;
+}
 
 /**
  * Orquestador del reporte del operador: corre las fuentes pedidas por placa en
@@ -122,7 +127,7 @@ export async function runOperatorReport(
         browserSources.map((id) => {
           startLog(opts.outDir, id, plate);
           return withPage(ctx, (p) => SOURCE_RUNNERS[id]!(p, plate, solver, shot(id)))
-            .then((r) => { logLine(opts.outDir, id, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`); return r; })
+            .then((r) => { logLine(opts.outDir, id, resultLog(r)); return r; })
             .catch((e) => { logLine(opts.outDir, id, `ERROR ${(e as Error).message}`); throw e; });
         }),
       );
@@ -168,7 +173,7 @@ export async function runSingleSource(
   try {
     const ctx = await browser.newContext({ locale: 'es-PE' });
     const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
-    logLine(opts.outDir, sourceId, `RESULTADO ${r.status} · ${r.summary} · ${r.ms}ms`);
+    logLine(opts.outDir, sourceId, resultLog(r));
     return r;
   } catch (e) {
     logLine(opts.outDir, sourceId, `ERROR ${(e as Error).message}`);
