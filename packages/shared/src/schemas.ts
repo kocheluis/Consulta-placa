@@ -22,6 +22,7 @@ const SectionResultSchema = z.object({
     'TRANSPORTE',
     'MULTAS_ELECTORALES',
     'GRAVAMENES',
+    'HISTORIAL',
     'GNV',
     'DEUDA_BANCARIA',
     'PNP',

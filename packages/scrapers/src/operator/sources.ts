@@ -315,10 +315,88 @@ export async function runSatPapeletas(
       return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas pendientes en Lima', screenshot: shot, ms: Date.now() - t0 };
     }
     if (/papeleta|infracci[oó]n|S\/\s*[0-9]/i.test(body)) {
-      return { ...base, status: 'ENCONTRADO', summary: 'Papeletas pendientes en Lima (revisar detalle)', data: { texto: body.slice(0, 600) }, screenshot: shot, ms: Date.now() - t0 };
+      const { montoTotal, count } = parseSatPapeletasMontos(body);
+      const montoTxt = montoTotal > 0 ? ` · S/ ${montoTotal.toFixed(2)}` : '';
+      return { ...base, status: 'ENCONTRADO', summary: `Papeletas pendientes en Lima${count ? ` (${count})` : ''}${montoTxt}`, data: { montoTotal, count, texto: body.slice(0, 800) }, screenshot: shot, ms: Date.now() - t0 };
     }
     return { ...base, status: 'ERROR', summary: 'Respuesta no reconocida', screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
+}
+
+/* ───────────────── ATU · Taxi/transporte (captcha imagen) ───────────────── */
+// El portal migró a soluciones.atu.gob.pe (antes sistemas.atu.gob.pe). Form: placa +
+// código de verificación (imagen) + "Buscar". Si la placa está habilitada, muestra
+// modalidad, titular y tarjeta de circulación con vigencia. SELECTORES POR VALIDAR EN VIVO.
+export async function runAtu(
+  page: Page,
+  plate: string,
+  solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'ATU', label: 'ATU · Taxi/transporte', category: 'TRANSPORTE' };
+  try {
+    await page.goto('https://soluciones.atu.gob.pe/ConsultaVehiculo', { waitUntil: 'networkidle', timeout: 60000 });
+    await wait(1500);
+    const plateInput = page.locator('input#placa, input[name*="laca" i], input[placeholder*="laca" i], input[formcontrolname*="laca" i]').first();
+    const capInput = page.locator('input#captcha, input[name*="aptcha" i], input[placeholder*="erifica" i], input[placeholder*="ódigo" i], input[formcontrolname*="aptcha" i]').first();
+    const capImg = page.locator('img[src*="aptcha" i], img[id*="aptcha" i], img[src^="data:image"]').first();
+    const NODATA = /no se (encontr|hall|registr)|no (figura|cuenta|est[aá])|sin (resultados|registro|autorizaci)|no autoriz/i;
+    const OK = /modalidad|tarjeta de circulaci|autorizad|habilitad|raz[oó]n social/i;
+
+    for (let i = 1; i <= 4; i++) {
+      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); }
+      await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+      await plateInput.fill(plate);
+      if (await capImg.count()) {
+        await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
+        await wait(400);
+        if (await capInput.count()) await capInput.fill(await readCaptcha(solver, capImg));
+      }
+      await page.locator('button:has-text("Buscar"), button:has-text("Consultar"), button[type="submit"], input[value*="Buscar" i]').first().click().catch(() => {});
+      await wait(4000);
+      const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+      // Captcha rechazado → reintenta.
+      if (/(c[oó]digo|captcha|verificaci)[^]{0,40}(incorrect|inv[aá]lid|err[oó])/i.test(body)) continue;
+      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+      if (NODATA.test(body) && !OK.test(body)) {
+        return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como taxi/transporte autorizado', data: { isPublicTransport: false }, screenshot: shot, ms: Date.now() - t0 };
+      }
+      if (OK.test(body)) {
+        const atu = parseAtuBody(body);
+        return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, ...atu }, screenshot: shot, ms: Date.now() - t0 };
+      }
+    }
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o respuesta no reconocida (validar selectores ATU)', screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+function parseAtuBody(body: string): { modalidad: string | null; titular: string | null; marca: string | null; vigenciaHasta: string | null } {
+  const grab = (re: RegExp): string | null => body.match(re)?.[1]?.trim() ?? null;
+  return {
+    modalidad: grab(/Modalidad\s*:?\s*([^\n]{2,60}?)(?=\s{2,}|Marca|Modelo|Placa|Estado|Tarjeta|$)/i),
+    titular: grab(/(?:Titular|Raz[oó]n Social|Nombre|Autorizad[oa])\s*:?\s*([^\n]{2,80}?)(?=\s{2,}|Documento|Ruta|DNI|RUC|$)/i),
+    marca: grab(/Marca\s*:?\s*([^\n]{2,40}?)(?=\s{2,}|Modelo|Placa|$)/i),
+    vigenciaHasta: grab(/(?:Vencimiento|Vigencia|Caducidad|V[aá]lid[oa]\s+hasta|Expira)\s*[^:0-9]*:?\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i),
+  };
+}
+
+/**
+ * Extrae el monto pendiente de papeletas del texto del resultado de SAT Lima.
+ * Best-effort: prefiere una línea "TOTAL S/ …" si el portal la muestra; si no,
+ * suma todos los importes "S/ n" hallados. El dato es referencial (lo aclara el
+ * disclaimer del reporte). `count` = n° de importes detectados.
+ */
+function parseSatPapeletasMontos(body: string): { montoTotal: number; count: number } {
+  const toNum = (s: string): number => parseFloat(s.replace(/,/g, '')) || 0;
+  const round2 = (n: number): number => Math.round(n * 100) / 100;
+  const total = body.match(/TOTAL[^S]{0,20}S\/\.?\s*([0-9][0-9.,]*)/i);
+  const montos = [...body.matchAll(/S\/\.?\s*([0-9][0-9.,]*)/gi)].map((m) => toNum(m[1] ?? '')).filter((n) => n > 0);
+  if (total) return { montoTotal: round2(toNum(total[1] ?? '')), count: montos.length };
+  return { montoTotal: round2(montos.reduce((a, b) => a + b, 0)), count: montos.length };
 }

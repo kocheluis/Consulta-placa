@@ -14,6 +14,7 @@ import {
   runApeseg,
   runSatPapeletas,
   runSbs,
+  runAtu,
   type OperatorSourceResult,
 } from './sources.js';
 
@@ -29,10 +30,11 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'mtc-citv': runMtcCitv,
   'sbs-soat': runSbs,
   'apeseg-soat': runApeseg, // extra/opcional (flaky, redundante con SBS)
+  'atu': runAtu, // taxi/transporte (Lima/Callao) — selectores por validar en vivo
 };
 
 /** Fuentes que corren por defecto en la ráfaga del operador. */
-export const DEFAULT_SOURCES = ['sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
+export const DEFAULT_SOURCES = ['sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
 
 /** Catálogo para la UI (id + etiqueta). */
 export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boolean }> = [
@@ -42,6 +44,7 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'mtc-citv', label: 'MTC · Revisión técnica (CITV)', default: true },
   { id: 'sbs-soat', label: 'SBS · SOAT y siniestralidad', default: true },
   { id: 'apeseg-soat', label: 'APESEG · SOAT (extra)', default: false },
+  { id: 'atu', label: 'ATU · Taxi/transporte (Lima/Callao)', default: true },
   { id: 'sunarp', label: 'SUNARP · Identidad y titular (CDP · Chrome)', default: false },
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },

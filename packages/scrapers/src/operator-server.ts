@@ -43,7 +43,7 @@ const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL ?? '';
 const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_placa/validacion-fuentes/operador';
 // Fuentes que corre el motor automático por pedido (reporte completo; SPRL incluido).
 const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
-  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
 if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); process.exit(1); }
 
 const queue = getQueue();

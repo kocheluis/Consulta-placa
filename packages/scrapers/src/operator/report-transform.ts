@@ -12,6 +12,11 @@ import {
   type PapeletasPayload,
   type PapeletaItem,
   type GravamenesPayload,
+  type GravamenItem,
+  type HistorialPayload,
+  type HistorialEvent,
+  type AuctionInfo,
+  type TransporteInfo,
 } from '@app/shared';
 import type { OperatorSourceResult } from './index.js';
 
@@ -29,6 +34,13 @@ const toStatus = (s: string): SectionStatus =>
 const num = (v: unknown): number => {
   const n = parseFloat(String(v ?? '').replace(/[^0-9.]/g, ''));
   return Number.isFinite(n) ? n : 0;
+};
+
+/** Monto desde texto ("US$ 12,000.00" → 12000) o null si no hay importe. */
+const moneyOrNull = (v: unknown): number | null => {
+  const s = String(v ?? '').replace(/[^0-9.,]/g, '').replace(/,/g, '');
+  const n = parseFloat(s);
+  return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 };
 
 export function toWebReport(plate: string, results: OperatorSourceResult[], generatedAt: string, id: string): Report {
@@ -75,16 +87,39 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     src.push({ kind: SectionKind.SEGUROS, source: SourceId.SBS, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   }
 
-  // ── SINIESTRALIDAD (accidentes SBS o subasta de siniestro Superbid/VMC) ──
+  // ── SINIESTRALIDAD (accidentes SBS + subasta Superbid/VMC + banderas del historial) ──
   const superbid = by('SUPERBID');
+  const hist = by('HISTORIAL');
+  const histFlags = (data(hist).flags ?? {}) as Record<string, boolean>;
   const sbsAccidentes = sbs?.status === 'ENCONTRADO' ? num(data(sbs).accidentes) : null;
   // La fuente Superbid es un lookup en el índice (DB): ENCONTRADO = la placa salió en una
   // subasta; sus banderas (siniestro/aseguradora/remate) vienen en data.flags.
   const subFound = superbid?.status === 'ENCONTRADO';
-  const subFlags = (data(superbid).flags ?? {}) as Record<string, boolean>;
-  if (sbsAccidentes != null || subFound) {
-    const hasSiniestro = (sbsAccidentes != null && sbsAccidentes > 0) || (subFound && (subFlags.siniestro || subFlags.aseguradora));
-    const pay: SiniestroIndicator = { hasSiniestro: Boolean(hasSiniestro), periodYears: 5 };
+  const subData = data(superbid);
+  const subFlags = (subData.flags ?? {}) as Record<string, boolean>;
+  // El historial registral con aseguradora/remate es una señal DURA de siniestro
+  // (el vehículo fue adjudicado/rematado por una aseguradora tras pérdida total).
+  const histSiniestro = hist?.status === 'ENCONTRADO' && (histFlags.aseguradora || histFlags.remate);
+  // El periodo se acota a la edad del vehículo: decir "últimos 5 años" de un auto
+  // de 2 años no tiene sentido. SBS reporta hasta 5 años; tomamos el menor.
+  const vehYear = num(data(sunarp).year);
+  const genYear = new Date(at).getFullYear();
+  const periodYears = vehYear ? Math.min(5, Math.max(1, genYear - vehYear)) : 5;
+  if (sbsAccidentes != null || subFound || histSiniestro) {
+    const hasSiniestro =
+      (sbsAccidentes != null && sbsAccidentes > 0) ||
+      (subFound && (subFlags.siniestro || subFlags.aseguradora)) ||
+      Boolean(histSiniestro);
+    const auction: AuctionInfo | null = subFound
+      ? {
+          subasta: (subData.subasta as string) ?? null,
+          estado: (subData.estado as string) ?? null,
+          fuente: ((subData.fuente as string) ?? 'SUPERBID').toUpperCase(),
+          tipo: subFlags.siniestro ? 'siniestro' : subFlags.aseguradora ? 'aseguradora' : subFlags.remate ? 'remate' : null,
+          boletaUrl: (subData.boletaUrl as string) ?? null,
+        }
+      : null;
+    const pay: SiniestroIndicator = { hasSiniestro: Boolean(hasSiniestro), periodYears, accidentes: sbsAccidentes, auction };
     src.push({ kind: SectionKind.SINIESTRALIDAD, source: SourceId.SBS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
   } else if (sbs) {
     src.push({ kind: SectionKind.SINIESTRALIDAD, source: SourceId.SBS, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
@@ -107,11 +142,15 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const callao = by('CALLAO_PAPELETAS');
   if (satP || callao) {
     const items: PapeletaItem[] = [];
-    if (satP?.status === 'ENCONTRADO') items.push({ type: 'Infracciones Lima', entity: 'SAT Lima', date: null, amount: 0, status: 'PENDIENTE' });
+    const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
+    if (satP?.status === 'ENCONTRADO') items.push({ type: 'Infracciones Lima', entity: 'SAT Lima', date: null, amount: limaAmt, status: 'PENDIENTE' });
     const callaoAmt = callao?.status === 'ENCONTRADO' ? num(data(callao).total) : 0;
     if (callaoAmt > 0) items.push({ type: 'Papeletas Callao', entity: 'SAT Callao', date: null, amount: callaoAmt, status: 'PENDIENTE' });
     const anyOk = [satP, callao].some((r) => r && r.status !== 'ERROR');
-    const pay: PapeletasPayload = { total: items.length, pendingAmount: callaoAmt, items };
+    const checkedScopes: string[] = [];
+    if (satP && satP.status !== 'ERROR') checkedScopes.push('Lima (SAT)');
+    if (callao && callao.status !== 'ERROR') checkedScopes.push('Callao');
+    const pay: PapeletasPayload = { total: items.length, pendingAmount: Math.round((limaAmt + callaoAmt) * 100) / 100, items, checkedScopes };
     src.push({ kind: SectionKind.PAPELETAS, source: SourceId.SAT, status: anyOk ? SectionStatus.AVAILABLE : SectionStatus.UNAVAILABLE, fetchedAt: at, payload: pay });
   }
 
@@ -119,12 +158,16 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const mtc = by('MTC_CITV');
   if (mtc) {
     if (mtc.status === 'ENCONTRADO') {
-      const certs = ((data(mtc).certificados ?? []) as Array<Record<string, string>>);
+      const md = data(mtc);
+      const certs = ((md.certificados ?? []) as Array<Record<string, string>>);
       const vigente = certs.some((c) => /VIGENTE/i.test(c.estado ?? ''));
       const latest = certs[0];
       const pay: RevisionTecnica = {
         hasValid: vigente, status: vigente ? 'Vigente' : certs.length ? 'Vencida' : null,
         lastInspection: latest?.vigenteDesde ?? null, validUntil: latest?.vigenteHasta ?? null, result: latest?.resultado ?? null,
+        certificate: latest?.nroCertificado ?? null,
+        observaciones: (md.observaciones as string) ?? null,
+        lunasPolarizadas: (md.lunasPolarizadas as string) ?? null,
       };
       src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
     } else {
@@ -132,12 +175,71 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     }
   }
 
-  // ── GRAVÁMENES (banderas del historial registral) ──
-  const hist = by('HISTORIAL');
+  // ── TRANSPORTE (ATU · taxi/transporte) ──
+  const atu = by('ATU');
+  if (atu) {
+    if (atu.status === 'ENCONTRADO' || atu.status === 'SIN_REGISTRO') {
+      const d = data(atu);
+      const detail = [d.titular as string, d.vigenciaHasta ? `vigente hasta ${d.vigenciaHasta as string}` : null]
+        .filter(Boolean)
+        .join(' · ') || null;
+      const pay: TransporteInfo = {
+        isPublicTransport: Boolean(d.isPublicTransport),
+        modality: (d.modalidad as string) ?? null,
+        detail,
+      };
+      src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
+    } else {
+      src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    }
+  }
+
+  // ── GRAVÁMENES + HISTORIAL de transferencias (SPRL + Síguelo) ──
   if (hist?.status === 'ENCONTRADO') {
-    const f = (data(hist).flags ?? {}) as Record<string, boolean>;
-    const pay: GravamenesPayload = { hasLiens: Boolean(f.gravamen || f.embargo), total: 0, items: [] };
-    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
+    const hd = data(hist);
+    // Línea de tiempo de asientos: transferencias, precios y banderas (antes se descartaba).
+    const timeline = (hd.timeline ?? []) as Array<Record<string, unknown>>;
+
+    // Detalle de gravámenes/cargas (acreedor, monto, fecha) desde los asientos del
+    // historial — entrega el valor que prometía "SIGM" sin un portal aparte. `hasLiens`
+    // refleja el estado VIGENTE según SUNARP (flag), no el histórico.
+    const RX_GRAV = /gravamen|garant[ií]a mobiliaria|prenda|hipoteca|embargo|medida cautelar/i;
+    const RX_LEVANT = /levantamiento|cancelaci[oó]n|caducidad/i;
+    const gravItems: GravamenItem[] = timeline
+      .filter((a) => {
+        const f = (a.flags ?? {}) as Record<string, boolean>;
+        return f.gravamen || f.embargo || RX_GRAV.test(String(a.acto ?? ''));
+      })
+      .map((a) => ({
+        type: (a.acto as string) ?? 'Gravamen',
+        creditor: (a.participantes as string) ?? null,
+        amount: moneyOrNull(a.precio ?? a.montoPagado),
+        date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
+        status: RX_LEVANT.test(String(a.acto ?? '')) ? 'LEVANTADO' : 'VIGENTE',
+      }));
+    const grav: GravamenesPayload = {
+      hasLiens: Boolean(histFlags.gravamen || histFlags.embargo),
+      total: gravItems.length,
+      items: gravItems,
+    };
+    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: grav });
+    const titulos = (hd.titulos ?? []) as unknown[];
+    const events: HistorialEvent[] = timeline.map((a) => ({
+      date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
+      act: (a.acto as string) ?? null,
+      title: (a.titulo as string) ?? null,
+      price: (a.precio as string) || (a.montoPagado as string) || null,
+      parties: (a.participantes as string) ?? null,
+    }));
+    const transfers = timeline.filter((a) => /transferencia|compra\s*venta|adjudicaci/i.test(String(a.acto ?? ''))).length;
+    const histPay: HistorialPayload = {
+      totalAsientos: timeline.length,
+      totalTitulos: titulos.length,
+      transfers,
+      flags: { aseguradora: Boolean(histFlags.aseguradora), remate: Boolean(histFlags.remate), financiera: Boolean(histFlags.financiera) },
+      events,
+    };
+    src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
   }
 
   const report = buildReport({ id, plateDisplay: plate, plateNormalized: plate, generatedAt: at, sources: src });

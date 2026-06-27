@@ -14,6 +14,8 @@ import type {
   CapturaIndicator,
   RevisionTecnica,
   GravamenesPayload,
+  HistorialPayload,
+  TransporteInfo,
 } from '@app/shared';
 import {
   formatPlateDisplay,
@@ -351,9 +353,11 @@ function ReportView({ report, cached, onRetry }: { report: Report; cached: boole
         {/* Secciones — desde el catálogo: BASIC con datos, PRO/ULTRA bloqueados */}
         <main className="grid items-start gap-4 sm:grid-cols-2">
           {SECTION_CATALOG.map((entry) => {
-            const locked = TIER_RANK[entry.tier] > TIER_RANK[currentTier as ReportTier];
+            // Las fuentes aún no conectadas (comingSoon) NO se bloquean ni se cobran:
+            // se muestran como "Próximamente" (integridad, ver fuentes-inventario.md).
+            const locked = !entry.comingSoon && TIER_RANK[entry.tier] > TIER_RANK[currentTier as ReportTier];
             const section = sectionByKind(entry.dataKind);
-            const wide = entry.key === 'identidad' || entry.key === 'ia';
+            const wide = entry.key === 'identidad' || entry.key === 'ia' || entry.key === 'historial';
             const needed: 'PRO' | 'ULTRA' = entry.tier === ReportTier.ULTRA ? 'ULTRA' : 'PRO';
             return (
               <CatalogCard
@@ -488,7 +492,11 @@ function CatalogCard({
   children: ReactNode;
 }) {
   const neededName = entry.tier === ReportTier.ULTRA ? 'Ultra' : 'Pro';
-  const action = locked ? (
+  const action = entry.comingSoon ? (
+    <Badge tone="neutral" size="sm" icon="schedule">
+      Próximamente
+    </Badge>
+  ) : locked ? (
     <Badge tone="neutral" size="sm" icon="lock">
       {neededName}
     </Badge>
@@ -590,11 +598,19 @@ function SectionBody({
   }
 
   if (entry.key === 'revision_tecnica') {
-    return section ? <RevisionBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+    return section ? <RevisionBody section={section} vehicle={vehicle} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
   if (entry.key === 'gravamenes') {
     return section ? <GravamenesBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'historial') {
+    return section ? <HistorialBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
+  if (entry.key === 'transporte') {
+    return section ? <TransporteBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
   return <ComingSoon blurb={entry.blurb} />;
@@ -604,7 +620,10 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const p = section.payload as PapeletasPayload | undefined;
   if (!p) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
-  if (p.total === 0) return <StatusLine tone="success" icon="verified">Sin papeletas pendientes registradas</StatusLine>;
+  const dondeTxt = p.checkedScopes && p.checkedScopes.length ? p.checkedScopes.join(' ni ') : 'las jurisdicciones consultadas';
+  if (p.total === 0) {
+    return <StatusLine tone="success" icon="verified">{`Sin papeletas pendientes en ${dondeTxt}`}</StatusLine>;
+  }
   return (
     <div className="flex flex-col gap-3">
       <StatusLine tone="warning" icon="receipt_long">
@@ -620,24 +639,46 @@ function CapturaBody({ section, onRetry }: { section: SectionResult; onRetry: ()
   const c = section.payload as CapturaIndicator | undefined;
   if (!c) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
   return c.hasCapture ? (
-    <StatusLine tone="danger" icon="gavel">Registra orden de captura — verifica con la autoridad</StatusLine>
+    <StatusLine tone="danger" icon="gavel">Registra orden de captura en Lima (SAT) — verifica con la autoridad</StatusLine>
   ) : (
-    <StatusLine tone="success" icon="verified">Sin orden de captura</StatusLine>
+    <StatusLine tone="success" icon="verified">Sin orden de captura registrada en Lima (SAT)</StatusLine>
   );
 }
 
-function RevisionBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; vehicle: Report['vehicle']; onRetry: () => void }) {
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const r = section.payload as RevisionTecnica | undefined;
   if (!r) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  // Los autos particulares NO requieren CITV hasta el 4º año de antigüedad. Si no hay
+  // certificado y el vehículo es nuevo, NO es "vencida": aún no le corresponde.
+  const year = vehicle?.year ?? null;
+  const currentYear = new Date().getFullYear();
+  const noCert = !r.lastInspection && !r.validUntil;
+  const exempt = !r.hasValid && noCert && year != null && currentYear < year + 3;
   return (
     <div className="flex flex-col gap-3">
       {r.hasValid ? (
         <StatusLine tone="success" icon="fact_check">Revisión técnica vigente</StatusLine>
+      ) : exempt ? (
+        <StatusLine tone="success" icon="schedule">
+          {`Aún no requiere revisión técnica (obligatoria desde el 4º año de antigüedad; le correspondería desde ${year! + 3}).`}
+        </StatusLine>
       ) : (
         <StatusLine tone="warning" icon="warning">Revisión técnica vencida o sin registro vigente</StatusLine>
       )}
-      <DefGrid items={[['Estado', r.status], ['Última', r.lastInspection], ['Vence', r.validUntil], ['Resultado', r.result]]} />
+      {/lunas|polariza|oscurec/i.test(r.lunasPolarizadas ?? '') && (
+        <StatusLine tone="warning" icon="dark_mode">Posibles lunas polarizadas (mención en el CITV — verificar)</StatusLine>
+      )}
+      <DefGrid
+        items={[
+          ['Estado', r.status],
+          ['Última', r.lastInspection],
+          ['Vence', r.validUntil],
+          ['Resultado', r.result],
+          ['Certificado', r.certificate],
+          ['Observaciones', r.observaciones],
+        ]}
+      />
     </div>
   );
 }
@@ -646,10 +687,120 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const g = section.payload as GravamenesPayload | undefined;
   if (!g) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
-  return g.hasLiens ? (
-    <StatusLine tone="warning" icon="account_balance">Registra gravamen/carga — el vehículo podría estar en garantía de un crédito</StatusLine>
-  ) : (
-    <StatusLine tone="success" icon="verified">Sin gravámenes ni cargas registradas</StatusLine>
+  const vigentes = g.items.filter((it) => it.status !== 'LEVANTADO');
+  return (
+    <div className="flex flex-col gap-3">
+      {g.hasLiens ? (
+        <StatusLine tone="warning" icon="account_balance">
+          Registra gravamen/carga — el vehículo podría estar en garantía de un crédito
+        </StatusLine>
+      ) : (
+        <StatusLine tone="success" icon="verified">Sin gravámenes ni cargas vigentes</StatusLine>
+      )}
+      {g.hasLiens && g.items.length === 0 && (
+        <p className="font-body text-[13px] text-muted">
+          Detalle (acreedor y monto) no disponible en esta consulta — se obtiene del historial registral (SPRL).
+        </p>
+      )}
+      {(vigentes.length > 0 ? vigentes : g.items).map((it, i) => (
+        <div key={i} className="rounded-lg border border-border bg-surface p-3">
+          <div className="flex items-center justify-between gap-2">
+            <span className="font-body text-[14px] font-semibold text-foreground">{it.type}</span>
+            {it.status === 'LEVANTADO' && (
+              <Badge tone="neutral" size="sm" icon={null}>
+                Levantado
+              </Badge>
+            )}
+          </div>
+          <DefGrid
+            items={[
+              ['Acreedor', it.creditor],
+              ['Monto', it.amount != null ? `S/ ${it.amount.toFixed(2)}` : null],
+              ['Fecha', it.date],
+            ]}
+          />
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const t = section.payload as TransporteInfo | undefined;
+  if (!t) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  return (
+    <div className="flex flex-col gap-3">
+      {t.isPublicTransport ? (
+        <StatusLine tone="warning" icon="local_taxi">
+          Registrado para taxi/transporte — uso intensivo (mayor desgaste)
+        </StatusLine>
+      ) : (
+        <StatusLine tone="success" icon="verified">No figura como taxi/transporte</StatusLine>
+      )}
+      <DefGrid items={[['Modalidad', t.modality], ['Detalle', t.detail]]} />
+    </div>
+  );
+}
+
+function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const h = section.payload as HistorialPayload | undefined;
+  if (!h) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  const flagTxt = [
+    h.flags.aseguradora && 'aseguradora',
+    h.flags.remate && 'remate',
+    h.flags.financiera && 'financiera',
+  ]
+    .filter(Boolean)
+    .join(' · ');
+  // El timeline viene cronológico ascendente; mostramos lo más reciente primero.
+  const events = [...h.events].reverse();
+  const MAX = 12;
+  return (
+    <div className="flex flex-col gap-3">
+      <div className="flex flex-wrap gap-2">
+        <Badge tone="info" size="sm" icon="swap_horiz">
+          {h.transfers} transferencia(s)
+        </Badge>
+        <Badge tone="neutral" size="sm" icon="description">
+          {h.totalAsientos} asiento(s)
+        </Badge>
+      </div>
+      {flagTxt && (
+        <StatusLine tone="warning" icon="flag">
+          Banderas en el historial: {flagTxt}
+        </StatusLine>
+      )}
+      {events.length > 0 ? (
+        <ol className="flex flex-col gap-2.5">
+          {events.slice(0, MAX).map((e, i) => (
+            <li key={i} className="rounded-lg border border-border bg-surface p-3">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-body text-[14px] font-semibold text-foreground">{e.act || 'Asiento registral'}</span>
+                {e.date && <span className="font-mono text-[12px] text-muted">{e.date}</span>}
+              </div>
+              {(e.price || e.parties || e.title) && (
+                <div className="mt-1 flex flex-col gap-0.5">
+                  {e.price && (
+                    <span className="font-body text-[13px] text-foreground">
+                      Precio: <strong>{e.price}</strong>
+                    </span>
+                  )}
+                  {e.parties && <span className="font-body text-[13px] text-muted">{e.parties}</span>}
+                  {e.title && <span className="font-mono text-[11px] text-slate-400">{e.title}</span>}
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+      ) : (
+        <p className="font-body text-sm text-muted">Sin asientos detallados disponibles.</p>
+      )}
+      {events.length > MAX && (
+        <p className="font-body text-xs text-muted">+{events.length - MAX} asiento(s) más en el historial.</p>
+      )}
+    </div>
   );
 }
 
@@ -692,10 +843,47 @@ function SiniestroBody({ section, onRetry }: { section: SectionResult; onRetry: 
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const s = section.payload as SiniestroIndicator | undefined;
   if (!s) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
-  return s.hasSiniestro ? (
-    <StatusLine tone="danger" icon="car_crash">Registra siniestralidad (últimos {s.periodYears} años)</StatusLine>
-  ) : (
-    <StatusLine tone="success" icon="verified">Sin siniestros registrados</StatusLine>
+  return (
+    <div className="flex flex-col gap-3">
+      {(() => {
+        const periodo = s.periodYears === 1 ? 'el último año' : `los últimos ${s.periodYears} años`;
+        return s.hasSiniestro ? (
+          <StatusLine tone="warning" icon="build">
+            Registra siniestralidad en {periodo} — se recomienda una inspección exhaustiva para verificar reparaciones.
+          </StatusLine>
+        ) : (
+          <StatusLine tone="success" icon="verified">Sin siniestros registrados en {periodo}</StatusLine>
+        );
+      })()}
+      {s.accidentes != null && s.accidentes > 0 && (
+        <p className="font-body text-sm text-muted">{s.accidentes} accidente(s) reportado(s) al SOAT (SBS).</p>
+      )}
+      {s.auction && (
+        <div className="rounded-lg border border-warning/40 bg-warning-bg p-3">
+          <p className="flex items-center gap-1.5 font-body text-[13px] font-bold text-warning-fg">
+            <Icon name="gavel" className="text-[16px]" />
+            Apareció en subasta{s.auction.fuente ? ` (${s.auction.fuente})` : ''}
+            {s.auction.tipo ? ` · ${s.auction.tipo}` : ''}
+          </p>
+          {s.auction.subasta && (
+            <p className="mt-0.5 font-body text-[13px] text-foreground">
+              {s.auction.subasta}
+              {s.auction.estado ? ` — ${s.auction.estado}` : ''}
+            </p>
+          )}
+          {s.auction.boletaUrl && (
+            <a
+              href={s.auction.boletaUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="mt-1 inline-flex items-center gap-1 font-body text-[13px] font-semibold text-primary hover:underline"
+            >
+              <Icon name="description" className="text-[16px]" /> Ver boleta del lote
+            </a>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 

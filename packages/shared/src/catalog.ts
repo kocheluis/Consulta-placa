@@ -30,6 +30,12 @@ export interface SectionCatalogEntry {
   dataKind: SectionKind | null;
   /** Resumen de qué entrega (para slots aún sin dato). */
   blurb: string;
+  /**
+   * true = la fuente aún NO está conectada en producción: se muestra como
+   * "Próximamente" y NO se ofrece como upsell de pago (integridad: no cobramos
+   * por un dato que todavía no entregamos). Ver `fuentes-inventario.md`.
+   */
+  comingSoon?: boolean;
 }
 
 export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
@@ -126,6 +132,16 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     blurb: 'Prendas, garantías mobiliarias (SIGM) y embargos inscritos: indica si el vehículo está libre o en garantía de un crédito.',
   },
   {
+    key: 'historial',
+    label: 'Historial de transferencias',
+    icon: 'history',
+    tier: ReportTier.PRO,
+    sources: ['SUNARP'],
+    concept: ScoreConcept.LEGAL,
+    dataKind: SectionKind.HISTORIAL,
+    blurb: 'Línea de tiempo de asientos registrales: compraventas, precios declarados, partes y banderas (aseguradora/remate/financiera).',
+  },
+  {
     key: 'multas_electorales',
     label: 'Multas electorales',
     icon: 'how_to_vote',
@@ -134,6 +150,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     concept: ScoreConcept.DEBTS,
     dataKind: SectionKind.MULTAS_ELECTORALES,
     blurb: 'Multas electorales del titular (por DNI, con su consentimiento).',
+    comingSoon: true,
   },
   // ── ULTRA: valorización + IA + odómetro ─────────────────────────────
   {
@@ -145,6 +162,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     concept: ScoreConcept.USAGE,
     dataKind: null,
     blurb: 'Lecturas históricas de kilometraje y coherencia (detección de retroceso).',
+    comingSoon: true,
   },
   {
     key: 'valorizacion',
@@ -155,6 +173,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     concept: null,
     dataKind: null,
     blurb: 'Precio estimado y rango según avisos del mercado en tiempo real.',
+    comingSoon: true,
   },
   {
     key: 'ia',
@@ -165,6 +184,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     concept: null,
     dataKind: null,
     blurb: 'Recomendación de compra, precio justo y banderas, a partir de todo el reporte.',
+    comingSoon: true,
   },
 ];
 

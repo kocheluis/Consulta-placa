@@ -48,10 +48,28 @@ export interface InsurancePolicy {
   policyType?: string | null;
 }
 
+/** Subasta detectada (Superbid/VMC) — señal de siniestro/remate. */
+export interface AuctionInfo {
+  /** Nombre/etiqueta de la subasta, p. ej. "23º SUBASTA RIMAC". */
+  subasta: string | null;
+  /** "abierta" / "cerrada". */
+  estado: string | null;
+  /** Portal de origen: "SUPERBID" / "VMC". */
+  fuente: string | null;
+  /** Tipo derivado de las banderas: "siniestro" / "aseguradora" / "remate". */
+  tipo: string | null;
+  /** URL de la boleta informativa SUNARP del lote (si está). */
+  boletaUrl: string | null;
+}
+
 /** Payload de la sección SINIESTRALIDAD. */
 export interface SiniestroIndicator {
   hasSiniestro: boolean;
   periodYears: number;
+  /** N° de accidentes reportados al SOAT (SBS), si se conoce. */
+  accidentes?: number | null;
+  /** Detalle de la subasta si la placa apareció en un remate de siniestro. */
+  auction?: AuctionInfo | null;
 }
 
 /** Una papeleta/infracción individual. */
@@ -68,6 +86,8 @@ export interface PapeletasPayload {
   total: number;
   pendingAmount: number;
   items: PapeletaItem[];
+  /** Jurisdicciones efectivamente consultadas (p. ej. ["Lima (SAT)", "Callao"]). */
+  checkedScopes?: string[];
 }
 
 /** Payload de la sección CAPTURA (orden de captura SAT). */
@@ -83,6 +103,12 @@ export interface RevisionTecnica {
   lastInspection: string | null;
   validUntil: string | null;
   result: string | null;
+  /** N° del último certificado CITV. */
+  certificate?: string | null;
+  /** Observaciones del CITV (si las hay). */
+  observaciones?: string | null;
+  /** Mención a lunas polarizadas/oscurecidas en el CITV. */
+  lunasPolarizadas?: string | null;
 }
 
 /** Payload de la sección TRANSPORTE (ATU — uso como taxi/transporte). */
@@ -117,6 +143,37 @@ export interface GravamenesPayload {
   hasLiens: boolean;
   total: number;
   items: GravamenItem[];
+}
+
+/** Un evento del historial registral (un asiento de SPRL/Síguelo). */
+export interface HistorialEvent {
+  /** Fecha de presentación o del asiento (texto, formato dd/mm/aaaa). */
+  date: string | null;
+  /** Acto registral: "Compraventa", "Garantía mobiliaria", etc. */
+  act: string | null;
+  /** N° de título (AAAA-NNNNNN). */
+  title: string | null;
+  /** Precio declarado del acto (texto, p. ej. "US$ 12,000.00"). */
+  price: string | null;
+  /** Partes intervinientes (comprador/vendedor), texto. */
+  parties: string | null;
+}
+
+/**
+ * Payload de la sección HISTORIAL (SPRL + Síguelo): línea de tiempo de asientos
+ * registrales con transferencias, precios y banderas de riesgo.
+ */
+export interface HistorialPayload {
+  /** N° total de asientos registrales encontrados. */
+  totalAsientos: number;
+  /** N° de títulos. */
+  totalTitulos: number;
+  /** N° de transferencias de propiedad (compraventas/adjudicaciones). */
+  transfers: number;
+  /** Banderas de riesgo halladas en el historial. */
+  flags: { aseguradora: boolean; remate: boolean; financiera: boolean };
+  /** Eventos ordenados cronológicamente (más reciente primero al renderizar). */
+  events: HistorialEvent[];
 }
 
 /**
