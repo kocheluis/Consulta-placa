@@ -359,23 +359,32 @@ export async function runAtu(
     const plateInput = page.locator('input#placa, input[name*="laca" i], input[placeholder*="laca" i], input[formcontrolname*="laca" i]').first();
     // ATU protege la consulta con reCAPTCHA (no captcha de imagen). Hay que resolverlo e
     // inyectar el token; si no, sale "Verificar re-captcha" y el form NO devuelve datos.
-    const getSitekey = async (): Promise<string> => String((await page.evaluate(
-      `(function(){var el=document.querySelector('[data-sitekey]');if(el)return el.getAttribute('data-sitekey')||'';var ifr=document.querySelector('iframe[src*="recaptcha"]');var s=ifr?(ifr.getAttribute('src')||''):'';var m=s.match(/[?&]k=([^&]+)/);return m?m[1]:'';})()`,
-    ).catch(() => '')) || '');
+    // Detecta sitekey y TIPO (v3 = script api.js?render=KEY; v2 = data-sitekey o iframe ?k=KEY).
+    const getRc = async (): Promise<{ key: string; type: string }> => {
+      const raw = String((await page.evaluate(
+        `(function(){var s='',t='';var scr=document.querySelector('script[src*="recaptcha/api.js?render="]');if(scr){var m=(scr.getAttribute('src')||'').match(/render=([^&]+)/);if(m&&m[1]&&m[1]!=='explicit'){s=m[1];t='v3';}}if(!s){var el=document.querySelector('[data-sitekey]');if(el){s=el.getAttribute('data-sitekey')||'';t='v2';}}if(!s){var ifr=document.querySelector('iframe[src*="recaptcha"]');var src=ifr?(ifr.getAttribute('src')||''):'';var mm=src.match(/[?&]k=([^&]+)/);if(mm){s=mm[1];t='v2';}}return s+'|'+t;})()`,
+      ).catch(() => '')) || '|');
+      const parts = raw.split('|');
+      return { key: parts[0] || '', type: parts[1] || '' };
+    };
 
     for (let i = 1; i <= 3; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); await acceptCookies(); await wait(400); }
       await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await plateInput.fill(plate);
-      const sitekey = await getSitekey();
-      if (sitekey) {
+      const rc = await getRc();
+      cap = rc.key ? `${rc.type || 'v?'}:${rc.key.slice(0, 6)}…` : 'sin-sitekey';
+      if (rc.key) {
         try {
-          const token = await solver.solveRecaptchaV2(sitekey, ATU_URL);
-          cap = `recaptcha:${sitekey.slice(0, 8)}…`;
+          const token = rc.type === 'v3'
+            ? await solver.solveRecaptchaV3(rc.key, ATU_URL, 'consultar')
+            : await solver.solveRecaptchaV2(rc.key, ATU_URL);
+          // Inyecta el token donde el form lo lea (textarea estándar) + global por si usa grecaptcha.execute.
           await page.evaluate(
-            `(function(tok){document.querySelectorAll('textarea#g-recaptcha-response,textarea[name="g-recaptcha-response"]').forEach(function(e){e.value=tok;e.style.display='block';});})(${JSON.stringify(token)})`,
+            `(function(tok){document.querySelectorAll('textarea#g-recaptcha-response,textarea[name="g-recaptcha-response"]').forEach(function(e){e.value=tok;e.style.display='block';});window.__atuToken=tok;})(${JSON.stringify(token)})`,
           ).catch(() => {});
-        } catch { /* si falla, saldrá "Verificar re-captcha" → reintenta */ }
+          cap += '+token';
+        } catch { cap += '+solveERR'; /* saldrá "Verificar re-captcha" → reintenta */ }
       }
       await page.locator('button:has-text("Buscar"), button[type="submit"]').first().click().catch(() => {});
       await wait(6000);
