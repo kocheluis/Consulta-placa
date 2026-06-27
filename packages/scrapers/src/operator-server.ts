@@ -247,6 +247,16 @@ const server = createServer(async (req, res) => {
         return sendJson(res, 200, JSON.parse(txt));
       } catch { return sendJson(res, 200, { plate: placa, results: [], missing: true }); }
     }
+    // Reporte NORMALIZADO (lo que ve el cliente): aplica toWebReport a los resultados crudos.
+    if (path === '/api/pedido-webreport' && req.method === 'GET') {
+      const placa = (url.searchParams.get('placa') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!placa) return sendJson(res, 400, { error: 'falta placa' });
+      try {
+        const raw = JSON.parse(await readFile(join(plateDir(placa), 'reporte.json'), 'utf8')) as { generatedAt?: string; results?: OperatorSourceResult[] };
+        const report = toWebReport(placa, raw.results ?? [], raw.generatedAt ?? new Date().toISOString(), placa);
+        return sendJson(res, 200, report);
+      } catch { return sendJson(res, 200, { missing: true }); }
+    }
     if (path === '/api/pedido' && req.method === 'POST') {
       const body = await readBody(req);
       const placa = String(body.placa ?? '').trim();
@@ -549,7 +559,7 @@ function flagBanner(f){if(!f)return'';var b=[];if(f.aseguradora)b.push('ASEGURAD
   if(!b.length)return '<div class="ok-banner">✓ Sin banderas — no pasó por aseguradora ni remate</div>';
   return '<div class="flag-banner">🚩 REVISAR: '+b.join(' · ')+'</div>';}
 function timelineHtml(r){if(!r.data||!r.data.timeline)return'';
-  return flagBanner(r.data.flags)+'<div class="tl">'+r.data.timeline.map(function(a){
+  return flagBanner(r.data.flags)+'<div class="tl">'+r.data.timeline.slice().reverse().map(function(a){
     return '<div class="tl-i"><div class="tl-d">'+esc((a.fechaPresentacion||'').slice(0,10))+'</div>'+
     '<div class="tl-b"><b>'+esc(a.acto||a.tipo||'')+'</b>'+(a.precio?' · <span class="tl-p">'+esc(a.precio)+'</span>':'')+
     (a.formaPago?' · '+esc(a.formaPago):'')+'<div class="tl-o">'+esc((a.participantes||'').slice(0,100))+'</div></div></div>';
@@ -640,7 +650,7 @@ function showTab(t){
   document.getElementById('tab-b-hist').className='tab'+(t==='hist'?' active':'');
   document.getElementById('tab-b-manual').className='tab'+(t==='manual'?' active':'');
 }
-var SELECTED=null, SELECTED_ID=null, HISTSEEN=false;
+var SELECTED=null, SELECTED_ID=null, DTAB='fuentes', HISTSEEN=false;
 function pestado(e){return '<span class="pill p-'+esc(e)+'">'+esc(e)+'</span>';}
 function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.json()}).then(function(list){
   var tb=document.getElementById('histbody');
@@ -660,32 +670,64 @@ function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.j
 }).catch(function(){});}
 function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=0;i<rows.length;i++){rows[i].className=(rows[i].getAttribute('data-placa')===SELECTED)?'sel':'';}}
 function hHeader(pl){return '<h2>'+esc(pl)+' <button class="sec" style="font-size:13px;padding:6px 12px" onclick="requeuePedido()">↻ Re-generar reporte</button></h2>';}
-function selectPedido(pl,id){SELECTED=pl;SELECTED_ID=id;markSel();
-  var d=document.getElementById('pdetail');
-  d.innerHTML=hHeader(pl)+'<div class="pmeta">Cargando…</div>';
+function detailTabs(){return '<div class="tabs" style="margin:10px 0 12px">'+
+  '<button class="tab'+(DTAB==='fuentes'?' active':'')+'" onclick="showDetailTab(\\'fuentes\\')">Fuentes</button>'+
+  '<button class="tab'+(DTAB==='reporte'?' active':'')+'" onclick="showDetailTab(\\'reporte\\')">Reporte al usuario</button></div>';}
+function selectPedido(pl,id){SELECTED=pl;SELECTED_ID=id;DTAB='fuentes';markSel();showDetailTab('fuentes');}
+function showDetailTab(t){DTAB=t;if(t==='reporte')loadWebReport();else loadFuentes();}
+// ── Pestaña FUENTES: tarjetas crudas por fuente (debug) ──
+function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');
+  d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando…</div>';
   fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
     var results=rep.results||[];
-    if(!results.length){return showLiveLogs(pl,rep);}  // sin reporte.json → logs en vivo
+    if(!results.length){return showLiveLogs(pl,rep);}
     var ok=results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
     var err=results.filter(function(x){return x.status==='ERROR'}).length;
-    d.innerHTML=hHeader(pl)+
-      '<div class="pmeta"><span>'+results.length+' fuentes</span>'+
-      '<span style="color:#15803D">'+ok+' ok</span>'+(err?'<span style="color:#B91C1C">'+err+' con error</span>':'')+
-      (rep.generatedAt?'<span>generado '+esc(fmtTime(rep.generatedAt))+'</span>':'')+
-      '</div><div id="hcards" class="cards"></div>';
+    d.innerHTML=hHeader(pl)+detailTabs()+
+      '<div class="pmeta"><span>'+results.length+' fuentes</span><span style="color:#15803D">'+ok+' ok</span>'+(err?'<span style="color:#B91C1C">'+err+' con error</span>':'')+(rep.generatedAt?'<span>generado '+esc(fmtTime(rep.generatedAt))+'</span>':'')+'</div>'+
+      '<div id="hcards" class="cards"></div>';
     renderCards(results, pl, 'hcards', true, 'h');
-  }).catch(function(e){d.innerHTML=hHeader(pl)+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
-// Sin reporte.json (en proceso o pedido viejo): ofrece los logs en vivo por fuente.
-function showLiveLogs(pl,rep){var d=document.getElementById('pdetail');
+  }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
+// ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
+function loadWebReport(){var pl=SELECTED,d=document.getElementById('pdetail');
+  d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando reporte…</div>';
+  fetch('/api/pedido-webreport?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
+    d.innerHTML=hHeader(pl)+detailTabs()+((rep&&!rep.missing)?renderWebReport(rep):'<div class="pmeta">Aún sin reporte consolidado (el pedido no ha terminado).</div>');
+  }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
+function showLiveLogs(pl){var d=document.getElementById('pdetail');
   fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
-    var proc=s.current&&s.current.placa===pl;
-    var srcs=s.autoSources||[];
+    var proc=s.current&&s.current.placa===pl;var srcs=s.autoSources||[];
     var links=srcs.map(function(x){return '<a href="/log/'+encodeURIComponent(pl)+'/'+x+'" target="_blank" style="margin:0 12px 6px 0;display:inline-block;color:#0C6F64">'+esc(x)+'</a>';}).join('');
-    d.innerHTML=hHeader(pl)+
+    d.innerHTML=hHeader(pl)+detailTabs()+
       '<div class="pmeta">'+(proc?('⏳ En proceso · '+(s.current.percent||0)+'% · '+esc(s.current.source||'')):'⚠ aún sin reporte.json (¿en proceso o pedido viejo/otra máquina?)')+'</div>'+
-      '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>'+
-      '<div class="meta">El reporte consolidado aparece al terminar; mientras tanto abre los logs para ver avance/errores.</div>';
-  }).catch(function(){d.innerHTML=hHeader(pl)+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
+      '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
+  }).catch(function(){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
+// Render compacto del reporte normalizado (lo que recibe el cliente).
+var KIND_LABEL={REGISTRAL:'Identidad',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales'};
+function defRows(items){var rows=items.filter(function(x){return x[1]!=null&&x[1]!==''});if(!rows.length)return'';
+  return '<div style="font-size:13px;line-height:1.7">'+rows.map(function(x){return '<div><span style="color:#64748B">'+x[0]+':</span> '+esc(x[1])+'</div>'}).join('')+'</div>';}
+function sectionSummary(s){var p=s.payload;if(s.status!=='AVAILABLE')return '('+String(s.status||'').toLowerCase()+')';if(!p)return '—';
+  switch(s.kind){
+    case 'SEGUROS':return (p.hasActiveSoat?'SOAT vigente':'Sin SOAT vigente')+(p.insurer?' · '+esc(p.insurer):'');
+    case 'SINIESTRALIDAD':return (p.hasSiniestro?'Registra siniestralidad':'Sin siniestros')+(p.auction?' · subasta: '+esc(p.auction.subasta||p.auction.fuente||''):'');
+    case 'PAPELETAS':return (p.total||0)+' concepto(s)'+(p.pendingAmount?' · S/ '+Number(p.pendingAmount).toFixed(2):'');
+    case 'CAPTURA':return p.hasCapture?'CON orden de captura':'Sin orden de captura';
+    case 'REVISION_TECNICA':return (p.hasValid?'Vigente':'Vencida/sin registro')+(p.validUntil?' hasta '+esc(p.validUntil):'');
+    case 'TRANSPORTE':return p.isPublicTransport?('Taxi/transporte: '+esc(p.modality||'sí')+(p.detail?' · '+esc(p.detail):'')):'No figura como taxi';
+    case 'GRAVAMENES':return (p.hasLiens?'Registra gravamen/carga':'Sin gravámenes')+(p.items&&p.items.length?' ('+p.items.length+')':'');
+    case 'HISTORIAL':return (p.transfers||0)+' transferencia(s) · '+(p.totalAsientos||0)+' asientos'+(p.flags&&(p.flags.aseguradora||p.flags.remate)?' · ⚠ banderas':'');
+    default:return '—';
+  }
+}
+function renderWebReport(rep){var v=rep.vehicle,html='';
+  if(v&&v.stolenAlert)html+='<div class="flag-banner">🚩 ALERTA DE ROBO — verificar con SUNARP/PNP</div>';
+  if(v){html+='<div class="card wide"><h3>Identidad del vehículo</h3>'+
+    defRows([['Placa',v.plateDisplay],['Marca',v.brand],['Modelo',v.model],['Año',v.year],['Color',v.color],['Serie',v.serie],['VIN',v.vin],['Motor',v.engineNumber],['Placa anterior',v.platePrevious],['Estado',v.registralStatus],['Sede',v.sede]])+
+    (v.owner?'<div style="margin-top:8px;font-size:13px"><span style="color:#64748B">Propietario(s):</span> '+esc(v.owner.name)+'</div>':'')+'</div>';}
+  var secs=(rep.sections||[]).filter(function(s){return s.kind!=='REGISTRAL'&&s.status!=='COMING_SOON'});
+  html+='<div class="cards">'+secs.map(function(s){return '<div class="card"><h3>'+esc(KIND_LABEL[s.kind]||s.kind)+'</h3><div class="sum">'+sectionSummary(s)+'</div></div>';}).join('')+'</div>';
+  return '<div class="meta" style="margin-bottom:10px">Vista de lo que recibe el cliente. (BASIC: identidad/propietarios/SOAT · PRO/ULTRA: el resto.)</div>'+html;
+}
 function requeuePedido(){if(!SELECTED_ID){alert('Selecciona un pedido');return;}
   log('↻ re-generando pedido '+SELECTED+' (#'+SELECTED_ID+') …');
   fetch('/api/pedido/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SELECTED_ID})})
