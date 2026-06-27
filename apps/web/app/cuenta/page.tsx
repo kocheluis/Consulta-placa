@@ -172,8 +172,15 @@ function ReportRow({ r }: { r: ReportHistoryItem }) {
 
 function AccountView({ account, onLogout }: { account: Account; onLogout: () => void }) {
   const [reports, setReports] = useState<ReportHistoryItem[] | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     getMyReports().then(setReports).catch(() => setReports([]));
+    // ¿Esta cuenta es admin? El servidor decide (ADMIN_EMAILS es server-only);
+    // si lo es, mostramos el acceso al panel de confirmación de pagos Yape.
+    fetch('/api/admin/me')
+      .then((r) => (r.ok ? r.json() : { isAdmin: false }))
+      .then((d) => setIsAdmin(Boolean(d?.isAdmin)))
+      .catch(() => setIsAdmin(false));
   }, []);
 
   const firstName = account.fullName?.trim().split(/\s+/)[0];
@@ -253,6 +260,24 @@ function AccountView({ account, onLogout }: { account: Account; onLogout: () => 
               Cerrar sesión
             </button>
           </div>
+
+          {isAdmin && (
+            <div className="rounded-xl border border-azul-200 bg-azul-50 p-5 shadow-sm">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-azul-100 text-primary">
+                  <Icon name="admin_panel_settings" className="text-[20px]" />
+                </span>
+                <p className="font-heading text-sm font-bold text-foreground">Administración</p>
+              </div>
+              <p className="mb-3 font-body text-[13px] leading-snug text-muted">
+                Confirma o rechaza los pagos por Yape/Plin que están a la espera de validación.
+              </p>
+              <Button variant="primary" size="sm" block href="/admin/pagos" iconRight="arrow_forward">
+                Confirmar pagos Yape
+              </Button>
+            </div>
+          )}
+
           <Link href="/" className="font-body text-sm text-muted hover:text-foreground">
             ← Volver al inicio
           </Link>
