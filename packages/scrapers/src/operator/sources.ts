@@ -379,9 +379,10 @@ export async function runAtu(
           const token = rc.type === 'v3'
             ? await solver.solveRecaptchaV3(rc.key, ATU_URL, 'consultar')
             : await solver.solveRecaptchaV2(rc.key, ATU_URL);
-          // Inyecta el token donde el form lo lea (textarea estándar) + global por si usa grecaptcha.execute.
+          // ATU usa reCAPTCHA v3/invisible: el form llama grecaptcha.execute() al enviar.
+          // Stub-eamos execute/ready para devolver NUESTRO token + rellenamos el textarea.
           await page.evaluate(
-            `(function(tok){document.querySelectorAll('textarea#g-recaptcha-response,textarea[name="g-recaptcha-response"]').forEach(function(e){e.value=tok;e.style.display='block';});window.__atuToken=tok;})(${JSON.stringify(token)})`,
+            `(function(tok){document.querySelectorAll('textarea#g-recaptcha-response,textarea[name="g-recaptcha-response"]').forEach(function(e){e.value=tok;e.style.display='block';});try{window.grecaptcha=window.grecaptcha||{};window.grecaptcha.ready=function(cb){if(cb)cb();};window.grecaptcha.execute=function(){return Promise.resolve(tok);};if(window.grecaptcha.enterprise){window.grecaptcha.enterprise.ready=window.grecaptcha.ready;window.grecaptcha.enterprise.execute=window.grecaptcha.execute;}}catch(e){}window.__atuToken=tok;})(${JSON.stringify(token)})`,
           ).catch(() => {});
           cap += '+token';
         } catch { cap += '+solveERR'; /* saldrá "Verificar re-captcha" → reintenta */ }
@@ -401,8 +402,8 @@ export async function runAtu(
       if (/no\s*registrad/i.test(blob)) {
         return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como taxi/transporte (ATU: NO REGISTRADO)', data: { isPublicTransport: false, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
-      const atu = parseAtuBody(body);
-      return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, ...atu, detalleCampos: fieldVals, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      const atu = parseAtuFields(fieldVals);
+      return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, modalidad: atu.modalidad, estado: atu.estado, titular: atu.titular, detalleCampos: fieldVals, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     return { ...base, status: 'ERROR', summary: 'No se pudo resolver el reCAPTCHA de ATU (o respuesta no reconocida)', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
@@ -411,14 +412,15 @@ export async function runAtu(
   }
 }
 
-function parseAtuBody(body: string): { modalidad: string | null; titular: string | null; marca: string | null; vigenciaHasta: string | null } {
-  const grab = (re: RegExp): string | null => body.match(re)?.[1]?.trim() ?? null;
-  return {
-    modalidad: grab(/Modalidad\s*:?\s*([^\n]{2,60}?)(?=\s{2,}|Marca|Modelo|Placa|Estado|Tarjeta|$)/i),
-    titular: grab(/(?:Titular|Raz[oó]n Social|Nombre|Autorizad[oa])\s*:?\s*([^\n]{2,80}?)(?=\s{2,}|Documento|Ruta|DNI|RUC|$)/i),
-    marca: grab(/Marca\s*:?\s*([^\n]{2,40}?)(?=\s{2,}|Modelo|Placa|$)/i),
-    vigenciaHasta: grab(/(?:Vencimiento|Vigencia|Caducidad|V[aá]lid[oa]\s+hasta|Expira)\s*[^:0-9]*:?\s*([0-9]{2}\/[0-9]{2}\/[0-9]{4})/i),
-  };
+// Los campos del resultado ATU son inputs readonly; parseamos sus VALORES (unidos por ' | ').
+// Ej. real: "SERVICIO DE TAXI EJECUTIVO", "Habilitado hasta 29/09/2026", "GESTIONES Y SERVICIOS … EIRL".
+function parseAtuFields(vals: string): { modalidad: string | null; estado: string | null; titular: string | null } {
+  const arr = vals.split(' | ').map((s) => s.trim()).filter(Boolean);
+  const find = (re: RegExp): string | null => arr.find((v) => re.test(v)) ?? null;
+  const modalidad = find(/taxi|servicio de|transporte|colectivo|escolar|cuna|mercanc/i);
+  const estado = find(/habilitad|no registrad|vencid|suspend|inhabilit/i);
+  const titular = arr.find((v) => /(E\.?I\.?R\.?L|S\.?A\.?C|S\.?R\.?L|SOCIEDAD|SERVICIOS|TRANSPORTES|GESTIONES|S\.?A\b)/i.test(v) && v !== modalidad) ?? null;
+  return { modalidad, estado, titular };
 }
 
 /**

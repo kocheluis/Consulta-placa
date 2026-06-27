@@ -180,9 +180,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   if (atu) {
     if (atu.status === 'ENCONTRADO' || atu.status === 'SIN_REGISTRO') {
       const d = data(atu);
-      const detail = [d.titular as string, d.vigenciaHasta ? `vigente hasta ${d.vigenciaHasta as string}` : null]
-        .filter(Boolean)
-        .join(' · ') || null;
+      const detail = [d.estado as string, d.titular as string].filter(Boolean).join(' · ') || null;
       const pay: TransporteInfo = {
         isPublicTransport: Boolean(d.isPublicTransport),
         modality: (d.modalidad as string) ?? null,
