@@ -345,44 +345,58 @@ export async function runAtu(
 ): Promise<OperatorSourceResult> {
   const t0 = Date.now();
   const base = { source: 'ATU', label: 'ATU · Taxi/transporte', category: 'TRANSPORTE' };
+  const ATU_URL = 'https://soluciones.atu.gob.pe/ConsultaVehiculo';
   try {
-    await page.goto('https://soluciones.atu.gob.pe/ConsultaVehiculo', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto(ATU_URL, { waitUntil: 'networkidle', timeout: 60000 });
     await wait(1500);
     // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
-    await page.locator('button:has-text("Acepto cookies"), button:has-text("Aceptar"), button:has-text("Acepto"), a:has-text("Acepto cookies")').first().click({ timeout: 5000 }).catch(() => {});
+    const acceptCookies = async (): Promise<void> => {
+      await page.locator('button:has-text("Acepto cookies"), button:has-text("Aceptar"), button:has-text("Acepto"), a:has-text("Acepto cookies")').first().click({ timeout: 5000 }).catch(() => {});
+    };
+    await acceptCookies();
     await wait(600);
     let cap = '';
     const plateInput = page.locator('input#placa, input[name*="laca" i], input[placeholder*="laca" i], input[formcontrolname*="laca" i]').first();
-    const capInput = page.locator('input#captcha, input[name*="aptcha" i], input[placeholder*="erifica" i], input[placeholder*="ódigo" i], input[formcontrolname*="aptcha" i]').first();
-    const capImg = page.locator('img[src*="aptcha" i], img[id*="aptcha" i], img[src^="data:image"]').first();
-    const NODATA = /no se (encontr|hall|registr)|no (figura|cuenta|est[aá])|sin (resultados|registro|autorizaci)|no autoriz/i;
-    const OK = /modalidad|tarjeta de circulaci|autorizad|habilitad|raz[oó]n social/i;
+    // ATU protege la consulta con reCAPTCHA (no captcha de imagen). Hay que resolverlo e
+    // inyectar el token; si no, sale "Verificar re-captcha" y el form NO devuelve datos.
+    const getSitekey = async (): Promise<string> => String((await page.evaluate(
+      `(function(){var el=document.querySelector('[data-sitekey]');if(el)return el.getAttribute('data-sitekey')||'';var ifr=document.querySelector('iframe[src*="recaptcha"]');var s=ifr?(ifr.getAttribute('src')||''):'';var m=s.match(/[?&]k=([^&]+)/);return m?m[1]:'';})()`,
+    ).catch(() => '')) || '');
 
-    for (let i = 1; i <= 4; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); }
+    for (let i = 1; i <= 3; i++) {
+      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); await acceptCookies(); await wait(400); }
       await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await plateInput.fill(plate);
-      if (await capImg.count()) {
-        await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
-        await wait(400);
-        if (await capInput.count()) { cap = await readCaptcha(solver, capImg); await capInput.fill(cap); }
+      const sitekey = await getSitekey();
+      if (sitekey) {
+        try {
+          const token = await solver.solveRecaptchaV2(sitekey, ATU_URL);
+          cap = `recaptcha:${sitekey.slice(0, 8)}…`;
+          await page.evaluate(
+            `(function(tok){document.querySelectorAll('textarea#g-recaptcha-response,textarea[name="g-recaptcha-response"]').forEach(function(e){e.value=tok;e.style.display='block';});})(${JSON.stringify(token)})`,
+          ).catch(() => {});
+        } catch { /* si falla, saldrá "Verificar re-captcha" → reintenta */ }
       }
-      await page.locator('button:has-text("Buscar"), button:has-text("Consultar"), button[type="submit"], input[value*="Buscar" i]').first().click().catch(() => {});
-      await wait(4000);
+      await page.locator('button:has-text("Buscar"), button[type="submit"]').first().click().catch(() => {});
+      await wait(6000);
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-      // Captcha rechazado → reintenta.
-      if (/(c[oó]digo|captcha|verificaci)[^]{0,40}(incorrect|inv[aá]lid|err[oó])/i.test(body)) continue;
+      // Los campos del resultado son inputs readonly: sus valores NO salen en innerText.
+      const fieldVals = String((await page.evaluate(
+        `Array.from(document.querySelectorAll('input')).map(function(i){return i.value}).filter(function(v){return v&&v.trim()}).join(' | ')`,
+      ).catch(() => '')) || '');
+      const blob = `${body} | ${fieldVals}`;
+      if (/verificar\s*re-?captcha/i.test(body)) continue; // reCAPTCHA no aceptado → reintenta
+      const done = /consultar otra placa|fecha y hora de consulta/i.test(body); // la búsqueda se completó
+      if (!done) continue;
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-      if (NODATA.test(body) && !OK.test(body)) {
-        return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como taxi/transporte autorizado', data: { isPublicTransport: false, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      if (/no\s*registrad/i.test(blob)) {
+        return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como taxi/transporte (ATU: NO REGISTRADO)', data: { isPublicTransport: false, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
-      if (OK.test(body)) {
-        const atu = parseAtuBody(body);
-        return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, ...atu, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
-      }
+      const atu = parseAtuBody(body);
+      return { ...base, status: 'ENCONTRADO', summary: `Habilitado: ${atu.modalidad ?? 'transporte'}`, data: { isPublicTransport: true, ...atu, detalleCampos: fieldVals, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o respuesta no reconocida (validar selectores ATU)', screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'No se pudo resolver el reCAPTCHA de ATU (o respuesta no reconocida)', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
