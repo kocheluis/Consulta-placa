@@ -172,11 +172,13 @@ NO se reaplica.
   ```
   pm2 stop operador
   sleep 2
-  ss -ltnp | grep 3010        # ¿sigue ocupado? mata al intruso:
-  fuser -k 3010/tcp           # (o: kill <PID de ss>)
+  ss -ltnp | grep 3010        # ¿sigue ocupado? toma el PID y mátalo:
+  kill $(ss -ltnp | grep -oP 'pid=\K[0-9]+' | head -1)   # (fuser no está instalado)
   pm2 start operador
   ss -ltnp | grep 3010        # debe quedar UN solo listener (el de pm2)
   ```
+  Confirma que sirve: `curl -s localhost:3010 | head -c 120` → debe devolver
+  `<!doctype html>…Consola del operador`.
 
 - **"syntax error near unexpected token newline"** → pegaste un `<nombre>`/`<...>` o un
   comentario con caracteres especiales. Usa el nombre literal `operador`.
