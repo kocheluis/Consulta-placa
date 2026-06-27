@@ -688,6 +688,8 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
   const g = section.payload as GravamenesPayload | undefined;
   if (!g) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
   const vigentes = g.items.filter((it) => it.status !== 'LEVANTADO');
+  const list = vigentes.length > 0 ? vigentes : g.items;
+  const MAX = 6;
   return (
     <div className="flex flex-col gap-3">
       {g.hasLiens ? (
@@ -702,7 +704,7 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
           Detalle (acreedor y monto) no disponible en esta consulta — se obtiene del historial registral (SPRL).
         </p>
       )}
-      {(vigentes.length > 0 ? vigentes : g.items).map((it, i) => (
+      {list.slice(0, MAX).map((it, i) => (
         <div key={i} className="rounded-lg border border-border bg-surface p-3">
           <div className="flex items-center justify-between gap-2">
             <span className="font-body text-[14px] font-semibold text-foreground">{it.type}</span>
@@ -721,6 +723,9 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
           />
         </div>
       ))}
+      {list.length > MAX && (
+        <p className="font-body text-xs text-muted">+{list.length - MAX} gravamen(es) más en el historial registral.</p>
+      )}
     </div>
   );
 }

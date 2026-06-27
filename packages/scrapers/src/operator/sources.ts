@@ -160,6 +160,12 @@ export async function runMtcCitv(
       let body = '';
       for (let k = 0; k < 10; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; }
       if (/captcha|c[oó]digo ingresado/i.test(dialog)) continue;
+      // "No se encontró información" = resultado válido: el vehículo NO tiene CITV (p. ej.
+      // auto nuevo, aún no obligatorio). Es SIN_REGISTRO, no un error → captura y no reintentes.
+      if (/no se encontr|no existe|sin (resultado|informaci|registro)/i.test(dialog)) {
+        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        return { ...base, status: 'SIN_REGISTRO', summary: `Sin CITV registrado · MTC: "${dialog.trim().slice(0, 70)}"`, data: { mensaje: dialog.trim(), captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      }
       if (OK.test(body)) {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         const certs = parseMtcCerts(body, plate);

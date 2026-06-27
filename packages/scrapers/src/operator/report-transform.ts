@@ -43,6 +43,13 @@ const moneyOrNull = (v: unknown): number | null => {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 };
 
+/** Colapsa espacios/saltos y recorta a `max` para que el reporte no se descuadre. */
+const clip = (v: unknown, max: number): string | null => {
+  const s = String(v ?? '').replace(/\s+/g, ' ').trim();
+  if (!s) return null;
+  return s.length > max ? `${s.slice(0, max).trim()}…` : s;
+};
+
 export function toWebReport(plate: string, results: OperatorSourceResult[], generatedAt: string, id: string): Report {
   const by = (source: string): OperatorSourceResult | undefined => results.find((r) => r.source === source);
   const data = (r?: OperatorSourceResult): Record<string, unknown> => (r?.data ?? {}) as Record<string, unknown>;
@@ -170,6 +177,11 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         lunasPolarizadas: (md.lunasPolarizadas as string) ?? null,
       };
       src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
+    } else if (mtc.status === 'SIN_REGISTRO') {
+      // No hay CITV (auto nuevo / no obligatorio aún): sección disponible y vacía; la web
+      // decide el mensaje según la antigüedad del vehículo ("aún no requiere" vs "vencida").
+      const pay: RevisionTecnica = { hasValid: false, status: null, lastInspection: null, validUntil: null, result: null };
+      src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
     } else {
       src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     }
@@ -209,8 +221,8 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         return f.gravamen || f.embargo || RX_GRAV.test(String(a.acto ?? ''));
       })
       .map((a) => ({
-        type: (a.acto as string) ?? 'Gravamen',
-        creditor: (a.participantes as string) ?? null,
+        type: clip(a.acto, 60) ?? 'Gravamen',
+        creditor: clip(a.participantes, 90),
         amount: moneyOrNull(a.precio ?? a.montoPagado),
         date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
         status: RX_LEVANT.test(String(a.acto ?? '')) ? 'LEVANTADO' : 'VIGENTE',
@@ -224,10 +236,10 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const titulos = (hd.titulos ?? []) as unknown[];
     const events: HistorialEvent[] = timeline.map((a) => ({
       date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
-      act: (a.acto as string) ?? null,
+      act: clip(a.acto, 80),
       title: (a.titulo as string) ?? null,
-      price: (a.precio as string) || (a.montoPagado as string) || null,
-      parties: (a.participantes as string) ?? null,
+      price: clip(a.precio ?? a.montoPagado, 40),
+      parties: clip(a.participantes, 140),
     }));
     const transfers = timeline.filter((a) => /transferencia|compra\s*venta|adjudicaci/i.test(String(a.acto ?? ''))).length;
     const histPay: HistorialPayload = {
