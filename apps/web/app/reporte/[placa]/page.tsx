@@ -196,7 +196,56 @@ export default function ReportePage() {
     );
   }
 
+  // Sin reporte aún (stub vacío): ofrecer la CONSULTA GRATIS (BASIC) en vez del dashboard vacío.
+  if (!preview && state.report.sections.length === 0 && !state.report.vehicle) {
+    return <FreeConsultaGate placa={placa} onStarted={actualizar} />;
+  }
+
   return <ReportView report={state.report} cached={state.cached} onRetry={actualizar} preview={preview} />;
+}
+
+/* ── Consulta gratis (BASIC): encola el pedido y arranca el polling ─── */
+function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const start = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch('/api/consulta-gratis', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placa }),
+      });
+      const d = (await r.json()) as { ok?: boolean };
+      if (d.ok) {
+        onStarted(); // hay pedido en cola → empieza el polling del reporte
+        return;
+      }
+      setErr('No pudimos iniciar la consulta. Verifica el formato de la placa (ej. ABC-123).');
+    } catch {
+      setErr('Hubo un problema de conexión. Inténtalo de nuevo.');
+    }
+    setLoading(false);
+  };
+  return (
+    <div className="bg-background px-4 py-16 sm:py-24">
+      <StateScreen
+        tone="brand"
+        icon="bolt"
+        title="Consulta gratis"
+        description="Genera gratis la identidad del vehículo, su SOAT y su revisión técnica (toma unos segundos). El historial de dueños, papeletas, orden de captura y gravámenes quedan en el reporte Pro."
+        footer={`Placa ${formatPlateDisplay(placa)}`}
+      >
+        <div className="flex flex-col items-center gap-3">
+          <Button variant="accent" size="lg" icon="bolt" onClick={start} disabled={loading}>
+            {loading ? 'Iniciando…' : 'Generar mi consulta gratis'}
+          </Button>
+          {err && <p className="font-body text-sm text-danger">{err}</p>}
+        </div>
+      </StateScreen>
+    </div>
+  );
 }
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
