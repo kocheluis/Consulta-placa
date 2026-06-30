@@ -7,7 +7,7 @@ import { ReportTier, ScoreConcept, SectionKind } from './enums.js';
  * (`dataKind`) cuando ya está conectada.
  *
  * Modelo de niveles (confirmado jun-2026):
- *  - BASIC  (gratis): SUNARP Consulta Vehicular + SBS SOAT (sin siniestralidad).
+ *  - BASIC  (gratis): SUNARP Consulta Vehicular + SBS SOAT (sin siniestralidad) + MTC revisión técnica.
  *  - PRO            : todo lo demás (SBS, SAT, MTC, SUTRAN, ATU, ONPE…), con score.
  *  - ULTRA          : PRO + valorización de mercado, análisis con IA y odómetro.
  *
@@ -95,7 +95,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     key: 'revision_tecnica',
     label: 'Revisión técnica',
     icon: 'fact_check',
-    tier: ReportTier.PRO,
+    tier: ReportTier.BASIC, // gratis: parte del combo de la consulta gratuita (SUNARP + SOAT + CITV).
     sources: ['MTC'],
     concept: ScoreConcept.USAGE,
     dataKind: SectionKind.REVISION_TECNICA,
