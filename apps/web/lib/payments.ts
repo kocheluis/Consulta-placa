@@ -92,6 +92,32 @@ export async function enqueueReportForPurchase(orderId: string): Promise<void> {
 }
 
 /**
+ * Encola un pedido GRATUITO (tier BASIC) para la consulta gratis: el motor corre solo
+ * SUNARP + SBS(SOAT) + MTC(revisión técnica). Sin pago ni usuario. Dedup por placa: si ya
+ * hay reporte publicado o un pedido en curso para esa placa, no re-encola (se reutiliza).
+ * Devuelve el estado para que la web sepa si ya puede hacer polling del reporte.
+ */
+export async function enqueueFreeBasic(plateRaw: string): Promise<{ ok: boolean; status: 'queued' | 'exists' | 'invalid' }> {
+  const placa = (plateRaw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (placa.length < 6 || placa.length > 7) return { ok: false, status: 'invalid' };
+  try {
+    const sb = createAdminClient();
+    // ¿Ya hay reporte publicado para esa placa? → reutilizar (BASIC es subconjunto).
+    const { data: rep } = await sb.from('reportes').select('placa').eq('placa', placa).maybeSingle();
+    if (rep) return { ok: true, status: 'exists' };
+    // ¿Pedido en curso? → no duplicar.
+    const { data: ped } = await sb
+      .from('pedidos').select('id').eq('placa', placa).in('estado', ['pendiente', 'procesando']).limit(1);
+    if (ped && ped.length) return { ok: true, status: 'exists' };
+    await sb.from('pedidos').insert({ placa, estado: 'pendiente', tier: 'BASIC' });
+    return { ok: true, status: 'queued' };
+  } catch (e) {
+    console.error('[pedidos] enqueue gratis falló:', (e as Error).message);
+    return { ok: false, status: 'invalid' };
+  }
+}
+
+/**
  * Datos de una compra + email del comprador, para notificar (webhook/panel admin,
  * que solo conocen el orderId). Usa el cliente admin (service_role + Auth admin).
  * Devuelve null si la compra no existe o no es de un tier de pago.

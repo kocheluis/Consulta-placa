@@ -27,11 +27,13 @@ export interface Pedido {
   reportPath?: string | null;
   error?: string | null;
   userId?: string | null;
+  /** 'BASIC' = consulta gratuita (fuentes reducidas); 'PRO'/'ULTRA' = reporte de pago (todas). */
+  tier?: string | null;
 }
 
 export interface PedidoQueue {
   kind: 'sqlite' | 'supabase';
-  enqueue(p: { placa: string; whatsapp?: string; email?: string }): Promise<Pedido>;
+  enqueue(p: { placa: string; whatsapp?: string; email?: string; tier?: string }): Promise<Pedido>;
   next(): Promise<Pedido | null>;
   board(): Promise<Pedido[]>;
   /** Historial completo (todos los estados), más recientes primero. */
@@ -75,6 +77,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     estado: r.estado as string, createdAt: r.created_at as string, startedAt: r.started_at as string,
     finishedAt: (r.finished_at as string) ?? null,
     reportPath: r.report_path as string, error: r.error as string, userId: (r.user_id as string) ?? null,
+    tier: (r.tier as string) ?? null,
   });
   const patch = async (id: Pedido['id'], body: Record<string, unknown>) => {
     const r = await fetch(`${base}?id=eq.${id}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
@@ -84,7 +87,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     kind: 'supabase',
     async enqueue(p) {
       const r = await fetch(base, { method: 'POST', headers: { ...headers, Prefer: 'return=representation' },
-        body: JSON.stringify({ placa: p.placa, whatsapp: p.whatsapp ?? null, email: p.email ?? null, estado: 'pendiente' }) });
+        body: JSON.stringify({ placa: p.placa, whatsapp: p.whatsapp ?? null, email: p.email ?? null, tier: p.tier ?? 'PRO', estado: 'pendiente' }) });
       if (!r.ok) throw new Error(`supabase POST ${r.status}: ${await r.text()}`);
       return map((await r.json())[0]);
     },

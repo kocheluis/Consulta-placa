@@ -46,6 +46,10 @@ const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).f
   // 'atu' FUERA del auto: su reCAPTCHA v3 exige score alto (perfil con reputación de Google);
   // ni headless+CapSolver ni Chrome-CDP de perfil nuevo lo pasan. Sigue disponible on-demand.
   ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
+// Fuentes del reporte GRATUITO (pedido tier=BASIC): identidad + SOAT + revisión técnica.
+// Sin SPRL/Síguelo ni el resto → ~30s y casi sin costo. El paywall (stripByTier) hace lo demás.
+const BASIC_SOURCES = process.env.BASIC_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
+  ?? ['sunarp', 'sbs-soat', 'mtc-citv'];
 // Para incrustar el reporte del cliente en la consola (pestaña "Reporte al usuario").
 // WEB_REPORT_URL = base de la web (p. ej. https://placape.vercel.app); el token debe
 // coincidir con OPERATOR_PREVIEW_TOKEN configurado en la web (Vercel).
@@ -153,9 +157,10 @@ async function runJob(job: Job): Promise<void> {
 
 /** Atiende un pedido de la cola: corre el reporte completo y actualiza su estado. */
 async function processPedido(p: Pedido): Promise<void> {
-  console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa}`);
+  const sources = p.tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
+  console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa} · tier=${p.tier ?? 'PRO'} · ${sources.length} fuentes`);
   await queue.setProcessing(p.id);
-  const job: Job = { id: newId(), plate: p.placa, sources: AUTO_SOURCES, results: [], percent: 0, current: AUTO_SOURCES[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false };
+  const job: Job = { id: newId(), plate: p.placa, sources, results: [], percent: 0, current: sources[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false };
   jobs.set(job.id, job);
   currentAutoJobId = job.id;
   try {
