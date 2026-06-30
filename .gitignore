@@ -57,6 +57,12 @@ tmp-design-handoff/
 validacion-fuentes/
 # Base de datos local SQLite (PlacaPe) + boletas guardadas
 data/
+# Copia local de boletas descargadas del VPS (552MB de PDFs) + su análisis
+boletas/
+# Documentos de referencia sueltos (PDF/Word) y locks de Office — no son código
+/*.pdf
+/*.docx
+~$*.docx
 *.db
 *.db-shm
 *.db-wal

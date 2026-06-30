@@ -217,12 +217,12 @@ function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () =
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placa }),
       });
-      const d = (await r.json()) as { ok?: boolean };
+      const d = (await r.json()) as { ok?: boolean; error?: string };
       if (d.ok) {
         onStarted(); // hay pedido en cola → empieza el polling del reporte
         return;
       }
-      setErr('No pudimos iniciar la consulta. Verifica el formato de la placa (ej. ABC-123).');
+      setErr(d.error || 'No pudimos iniciar la consulta. Verifica el formato de la placa (ej. ABC-123).');
     } catch {
       setErr('Hubo un problema de conexión. Inténtalo de nuevo.');
     }

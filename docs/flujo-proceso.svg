@@ -1,0 +1,153 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1560" height="1620" font-family="Helvetica, Arial, sans-serif">
+<rect width="1560" height="1620" fill="#FBFCFD"/>
+<text x="780.0" y="44" font-size="23" fill="#14506B" text-anchor="middle" font-weight="bold">PlacaPe — Flujo del proceso  (consulta → pago → motor/fuentes → reporte → entrega)</text>
+<text x="780.0" y="70" font-size="14" fill="#5b6b76" text-anchor="middle" font-weight="normal">Modelo operador/concierge · Web (Vercel) + Supabase + Motor en VPS de Lima</text>
+<rect x="282" y="88" width="556" height="452" rx="16" fill="#F4F8FE" stroke="#2563EB" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="298" y="78" width="158.6" height="20" rx="10" fill="#2563EB"/>
+<text x="377.3" y="92" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">NUBE · Web (Vercel)</text>
+<rect x="282" y="550" width="556" height="74" rx="16" fill="#F4F8FE" stroke="#2563EB" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="298" y="540" width="314.0" height="20" rx="10" fill="#2563EB"/>
+<text x="455.0" y="554" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">NUBE · Supabase (cola + reportes + auth)</text>
+<rect x="282" y="636" width="556" height="560" rx="16" fill="#EFFBF8" stroke="#0E9E8E" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="298" y="626" width="217.8" height="20" rx="10" fill="#0E9E8E"/>
+<text x="406.9" y="640" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">VPS · Lima (motor operador)</text>
+<rect x="282" y="1206" width="556" height="224" rx="16" fill="#F4F8FE" stroke="#2563EB" stroke-width="2" stroke-dasharray="7 5"/>
+<rect x="298" y="1196" width="158.6" height="20" rx="10" fill="#2563EB"/>
+<text x="377.3" y="1210" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">NUBE · Web (Vercel)</text>
+<rect x="24" y="84" width="250" height="94" rx="10" fill="#FFFFFF" stroke="#9AA4AE" stroke-width="2"/>
+<text x="149" y="108" font-size="12.5" fill="#374151" text-anchor="middle" font-weight="bold">DÓNDE CORRE CADA PASO</text>
+<rect x="40" y="118" width="14" height="14" rx="3" fill="#2563EB"/>
+<text x="62" y="129" font-size="11" fill="#2563EB" text-anchor="start" font-weight="bold">NUBE</text>
+<text x="106" y="129" font-size="10" fill="#5b6b76" text-anchor="start" font-weight="normal">· Vercel · Supabase · CapSolver</text>
+<rect x="40" y="134" width="14" height="14" rx="3" fill="#0E9E8E"/>
+<text x="62" y="145" font-size="11" fill="#0E9E8E" text-anchor="start" font-weight="bold">VPS</text>
+<text x="106" y="145" font-size="10" fill="#5b6b76" text-anchor="start" font-weight="normal">· Lima · motor + DB + índice</text>
+<rect x="40" y="150" width="14" height="14" rx="3" fill="#D97706"/>
+<text x="62" y="161" font-size="11" fill="#D97706" text-anchor="start" font-weight="bold">PC</text>
+<text x="106" y="161" font-size="10" fill="#5b6b76" text-anchor="start" font-weight="normal">· esta PC · backup / reserva</text>
+<rect x="300" y="96" width="520" height="50" rx="12" fill="#EAF2F7" stroke="#14506B" stroke-width="2"/>
+<text x="560.0" y="125.76" font-size="14" fill="#13344A" text-anchor="middle" font-weight="bold">Usuario consulta una PLACA en placape.pe (web · Vercel)</text>
+<polygon points="560.0,173.0 675.0,215 560.0,257.0 445.0,215" fill="#FDF3E3" stroke="#C77700" stroke-width="2"/>
+<text x="560.0" y="219.42" font-size="13" fill="#7a4a00" text-anchor="middle" font-weight="normal">¿Gratis o pago?</text>
+<rect x="300" y="300" width="520" height="50" rx="12" fill="#FDF3E3" stroke="#C77700" stroke-width="2"/>
+<text x="560.0" y="329.76" font-size="14" fill="#7a4a00" text-anchor="middle" font-weight="normal">Compra PRO / ULTRA  →  Checkout</text>
+<rect x="300" y="384" width="520" height="54" rx="12" fill="#FDF3E3" stroke="#C77700" stroke-width="2"/>
+<text x="560.0" y="406.42" font-size="13" fill="#7a4a00" text-anchor="middle" font-weight="normal">Pago confirmado</text>
+<text x="560.0" y="424.42" font-size="13" fill="#7a4a00" text-anchor="middle" font-weight="normal">Yape (admin lo confirma en /admin/pagos)  ·  IziPay (webhook)</text>
+<rect x="300" y="474" width="520" height="54" rx="12" fill="#EAF2F7" stroke="#14506B" stroke-width="2"/>
+<text x="560.0" y="496.42" font-size="13" fill="#13344A" text-anchor="middle" font-weight="normal">La web encola el PEDIDO en Supabase</text>
+<text x="560.0" y="514.4200000000001" font-size="13" fill="#13344A" text-anchor="middle" font-weight="normal">(tabla pedidos · estado: pendiente)</text>
+<rect x="300" y="562" width="520" height="54" rx="12" fill="#EEF1F4" stroke="#6B7280" stroke-width="2"/>
+<text x="560.0" y="584.42" font-size="13" fill="#374151" text-anchor="middle" font-weight="normal">Cola en Supabase  ·  tabla pedidos</text>
+<text x="560.0" y="602.42" font-size="13" fill="#374151" text-anchor="middle" font-weight="normal">pendiente → procesando → listo → entregado</text>
+<rect x="300" y="650" width="520" height="58" rx="12" fill="#E3F6F2" stroke="#0E9E8E" stroke-width="2"/>
+<text x="560.0" y="674.42" font-size="13" fill="#0c4d46" text-anchor="middle" font-weight="bold">Motor del VPS (Lima · proceso operador, motor automático ON)</text>
+<text x="560.0" y="692.42" font-size="13" fill="#0c4d46" text-anchor="middle" font-weight="bold">toma el pedido por orden de llegada  →  procesando</text>
+<rect x="300" y="728" width="520" height="40" rx="8" fill="#E3F6F2" stroke="#0E9E8E" stroke-width="2"/>
+<text x="560.0" y="752.42" font-size="13" fill="#0c4d46" text-anchor="middle" font-weight="bold">PIPELINE DE FUENTES  (1 reporte a la vez · 1 vCPU)</text>
+<rect x="300" y="786" width="520" height="70" rx="12" fill="#F2FBF9" stroke="#16B5A3" stroke-width="2"/>
+<text x="560.0" y="808.08" font-size="12" fill="#0c4d46" text-anchor="middle" font-weight="normal">EN PARALELO:</text>
+<text x="560.0" y="825.08" font-size="12" fill="#0c4d46" text-anchor="middle" font-weight="normal">SUNARP (Chrome CDP · Turnstile pasivo → identidad + sede)</text>
+<text x="560.0" y="842.08" font-size="12" fill="#0c4d46" text-anchor="middle" font-weight="normal">‖  SPRL + Síguelo (historial: dueños, precios, banderas · sin oficina)</text>
+<rect x="300" y="872" width="520" height="64" rx="12" fill="#F2FBF9" stroke="#16B5A3" stroke-width="2"/>
+<text x="560.0" y="899.58" font-size="12" fill="#0c4d46" text-anchor="middle" font-weight="normal">BURST con CapSolver:</text>
+<text x="560.0" y="916.58" font-size="12" fill="#0c4d46" text-anchor="middle" font-weight="normal">SAT captura · SAT papeletas · Callao · MTC (rev. técnica) · SBS (SOAT)</text>
+<rect x="300" y="952" width="520" height="44" rx="12" fill="#F2FBF9" stroke="#16B5A3" stroke-width="2"/>
+<text x="560.0" y="978.08" font-size="12" fill="#0c4d46" text-anchor="middle" font-weight="normal">Superbid  →  lookup en índice (DB)  →  siniestro / remate</text>
+<rect x="300" y="1006" width="520" height="38" rx="8" fill="#F3F4F6" stroke="#B6BBC1" stroke-width="2" stroke-dasharray="4 3"/>
+<text x="560.0" y="1029.08" font-size="12" fill="#9099a1" text-anchor="middle" font-weight="normal">ATU (taxi/transporte) — DESACTIVADO (reCAPTCHA v3 por score)</text>
+<rect x="300" y="1064" width="520" height="48" rx="12" fill="#E3F6F2" stroke="#0E9E8E" stroke-width="2"/>
+<text x="560.0" y="1092.42" font-size="13" fill="#0c4d46" text-anchor="middle" font-weight="normal">Transformación:  toWebReport → buildReport → Report</text>
+<rect x="300" y="1130" width="520" height="54" rx="12" fill="#E3F6F2" stroke="#0E9E8E" stroke-width="2"/>
+<text x="560.0" y="1152.42" font-size="13" fill="#0c4d46" text-anchor="middle" font-weight="normal">Publicación:  publishReport → Supabase (tabla reportes)</text>
+<text x="560.0" y="1170.42" font-size="13" fill="#0c4d46" text-anchor="middle" font-weight="normal">el pedido pasa a  listo</text>
+<rect x="300" y="1218" width="520" height="56" rx="12" fill="#E9F6EE" stroke="#1E7A46" stroke-width="2"/>
+<text x="560.0" y="1241.42" font-size="13" fill="#15532f" text-anchor="middle" font-weight="bold">La web lee  /api/reporte/[placa]</text>
+<text x="560.0" y="1259.42" font-size="13" fill="#15532f" text-anchor="middle" font-weight="bold">stripByTier: recorta las secciones según el NIVEL pagado</text>
+<rect x="300" y="1306" width="520" height="46" rx="12" fill="#E9F6EE" stroke="#1E7A46" stroke-width="2"/>
+<text x="560.0" y="1333.42" font-size="13" fill="#15532f" text-anchor="middle" font-weight="normal">Render del reporte en la web  +  PDF</text>
+<rect x="300" y="1372" width="520" height="46" rx="12" fill="#E9F6EE" stroke="#1E7A46" stroke-width="2"/>
+<text x="560.0" y="1399.42" font-size="13" fill="#15532f" text-anchor="middle" font-weight="normal">Entrega:  link web  +  WhatsApp / correo (futuro)</text>
+<rect x="24" y="188" width="250" height="80" rx="10" fill="#EAF2F7" stroke="#14506B" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="149.0" y="215.74" font-size="11" fill="#13344A" text-anchor="middle" font-weight="normal">GRATIS (BASIC) — en construcción</text>
+<text x="149.0" y="231.74" font-size="11" fill="#13344A" text-anchor="middle" font-weight="normal">SUNARP + SOAT + revisión técnica</text>
+<text x="149.0" y="247.74" font-size="11" fill="#13344A" text-anchor="middle" font-weight="normal">encola un pedido BASIC (sin pago)</text>
+<rect x="24" y="372" width="250" height="60" rx="10" fill="#FDF3E3" stroke="#C77700" stroke-width="2"/>
+<text x="149.0" y="397.74" font-size="11" fill="#13344A" text-anchor="middle" font-weight="normal">Yape: el pago queda PENDIENTE</text>
+<text x="149.0" y="413.74" font-size="11" fill="#13344A" text-anchor="middle" font-weight="normal">hasta que el admin lo confirma</text>
+<text x="1205.0" y="110" font-size="14" fill="#6b7280" text-anchor="middle" font-weight="bold">INFRAESTRUCTURA Y SOPORTE</text>
+<rect x="880" y="786" width="650" height="56" rx="10" fill="#FFFFFF" stroke="#9AA4AE" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="1205.0" y="809.58" font-size="12" fill="#4b5563" text-anchor="middle" font-weight="normal">CapSolver — resuelve captchas (imagen + reCAPTCHA v2/v3).</text>
+<text x="1205.0" y="826.58" font-size="12" fill="#4b5563" text-anchor="middle" font-weight="normal">Costo medido ≈ S/ 0.025 por reporte completo.</text>
+<rect x="880" y="872" width="650" height="60" rx="10" fill="#FFFFFF" stroke="#9AA4AE" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="1205.0" y="897.58" font-size="12" fill="#4b5563" text-anchor="middle" font-weight="normal">Índice Superbid — cron diario (6am) escanea subastas</text>
+<text x="1205.0" y="914.58" font-size="12" fill="#4b5563" text-anchor="middle" font-weight="normal">(RIMAC, financieras…) → guarda placa+boleta+banderas en la DB.</text>
+<rect x="880" y="952" width="650" height="54" rx="10" fill="#FFFFFF" stroke="#9AA4AE" stroke-width="2" stroke-dasharray="5 3"/>
+<text x="1205.0" y="974.58" font-size="12" fill="#4b5563" text-anchor="middle" font-weight="normal">DB local  placape.db (SQLite) + carpeta boletas/ (6,561 placas).</text>
+<text x="1205.0" y="991.58" font-size="12" fill="#4b5563" text-anchor="middle" font-weight="normal">Backup diario local (pm2, 5am).</text>
+<rect x="880" y="1064" width="650" height="354" rx="12" fill="#FFFFFF" stroke="#16B5A3" stroke-width="2"/>
+<text x="1205.0" y="1098" font-size="15" fill="#0c4d46" text-anchor="middle" font-weight="bold">NIVELES DEL REPORTE  (stripByTier)</text>
+<text x="910" y="1134" font-size="12.5" fill="#14506B" text-anchor="start" font-weight="bold">BASIC  (gratis):</text>
+<text x="910" y="1159" font-size="12.5" fill="#13344A" text-anchor="start" font-weight="normal">    identidad · propietarios · SOAT · revisión técnica</text>
+<text x="910" y="1209" font-size="12.5" fill="#0E7C71" text-anchor="start" font-weight="bold">PRO:  todo lo de BASIC +</text>
+<text x="910" y="1234" font-size="12.5" fill="#13344A" text-anchor="start" font-weight="normal">    siniestralidad · papeletas e infracciones · orden de captura</text>
+<text x="910" y="1259" font-size="12.5" fill="#13344A" text-anchor="start" font-weight="normal">    gravámenes / prendas · historial de transferencias</text>
+<text x="910" y="1309" font-size="12.5" fill="#9a6300" text-anchor="start" font-weight="bold">ULTRA:  todo lo de PRO +</text>
+<text x="910" y="1334" font-size="12.5" fill="#13344A" text-anchor="start" font-weight="normal">    valorización de mercado · análisis con IA · odómetro</text>
+<text x="910" y="1384" font-size="12.5" fill="#5b6b76" text-anchor="start" font-weight="normal">Score 0–100 (determinista) + semáforo verde / ámbar / rojo.</text>
+<rect x="894" y="776" width="47.6" height="20" rx="10" fill="#2563EB"/>
+<text x="917.8" y="790" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">NUBE</text>
+<rect x="894" y="862" width="40.2" height="20" rx="10" fill="#0E9E8E"/>
+<text x="914.1" y="876" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">VPS</text>
+<rect x="894" y="942" width="40.2" height="20" rx="10" fill="#0E9E8E"/>
+<text x="914.1" y="956" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">VPS</text>
+<rect x="880" y="1444" width="650" height="104" rx="12" fill="#FFF7EC" stroke="#D97706" stroke-width="2"/>
+<text x="1205.0" y="1475.16" font-size="11.5" fill="#13344A" text-anchor="middle" font-weight="normal">ESTA PC (Windows) — ROL DE BACKUP</text>
+<text x="1205.0" y="1491.66" font-size="11.5" fill="#13344A" text-anchor="middle" font-weight="normal">Copia local de boletas + placape.db (respaldo offsite, descargada hoy).</text>
+<text x="1205.0" y="1508.16" font-size="11.5" fill="#13344A" text-anchor="middle" font-weight="normal">Reserva: correr el operador / IP residencial si el VPS cae.</text>
+<text x="1205.0" y="1524.66" font-size="11.5" fill="#13344A" text-anchor="middle" font-weight="normal">Hoy NO corre ningún proceso en vivo aquí.</text>
+<rect x="894" y="1434" width="32.8" height="20" rx="10" fill="#D97706"/>
+<text x="910.4" y="1448" font-size="11" fill="#ffffff" text-anchor="middle" font-weight="bold">PC</text>
+<line x1="560.0" y1="146" x2="560.0" y2="173.0" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,173.0 554.7804135906653,162.19463477176788 565.2195864093347,162.19463477176788" fill="#5b6b76"/>
+<line x1="560.0" y1="257.0" x2="560.0" y2="300" stroke="#C77700" stroke-width="2.2"/>
+<polygon points="560.0,300 554.7804135906653,289.1946347717679 565.2195864093347,289.1946347717679" fill="#C77700"/>
+<text x="568.0" y="273.5" font-size="12" fill="#C77700" text-anchor="start" font-weight="bold">pago</text>
+<line x1="560.0" y1="350" x2="560.0" y2="384" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,384 554.7804135906653,373.1946347717679 565.2195864093347,373.1946347717679" fill="#5b6b76"/>
+<line x1="560.0" y1="438" x2="560.0" y2="474" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,474 554.7804135906653,463.1946347717679 565.2195864093347,463.1946347717679" fill="#5b6b76"/>
+<line x1="560.0" y1="528" x2="560.0" y2="562" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,562 554.7804135906653,551.1946347717678 565.2195864093347,551.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="616" x2="560.0" y2="650" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,650 554.7804135906653,639.1946347717678 565.2195864093347,639.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="708" x2="560.0" y2="728" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,728 554.7804135906653,717.1946347717678 565.2195864093347,717.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="768" x2="560.0" y2="786" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,786 554.7804135906653,775.1946347717678 565.2195864093347,775.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="856" x2="560.0" y2="872" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,872 554.7804135906653,861.1946347717678 565.2195864093347,861.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="936" x2="560.0" y2="952" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,952 554.7804135906653,941.1946347717678 565.2195864093347,941.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="996" x2="560.0" y2="1064" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,1064 554.7804135906653,1053.1946347717678 565.2195864093347,1053.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="1112" x2="560.0" y2="1130" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,1130 554.7804135906653,1119.1946347717678 565.2195864093347,1119.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="1184" x2="560.0" y2="1218" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,1218 554.7804135906653,1207.1946347717678 565.2195864093347,1207.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="1274" x2="560.0" y2="1306" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,1306 554.7804135906653,1295.1946347717678 565.2195864093347,1295.1946347717678" fill="#5b6b76"/>
+<line x1="560.0" y1="1352" x2="560.0" y2="1372" stroke="#5b6b76" stroke-width="2.2"/>
+<polygon points="560.0,1372 554.7804135906653,1361.1946347717678 565.2195864093347,1361.1946347717678" fill="#5b6b76"/>
+<line x1="445.0" y1="215" x2="274" y2="228.0" stroke="#14506B" stroke-width="2.2"/>
+<polygon points="274,228.0 284.3786059081196,221.976335052151 285.1699437374699,232.38547111514336" fill="#14506B"/>
+<text x="313.5" y="213.5" font-size="12" fill="#14506B" text-anchor="start" font-weight="bold">gratis</text>
+<line x1="149.0" y1="268" x2="300" y2="495.0" stroke="#14506B" stroke-width="2.2" stroke-dasharray="5 3"/>
+<polygon points="300,495.0 289.6695094386983,488.8941859868764 298.3613125116292,483.1124138987153" fill="#14506B"/>
+<line x1="274" y1="402.0" x2="300" y2="411.0" stroke="#C77700" stroke-width="2.2" stroke-dasharray="5 3"/>
+<polygon points="300,411.0 288.0816984872906,412.3978873531688 291.4964621944794,402.53301442129003" fill="#C77700"/>
+<line x1="880" y1="814.0" x2="820" y2="904.0" stroke="#9AA4AE" stroke-width="2.2" stroke-dasharray="5 3"/>
+<polygon points="820,904.0 821.6507798041769,892.114087075949 830.3366966205945,897.9046982868941" fill="#9AA4AE"/>
+<line x1="880" y1="902.0" x2="820" y2="974.0" stroke="#9AA4AE" stroke-width="2.2" stroke-dasharray="5 3"/>
+<polygon points="820,974.0 822.907628901443,962.3575907058937 830.9272236021394,969.0405862898074" fill="#9AA4AE"/>
+</svg>

@@ -92,6 +92,31 @@ export async function enqueueReportForPurchase(orderId: string): Promise<void> {
 }
 
 /**
+ * Rate-limit de la consulta gratuita por IP (anti-abuso). Cuenta los hits de la última
+ * hora para esa IP; si está por debajo del límite, registra el hit y devuelve true.
+ * Fail-open: ante error de DB (o tabla aún sin migrar) devuelve true — NO bloquea a
+ * usuarios legítimos; la protección se activa al aplicar la migración 0007.
+ */
+export async function freeConsultaRateOk(ip: string, limitPerHour = 12): Promise<boolean> {
+  try {
+    const sb = createAdminClient();
+    const since = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+    const { count, error } = await sb
+      .from('free_consulta_hits')
+      .select('id', { count: 'exact', head: true })
+      .eq('ip', ip)
+      .gte('created_at', since);
+    if (error) return true; // tabla no migrada u otro error → no bloquear
+    if ((count ?? 0) >= limitPerHour) return false;
+    await sb.from('free_consulta_hits').insert({ ip });
+    return true;
+  } catch (e) {
+    console.error('[rate] freeConsultaRateOk error (no bloquea):', (e as Error).message);
+    return true;
+  }
+}
+
+/**
  * Encola un pedido GRATUITO (tier BASIC) para la consulta gratis: el motor corre solo
  * SUNARP + SBS(SOAT) + MTC(revisión técnica). Sin pago ni usuario. Dedup por placa: si ya
  * hay reporte publicado o un pedido en curso para esa placa, no re-encola (se reutiliza).
