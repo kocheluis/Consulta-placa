@@ -129,6 +129,15 @@ export default function ReportePage() {
     setUnlocked(preview ? true : getStoredLead() != null);
   }, [preview]);
 
+  // Al quedar listo el reporte, retén ~0.9 s mostrando 100% antes de revelarlo (cierre visual).
+  const [reveal, setReveal] = useState(false);
+  const ready = state.phase === 'done' && !!state.report && (state.report.sections.length > 0 || !!state.report.vehicle);
+  useEffect(() => {
+    if (!ready) { setReveal(false); return; }
+    const t = setTimeout(() => setReveal(true), 900);
+    return () => clearTimeout(t);
+  }, [ready]);
+
   // Sin pipeline PRO: invitación restyleada. (En preview de operador se omite.)
   if (!PRO_ENABLED && !preview) {
     return (
@@ -148,8 +157,8 @@ export default function ReportePage() {
     return <LeadGate placa={placa} ready={state.phase === 'done'} onUnlock={() => setUnlocked(true)} />;
   }
 
-  if (state.phase === 'loading') {
-    return <LoadingView placa={placa} />;
+  if (state.phase === 'loading' || (ready && !reveal)) {
+    return <LoadingView placa={placa} finishing={ready} />;
   }
   if (state.phase === 'error' && state.needsPro) {
     return (
@@ -985,7 +994,40 @@ function ProGate({ placa, mode }: { placa: string; mode: 'soon' | 'required' }) 
   );
 }
 
-function LoadingView({ placa }: { placa: string }) {
+const BUYING_TIPS = [
+  'Verifica que el N° de serie (VIN) del vehículo coincida con el de la tarjeta de propiedad.',
+  'Revisa que no tenga papeletas ni deudas pendientes antes de cerrar el trato.',
+  'Muchos dueños en poco tiempo puede ser una señal de alerta.',
+  'Desconfía de precios muy por debajo del mercado: suelen ocultar problemas.',
+  'Confirma que no tenga orden de captura ni gravámenes vigentes.',
+  'Hazlo revisar por un mecánico de confianza antes de comprar.',
+  'Comprueba que el SOAT y la revisión técnica estén vigentes.',
+  'Si estuvo como taxi o transporte, espera mayor desgaste por uso intensivo.',
+  'Pide el DNI del vendedor y confirma que coincida con el titular registral (SUNARP).',
+  'Nunca pagues por adelantado sin ver el vehículo y los documentos originales.',
+  'Haz la transferencia de propiedad de inmediato para evitar papeletas ajenas.',
+];
+
+function LoadingView({ placa, finishing = false }: { placa: string; finishing?: boolean }) {
+  const [pct, setPct] = useState(4);
+  const [tip, setTip] = useState(() => Math.floor(Math.random() * BUYING_TIPS.length));
+  // Progreso simulado: sube rápido y se acerca a ~96% (asíntota); salta a 100% al llegar el reporte.
+  useEffect(() => {
+    if (finishing) { setPct(100); return; }
+    const start = Date.now();
+    const id = setInterval(() => {
+      const s = (Date.now() - start) / 1000;
+      setPct(Math.min(96, Math.max(4, Math.round(96 * (1 - Math.exp(-s / 20))))));
+    }, 350);
+    return () => clearInterval(id);
+  }, [finishing]);
+  useEffect(() => {
+    const t = setInterval(() => setTip((i) => (i + 1) % BUYING_TIPS.length), 5000);
+    return () => clearInterval(t);
+  }, []);
+  const R = 54;
+  const C = 2 * Math.PI * R;
+  const off = C * (1 - pct / 100);
   return (
     <div className="bg-background">
       <div className="border-b border-border bg-surface">
@@ -996,22 +1038,47 @@ function LoadingView({ placa }: { placa: string }) {
         </div>
       </div>
       <div
-        className="mx-auto grid max-w-[1240px] items-start gap-6 px-4 py-7 sm:px-7 lg:grid-cols-[300px_1fr]"
+        className="mx-auto grid max-w-[560px] place-items-center gap-7 px-4 py-14 sm:py-20"
         aria-busy="true"
         aria-live="polite"
       >
-        <div className="h-44 animate-pulse rounded-xl border border-border bg-surface" />
-        <div className="grid gap-4 sm:grid-cols-2">
-          {[0, 1, 2, 3].map((i) => (
-            <div key={i} className="rounded-xl border border-border bg-surface p-5 shadow-sm">
-              <div className="mb-4 h-5 w-40 animate-pulse rounded bg-slate-200" />
-              <div className="space-y-2">
-                {[0, 1, 2].map((j) => (
-                  <div key={j} className="h-4 w-full animate-pulse rounded bg-slate-100" />
-                ))}
-              </div>
-            </div>
-          ))}
+        {/* Anillo de progreso */}
+        <div className="relative grid place-items-center">
+          <svg width="148" height="148" viewBox="0 0 148 148">
+            <circle cx="74" cy="74" r={R} fill="none" stroke="#E2E8F0" strokeWidth="11" />
+            <circle
+              cx="74"
+              cy="74"
+              r={R}
+              fill="none"
+              stroke="#16B5A3"
+              strokeWidth="11"
+              strokeLinecap="round"
+              strokeDasharray={C}
+              strokeDashoffset={off}
+              transform="rotate(-90 74 74)"
+              style={{ transition: 'stroke-dashoffset 0.4s ease-out' }}
+            />
+          </svg>
+          <div className="absolute flex flex-col items-center">
+            <span className="font-heading text-[34px] font-extrabold leading-none text-foreground">{pct}%</span>
+            <span className="mt-1 font-body text-xs text-muted">Generando</span>
+          </div>
+        </div>
+
+        <div className="text-center">
+          <h2 className="font-heading text-xl font-bold text-foreground">Generando tu reporte…</h2>
+          <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
+            Estamos consultando los portales oficiales (SUNARP, SOAT, revisión técnica y más). Toma unos segundos — no cierres esta pestaña.
+          </p>
+        </div>
+
+        {/* Consejos de compra (rotan) */}
+        <div className="w-full rounded-xl border border-azul-200 bg-azul-50 p-4">
+          <p className="mb-1.5 flex items-center gap-1.5 font-body text-xs font-bold uppercase tracking-wide text-azul-700">
+            <Icon name="lightbulb" className="text-[16px]" /> Consejo al comprar
+          </p>
+          <p key={tip} className="font-body text-[15px] leading-snug text-foreground">{BUYING_TIPS[tip]}</p>
         </div>
       </div>
     </div>
