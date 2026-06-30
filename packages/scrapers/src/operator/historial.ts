@@ -93,18 +93,28 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
   proc.on('error', (e) => log(`spawn: ${e.message}`));
 
-  // ── [1] SUNARP → SEDE (mientras el Chrome SPRL carga/asienta la sesión) ──
+  // ── [1] SUNARP → SEDE en PARALELO ──
+  // La sede SOLO la necesita Síguelo (no el SPRL: este busca por placa sin oficina).
+  // Por eso SUNARP corre EN PARALELO con el login + la búsqueda del SPRL, y su sede se
+  // resuelve recién antes de Síguelo → se solapa el ~24s de SUNARP en vez de bloquear.
+  type SunResult = Awaited<ReturnType<typeof scrapeSunarpViaCdp>>;
   let oficina = (opts.oficina ?? '').toUpperCase();
   let vehiculo: Record<string, unknown> | null = null;
-  if (!oficina) {
-    log('Consulta Vehicular (SUNARP) → sede…');
-    const sun = await scrapeSunarpViaCdp(plate, { shotPath: opts.shotPath ?? `${PROFILE}/_sunarp.png`, log: (m) => log(`sunarp: ${m}`) }).catch(() => null);
+  let sunarpP: Promise<SunResult | null>;
+  if (oficina) {
+    sunarpP = Promise.resolve(null);
+  } else {
+    log('Consulta Vehicular (SUNARP) → sede (en paralelo con el SPRL)…');
+    sunarpP = scrapeSunarpViaCdp(plate, { shotPath: opts.shotPath ?? `${PROFILE}/_sunarp.png`, log: (m) => log(`sunarp: ${m}`) }).catch(() => null);
+  }
+  // Resuelve la sede desde SUNARP (idempotente): Síguelo la necesita y el fallback del SPRL.
+  const ensureSede = async (): Promise<void> => {
+    if (oficina) return;
+    const sun = await sunarpP;
     vehiculo = sun?.data ?? null;
     oficina = ((sun?.data?.sede as string | undefined) ?? '').trim().toUpperCase() || 'LIMA';
     log(`sede=${oficina}`);
-  } else {
-    await wait(7000); // sin SUNARP, dar tiempo a que el Chrome SPRL cargue/asiente
-  }
+  };
 
   try {
     for (let i = 0; i < 20 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${PORT}`); } catch { /* retry */ } }
@@ -162,14 +172,17 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     log('sesión SPRL activa');
 
     // Búsqueda SPRL (con espera del form post-login + reintento si no hay títulos).
-    async function sprlBuscarTitulos(): Promise<string[]> {
+    async function sprlBuscarTitulos(useOficina: boolean): Promise<string[]> {
       await page.goto(PARTIDA, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       await page.locator('nz-select').first().waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await wait(1500);
       await pickNzSelect(page.locator('nz-select').filter({ hasText: /propiedad/i }).first(), page, /propiedad vehicular/i);
       await wait(800);
-      await pickSearchable(page.locator('nz-select').filter({ hasText: /seleccione/i }).first(), page, oficina);
-      await wait(800);
+      // Oficina: opcional. El SPRL busca por placa sin sede; solo se llena en el fallback.
+      if (useOficina && oficina) {
+        await pickSearchable(page.locator('nz-select').filter({ hasText: /seleccione/i }).first(), page, oficina);
+        await wait(800);
+      }
       await page.locator('label.ant-radio-wrapper', { hasText: /^placa$/i }).first().check().catch(() => {});
       await wait(500);
       const num = page.locator('#numero');
@@ -186,8 +199,17 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const bodyText = await page.locator('body').innerText().catch(() => '');
       return [...new Set((bodyText.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
     }
-    let titulos = await sprlBuscarTitulos();
-    if (!titulos.length) { log('búsqueda SPRL vacía → reintento…'); titulos = await sprlBuscarTitulos(); }
+    // Intento RÁPIDO: SPRL por placa SIN oficina (optimización). Si el caller ya dio la
+    // sede, se usa directo. Si viene vacío, resolvemos la sede (SUNARP) y reintentamos
+    // CON oficina (camino antiguo, seguro) → la optimización nunca degrada el resultado.
+    let titulos = await sprlBuscarTitulos(!!oficina);
+    if (!titulos.length) {
+      log('SPRL sin resultados → resuelvo sede (SUNARP) y reintento con oficina…');
+      await ensureSede();
+      titulos = await sprlBuscarTitulos(true);
+      if (!titulos.length) { log('reintento SPRL con oficina…'); titulos = await sprlBuscarTitulos(true); }
+    }
+    await ensureSede(); // Síguelo SIEMPRE necesita la sede
     log(`títulos: ${JSON.stringify(titulos)}`);
 
     // ── [3] Síguelo por cada título → asiento PDF → parser ──

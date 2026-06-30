@@ -7,7 +7,7 @@ import { ReportTier, ScoreConcept, SectionKind } from './enums.js';
  * (`dataKind`) cuando ya está conectada.
  *
  * Modelo de niveles (confirmado jun-2026):
- *  - BASIC  (gratis): SUNARP Consulta Vehicular + APESEG SOAT.
+ *  - BASIC  (gratis): SUNARP Consulta Vehicular + SBS SOAT (sin siniestralidad).
  *  - PRO            : todo lo demás (SBS, SAT, MTC, SUTRAN, ATU, ONPE…), con score.
  *  - ULTRA          : PRO + valorización de mercado, análisis con IA y odómetro.
  *
@@ -65,10 +65,10 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     label: 'SOAT',
     icon: 'health_and_safety',
     tier: ReportTier.BASIC,
-    sources: ['APESEG'],
+    sources: ['SBS'],
     concept: ScoreConcept.INSURANCE,
     dataKind: SectionKind.SEGUROS,
-    blurb: 'Compañía, estado (vigente), inicio/fin, certificado, uso, clase y tipo.',
+    blurb: 'Compañía aseguradora, clase y uso del vehículo, N° de póliza y de certificado, e inicio/fin de vigencia. (La siniestralidad queda en PRO.)',
   },
   // ── PRO: el resto de fuentes ────────────────────────────────────────
   {

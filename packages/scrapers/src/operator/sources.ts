@@ -277,12 +277,43 @@ export async function runSbs(
       if (!OK.test(body)) continue;
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       const accidentes = body.match(/[uú]ltimos 5 a[nñ]os:\s*(\d+)/i)?.[1] ?? null;
-      const compania = body.match(/(R[ií]mac|La Positiva|Pac[ií]fico|Mapfre|Interseguro|Crecer Seguros|Protecta|Qualitas|Vivir|Insur|HDI)[^\n]{0,30}/i)?.[0]?.trim() ?? null;
+      // Tabla "Listado de pólizas SOAT contratadas": extrae cada póliza mapeando por
+      // encabezado (robusto al orden de columnas). String-eval (no función flecha) por
+      // el bug __name de esbuild/tsx al serializar funciones a page.evaluate.
+      const polizas = (await page.evaluate(`(function(){
+        var norm=function(s){return (s||'').replace(/\\s+/g,' ').trim();};
+        var tables=Array.prototype.slice.call(document.querySelectorAll('table'));
+        for(var ti=0;ti<tables.length;ti++){
+          var trs=Array.prototype.slice.call(tables[ti].querySelectorAll('tr'));
+          var head=null;
+          for(var hi=0;hi<trs.length;hi++){var tx=trs[hi].innerText||'';if(/p[oó]liza/i.test(tx)&&/certificado/i.test(tx)){head=trs[hi];break;}}
+          if(!head)continue;
+          var hc=Array.prototype.slice.call(head.querySelectorAll('th,td')).map(function(c){return norm(c.textContent).toLowerCase();});
+          var ix=function(re){for(var i=0;i<hc.length;i++){if(re.test(hc[i]))return i;}return -1;};
+          var ci={compania:ix(/compa/),clase:ix(/clase/),uso:ix(/uso/),poliza:ix(/p[oó]liza/),certificado:ix(/certificado/),inicio:ix(/inicio/),fin:ix(/fin/)};
+          var out=[];
+          for(var ri=0;ri<trs.length;ri++){
+            if(trs[ri]===head)continue;
+            var cells=Array.prototype.slice.call(trs[ri].querySelectorAll('td')).map(function(c){return norm(c.textContent);});
+            if(cells.length<4)continue;
+            var g=function(i){return (i>=0&&i<cells.length)?cells[i]:'';};
+            var row={compania:g(ci.compania),clase:g(ci.clase),uso:g(ci.uso),poliza:g(ci.poliza),certificado:g(ci.certificado),inicio:g(ci.inicio),fin:g(ci.fin)};
+            if(row.compania||row.poliza)out.push(row);
+          }
+          return out;
+        }
+        return [];
+      })()`)) as Array<Record<string, string>>;
+      // Vigente = póliza con "fin de vigencia" más reciente (≥ hoy = activa).
+      const toTs = (d?: string): number => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d ?? ''); return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0; };
+      const soat = polizas.slice().sort((a, b) => toTs(b.fin) - toTs(a.fin))[0] ?? null;
+      const vigente = soat ? toTs(soat.fin) >= Date.now() - 864e5 : false;
+      const compania = soat?.compania ?? body.match(/(R[ií]mac|La Positiva|Pac[ií]fico|Mapfre|Interseguro|Crecer Seguros|Protecta|Qualitas|Vivir|Insur|HDI)[^\n]{0,30}/i)?.[0]?.trim() ?? null;
       return {
         ...base,
         status: 'ENCONTRADO',
-        summary: `${accidentes ?? '?'} accidente(s) SOAT en 5 años · ${compania ?? 'aseguradora s/d'}`,
-        data: { accidentes, compania, detalle: body.slice(body.search(/resultado de (la )?b[uú]squeda/i), body.search(/resultado de (la )?b[uú]squeda/i) + 600) },
+        summary: `SOAT ${compania ?? 's/d'}${soat?.fin ? ` vig. ${soat.fin}` : ''} · ${accidentes ?? '?'} accid. 5añ`,
+        data: { accidentes, compania, soat, vigente, polizas, detalle: body.slice(body.search(/resultado de (la )?b[uú]squeda/i), body.search(/resultado de (la )?b[uú]squeda/i) + 600) },
         screenshot: shot,
         ms: Date.now() - t0,
       };

@@ -75,7 +75,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     });
   }
 
-  // ── SEGUROS / SOAT (APESEG completo; si no, SBS sólo aseguradora) ──
+  // ── SEGUROS / SOAT (SBS = tabla de pólizas con los 7 campos; APESEG si estuviera) ──
   const apeseg = by('APESEG_SOAT');
   const sbs = by('SBS_SOAT');
   if (apeseg?.status === 'ENCONTRADO') {
@@ -87,8 +87,18 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     };
     src.push({ kind: SectionKind.SEGUROS, source: SourceId.APESEG, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pol });
   } else if (sbs?.status === 'ENCONTRADO') {
-    const d = data(sbs) as Record<string, string>;
-    const pol: InsurancePolicy = { hasActiveSoat: !!d.compania, insurer: d.compania ?? null, policyNumber: null, validFrom: null, validTo: null };
+    const sd = data(sbs);
+    const so = (sd.soat ?? {}) as Record<string, string>;
+    const pol: InsurancePolicy = {
+      hasActiveSoat: Boolean(sd.vigente),
+      insurer: so.compania ?? (sd.compania as string) ?? null,
+      policyNumber: so.poliza ?? null,
+      validFrom: so.inicio ?? null,
+      validTo: so.fin ?? null,
+      certificate: so.certificado ?? null,
+      use: so.uso ?? null,
+      vehicleClass: so.clase ?? null,
+    };
     src.push({ kind: SectionKind.SEGUROS, source: SourceId.SBS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pol });
   } else if (sbs || apeseg) {
     src.push({ kind: SectionKind.SEGUROS, source: SourceId.SBS, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
