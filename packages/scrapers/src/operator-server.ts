@@ -43,7 +43,9 @@ const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL ?? '';
 const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_placa/validacion-fuentes/operador';
 // Fuentes que corre el motor automático por pedido (reporte completo; SPRL incluido).
 const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
-  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
+  // 'atu' FUERA del auto: su reCAPTCHA v3 exige score alto (perfil con reputación de Google);
+  // ni headless+CapSolver ni Chrome-CDP de perfil nuevo lo pasan. Sigue disponible on-demand.
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
 // Para incrustar el reporte del cliente en la consola (pestaña "Reporte al usuario").
 // WEB_REPORT_URL = base de la web (p. ej. https://placape.vercel.app); el token debe
 // coincidir con OPERATOR_PREVIEW_TOKEN configurado en la web (Vercel).

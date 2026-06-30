@@ -34,7 +34,8 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
 };
 
 /** Fuentes que corren por defecto en la ráfaga del operador. */
-export const DEFAULT_SOURCES = ['sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
+// 'atu' fuera del default (su reCAPTCHA v3 rechaza por score; ver riesgos). Queda on-demand.
+export const DEFAULT_SOURCES = ['sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
 
 /** Catálogo para la UI (id + etiqueta). */
 export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boolean }> = [
