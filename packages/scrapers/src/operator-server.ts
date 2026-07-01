@@ -7,8 +7,10 @@ import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
-import { publishReport } from './operator/report-store.js';
+import { publishReport, fetchReport } from './operator/report-store.js';
+import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { metaGet, metaSet } from './db/repo.js';
+import type { Report } from '@app/shared';
 
 // Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, CapSolver…), sin hornearlos
 // en pm2. Es la FUENTE DE VERDAD: el archivo GANA sobre el entorno de pm2 (así un valor
@@ -155,11 +157,72 @@ async function runJob(job: Job): Promise<void> {
   }
 }
 
+// ── REÚSO de reporte (dedup) ────────────────────────────────────────────────────
+// Evita re-correr TODAS las fuentes (~3-10 min) cuando ya hay un reporte reciente del MISMO
+// dueño. Regla (pedida por el usuario): si existe un reporte de nivel suficiente, con menos de
+// REPORT_REUSE_HOURS (48h) y una consulta SUNARP rápida confirma que el propietario NO cambió,
+// se reutiliza lo guardado en DB. Si el dueño cambió (se vendió) o no se pudo verificar → regenera.
+const REUSE_MS = Math.max(0, Number(process.env.REPORT_REUSE_HOURS ?? 48)) * 3600 * 1000;
+// Pedidos que el operador re-generó a mano (botón "Re-generar") → saltan el reúso.
+const forceReprocess = new Set<string>();
+const normOwner = (s: string): string =>
+  s.toUpperCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^A-Z0-9]+/g, ' ').trim();
+/** ¿El reporte guardado corrió las fuentes PRO (no solo el combo BASIC)? Se infiere por secciones. */
+function storedIsFull(report: Report): boolean {
+  return report.sections.some((s) =>
+    s.kind === 'CAPTURA' || s.kind === 'HISTORIAL' || s.kind === 'GRAVAMENES' ||
+    (s.kind === 'PAPELETAS' && s.status !== 'COMING_SOON'));
+}
+/**
+ * Intenta reutilizar el reporte guardado. Devuelve true si lo reutilizó (ya marcó el pedido
+ * `listo`). Precondición: el pedido ya está en 'procesando'.
+ */
+async function tryReuseReport(p: Pedido, tier: string): Promise<boolean> {
+  const existing = await fetchReport(p.placa);
+  const storedOwner = existing?.report?.vehicle?.owner?.name;
+  if (!existing || !storedOwner) return false;
+  // Nivel suficiente: si piden PRO/ULTRA, el guardado debe ser "full" (no solo BASIC).
+  if (tier !== 'BASIC' && !storedIsFull(existing.report)) return false;
+  // Frescura: dentro de la ventana de reúso.
+  const ageMs = Date.now() - new Date(existing.updatedAt).getTime();
+  if (!(ageMs >= 0 && ageMs < REUSE_MS)) return false;
+  // Verifica en SUNARP que el propietario no cambió (consulta rápida, solo identidad).
+  console.log(`[dedup] ${p.placa}: reporte previo de hace ${(ageMs / 3600000).toFixed(1)}h → verificando propietario en SUNARP…`);
+  const dir = plateDir(p.placa);
+  await mkdir(dir, { recursive: true }).catch(() => {});
+  const sun = await scrapeSunarpViaCdp(p.placa, { shotPath: join(dir, 'sunarp.png') }).catch(() => null);
+  if (!sun?.ok || !sun.ownerName) {
+    console.log(`[dedup] ${p.placa}: no pude verificar el propietario (SUNARP) → regenero completo`);
+    return false;
+  }
+  if (normOwner(sun.ownerName) !== normOwner(storedOwner)) {
+    console.log(`[dedup] ${p.placa}: el propietario cambió → regenero completo`);
+    return false;
+  }
+  console.log(`[dedup] ${p.placa}: mismo propietario y < ${REUSE_MS / 3600000}h → REUTILIZO el reporte guardado (no re-corro fuentes)`);
+  killEngineChrome();
+  await queue.setDone(p.id, join(dir, 'reporte.json'));
+  return true;
+}
+
 /** Atiende un pedido de la cola: corre el reporte completo y actualiza su estado. */
 async function processPedido(p: Pedido): Promise<void> {
   const sources = p.tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
-  console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa} · tier=${p.tier ?? 'PRO'} · ${sources.length} fuentes`);
+  const tier = (p.tier as string) ?? 'PRO';
+  const force = forceReprocess.delete(String(p.id));
+  console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa} · tier=${tier}${force ? ' · FORCE' : ''} · ${sources.length} fuentes`);
   await queue.setProcessing(p.id);
+  // Reúso: si ya hay un reporte reciente del mismo dueño, no re-corremos todas las fuentes.
+  if (!force) {
+    try {
+      if (await tryReuseReport(p, tier)) {
+        console.log(`[motor-auto] pedido ${p.id} LISTO (reutilizado, sin re-correr fuentes)`);
+        return;
+      }
+    } catch (e) {
+      console.warn('[dedup] verificación falló, regenero:', (e as Error).message);
+    }
+  }
   const job: Job = { id: newId(), plate: p.placa, sources, results: [], percent: 0, current: sources[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false };
   jobs.set(job.id, job);
   currentAutoJobId = job.id;
@@ -283,7 +346,8 @@ const server = createServer(async (req, res) => {
       const id = body.id;
       if (id === undefined || id === null || id === '') return sendJson(res, 400, { error: 'falta id' });
       await queue.requeue(id as string | number);
-      console.log(`[cola] pedido ${id} re-encolado por el operador`);
+      forceReprocess.add(String(id)); // re-generación manual → salta el reúso (datos frescos sí o sí)
+      console.log(`[cola] pedido ${id} re-encolado por el operador (force: regenera sin reúso)`);
       return sendJson(res, 200, { ok: true });
     }
 

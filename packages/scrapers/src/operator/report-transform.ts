@@ -224,21 +224,32 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // historial — entrega el valor que prometía "SIGM" sin un portal aparte. `hasLiens`
     // refleja el estado VIGENTE según SUNARP (flag), no el histórico.
     const RX_GRAV = /gravamen|garant[ií]a mobiliaria|prenda|hipoteca|embargo|medida cautelar/i;
-    const RX_LEVANT = /levantamiento|cancelaci[oó]n|caducidad/i;
+    // Un asiento LEVANTA/cancela la carga. Se busca en acto Y participantes: el motivo suele
+    // ir en participantes ("Cancelación a solicitud del Acreedor") y el acto a veces dice
+    // "que se cancela" (por eso `cancela\w*`, no solo "cancelación").
+    const RX_LEVANT = /cancela|levantamiento|caduc|extinci[oó]n|liberaci[oó]n/i;
     const gravItems: GravamenItem[] = timeline
       .filter((a) => {
         const f = (a.flags ?? {}) as Record<string, boolean>;
         return f.gravamen || f.embargo || RX_GRAV.test(String(a.acto ?? ''));
       })
-      .map((a) => ({
-        type: clip(a.acto, 60) ?? 'Gravamen',
-        creditor: clip(a.participantes, 90),
-        amount: moneyOrNull(a.precio ?? a.montoPagado),
-        date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
-        status: RX_LEVANT.test(String(a.acto ?? '')) ? 'LEVANTADO' : 'VIGENTE',
-      }));
+      .map((a) => {
+        const hay = `${a.acto ?? ''} ${a.participantes ?? ''}`;
+        return {
+          type: clip(a.acto, 60) ?? 'Gravamen',
+          creditor: clip(a.participantes, 90),
+          amount: moneyOrNull(a.precio ?? a.montoPagado),
+          date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
+          status: RX_LEVANT.test(hay) ? 'LEVANTADO' : 'VIGENTE',
+        } as GravamenItem;
+      });
+    // Solo hay carga VIGENTE si las constituciones superan a las cancelaciones/levantamientos.
+    // Si el único evento de garantía mobiliaria es su cancelación → el vehículo quedó LIBRE
+    // (bandera verde), aunque el texto siga mencionando "garantía mobiliaria".
+    const gravVigentes = gravItems.filter((it) => it.status !== 'LEVANTADO').length;
+    const gravLevantados = gravItems.filter((it) => it.status === 'LEVANTADO').length;
     const grav: GravamenesPayload = {
-      hasLiens: Boolean(histFlags.gravamen || histFlags.embargo),
+      hasLiens: gravVigentes > gravLevantados,
       total: gravItems.length,
       items: gravItems,
     };

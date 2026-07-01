@@ -882,6 +882,7 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
   const g = section.payload as GravamenesPayload | undefined;
   if (!g) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
   const vigentes = g.items.filter((it) => it.status !== 'LEVANTADO');
+  const levantados = g.items.filter((it) => it.status === 'LEVANTADO');
   const list = vigentes.length > 0 ? vigentes : g.items;
   const MAX = 6;
   return (
@@ -889,6 +890,10 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
       {g.hasLiens ? (
         <StatusLine tone="warning" icon="account_balance">
           Registra gravamen/carga — el vehículo podría estar en garantía de un crédito
+        </StatusLine>
+      ) : levantados.length > 0 ? (
+        <StatusLine tone="success" icon="verified">
+          Garantía mobiliaria cancelada — el vehículo quedó libre de esa carga
         </StatusLine>
       ) : (
         <StatusLine tone="success" icon="verified">Sin gravámenes ni cargas vigentes</StatusLine>
