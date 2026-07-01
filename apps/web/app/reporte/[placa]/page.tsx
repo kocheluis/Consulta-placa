@@ -951,10 +951,10 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const h = section.payload as HistorialPayload | undefined;
   if (!h) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
-  const flagTxt = [
+  // Banderas DURAS (siniestro/pérdida total): aseguradora o casa de remate → alerta.
+  const hardTxt = [
     h.flags.aseguradora && 'aseguradora',
     h.flags.remate && 'remate',
-    h.flags.financiera && 'financiera',
   ]
     .filter(Boolean)
     .join(' · ');
@@ -971,9 +971,16 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
           {h.totalAsientos} asiento(s)
         </Badge>
       </div>
-      {flagTxt && (
+      {hardTxt && (
         <StatusLine tone="warning" icon="flag">
-          Banderas en el historial: {flagTxt}
+          Banderas en el historial: {hardTxt}
+        </StatusLine>
+      )}
+      {/* "Financiera" es señal BLANDA (el auto tuvo un crédito, muy común): nota informativa,
+          no alerta. El estado vigente del gravamen se ve en la sección de Gravámenes. */}
+      {h.flags.financiera && !hardTxt && (
+        <StatusLine tone="neutral" icon="account_balance">
+          Tuvo financiamiento vehicular en su historial (común). Revisa «Gravámenes / prendas» para el estado vigente.
         </StatusLine>
       )}
       {events.length > 0 ? (

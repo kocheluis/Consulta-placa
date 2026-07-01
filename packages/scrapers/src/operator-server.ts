@@ -163,6 +163,9 @@ async function runJob(job: Job): Promise<void> {
 // REPORT_REUSE_HOURS (48h) y una consulta SUNARP rápida confirma que el propietario NO cambió,
 // se reutiliza lo guardado en DB. Si el dueño cambió (se vendió) o no se pudo verificar → regenera.
 const REUSE_MS = Math.max(0, Number(process.env.REPORT_REUSE_HOURS ?? 48)) * 3600 * 1000;
+// Debajo de esta antigüedad NI SIQUIERA se consulta el dueño: se muestra lo guardado de frente
+// (el auto no cambia de dueño de un día para otro). Entre TRUST y REUSE sí se verifica en SUNARP.
+const TRUST_MS = Math.max(0, Number(process.env.REPORT_TRUST_HOURS ?? 24)) * 3600 * 1000;
 // Pedidos que el operador re-generó a mano (botón "Re-generar") → saltan el reúso.
 const forceReprocess = new Set<string>();
 const normOwner = (s: string): string =>
@@ -186,8 +189,18 @@ async function tryReuseReport(p: Pedido, tier: string): Promise<boolean> {
   // Frescura: dentro de la ventana de reúso.
   const ageMs = Date.now() - new Date(existing.updatedAt).getTime();
   if (!(ageMs >= 0 && ageMs < REUSE_MS)) return false;
-  // Verifica en SUNARP que el propietario no cambió (consulta rápida, solo identidad).
-  console.log(`[dedup] ${p.placa}: reporte previo de hace ${(ageMs / 3600000).toFixed(1)}h → verificando propietario en SUNARP…`);
+  const hrs = (ageMs / 3600000).toFixed(1);
+  const reportPath = join(plateDir(p.placa), 'reporte.json');
+
+  // < TRUST_HOURS (24h): muy reciente → mostrar lo guardado DE FRENTE, sin consultar SUNARP.
+  if (ageMs < TRUST_MS) {
+    console.log(`[dedup] ${p.placa}: reporte de hace ${hrs}h (< ${TRUST_MS / 3600000}h) → REUTILIZO directo, sin verificar dueño`);
+    await queue.setDone(p.id, reportPath);
+    return true;
+  }
+
+  // TRUST..REUSE (24-48h): verifica en SUNARP que el propietario no cambió (consulta rápida).
+  console.log(`[dedup] ${p.placa}: reporte de hace ${hrs}h → verificando propietario en SUNARP…`);
   const dir = plateDir(p.placa);
   await mkdir(dir, { recursive: true }).catch(() => {});
   const sun = await scrapeSunarpViaCdp(p.placa, { shotPath: join(dir, 'sunarp.png') }).catch(() => null);
@@ -201,7 +214,7 @@ async function tryReuseReport(p: Pedido, tier: string): Promise<boolean> {
   }
   console.log(`[dedup] ${p.placa}: mismo propietario y < ${REUSE_MS / 3600000}h → REUTILIZO el reporte guardado (no re-corro fuentes)`);
   killEngineChrome();
-  await queue.setDone(p.id, join(dir, 'reporte.json'));
+  await queue.setDone(p.id, reportPath);
   return true;
 }
 
