@@ -45,21 +45,33 @@ export async function POST(request: Request) {
     }
   }
 
-  // 1) Guardar el lead (si el admin está configurado). No bloquea la UX si falla.
+  const placaNorm = plate.replace(/[^A-Z0-9]/g, '');
+  let reportReady = false;
+
+  // 1) Guardar el lead + ver si el reporte YA está listo (para no mandar correo prematuro).
   if (isAdminConfigured) {
+    const admin = createAdminClient();
     try {
-      const admin = createAdminClient();
       await admin.from('leads').insert({ plate, email, whatsapp, source: 'report_gate', user_id: userId });
     } catch {
       /* no romper por un fallo de registro */
     }
+    try {
+      const { data: rep } = await admin.from('reportes').select('placa').eq('placa', placaNorm).maybeSingle();
+      reportReady = !!rep;
+    } catch { /* ignorar */ }
   }
 
-  // 2) Enviar el reporte por correo (enlace). sendEmail nunca lanza; si falta
-  //    RESEND_API_KEY devuelve {skipped:true} y seguimos.
-  const reportUrl = `${SITE_URL}/reporte/${encodeURIComponent(plate)}`;
-  const { subject, html } = reportReadyEmail({ plate, reportUrl });
-  const mail = await sendEmail({ to: email, subject, html });
+  // 2) Enviar el reporte por correo SOLO si ya está listo (caché). Si aún se genera, el motor
+  //    del VPS enviará el correo al terminar (vía /api/notify-ready) → evita correo prematuro
+  //    o duplicado. sendEmail nunca lanza; sin RESEND_API_KEY devuelve {skipped:true}.
+  let emailed = false;
+  if (reportReady) {
+    const reportUrl = `${SITE_URL}/reporte/${encodeURIComponent(plate)}`;
+    const { subject, html } = reportReadyEmail({ plate, reportUrl });
+    const mail = await sendEmail({ to: email, subject, html });
+    emailed = mail.ok;
+  }
 
-  return NextResponse.json({ ok: true, emailed: mail.ok });
+  return NextResponse.json({ ok: true, emailed });
 }

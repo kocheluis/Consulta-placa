@@ -218,6 +218,26 @@ async function tryReuseReport(p: Pedido, tier: string): Promise<boolean> {
   return true;
 }
 
+/**
+ * ENTREGA: avisa a la web que el reporte de este pedido quedó listo → correo + WhatsApp al
+ * cliente (la web resuelve el contacto y las plantillas). Marca el pedido 'entregado' si el
+ * aviso salió. No-op si falta WEB_REPORT_URL / OPERATOR_PREVIEW_TOKEN. Nunca rompe el flujo.
+ */
+async function notifyReady(p: Pedido, tier: string): Promise<void> {
+  if (!WEB_REPORT_URL || !OPERATOR_PREVIEW_TOKEN) return;
+  try {
+    const r = await fetch(`${WEB_REPORT_URL}/api/notify-ready`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'x-operator-token': OPERATOR_PREVIEW_TOKEN },
+      body: JSON.stringify({ placa: p.placa, email: p.email ?? undefined, whatsapp: p.whatsapp ?? undefined, tier }),
+    });
+    console.log(`[entrega] notify-ready ${p.placa}: HTTP ${r.status}`);
+    if (r.ok) await queue.setDelivered(p.id);
+  } catch (e) {
+    console.warn('[entrega] notify-ready falló (no bloquea):', (e as Error).message);
+  }
+}
+
 /** Atiende un pedido de la cola: corre el reporte completo y actualiza su estado. */
 async function processPedido(p: Pedido): Promise<void> {
   const sources = p.tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
@@ -230,6 +250,7 @@ async function processPedido(p: Pedido): Promise<void> {
     try {
       if (await tryReuseReport(p, tier)) {
         console.log(`[motor-auto] pedido ${p.id} LISTO (reutilizado, sin re-correr fuentes)`);
+        await notifyReady(p, tier);
         return;
       }
     } catch (e) {
@@ -254,6 +275,8 @@ async function processPedido(p: Pedido): Promise<void> {
         const pub = await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: String(p.id) });
         console.log(`[reportes] publicado para ${p.placa}: ${pub ? 'sí' : 'no (¿Supabase sin configurar?)'}`);
       } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
+      // Entrega al cliente: correo + WhatsApp con el enlace del reporte listo.
+      await notifyReady(p, tier);
       if (N8N_WEBHOOK) {
         try {
           await fetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },
