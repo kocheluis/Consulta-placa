@@ -260,6 +260,13 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       events,
     };
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
+  } else if (hist) {
+    // El historial (SPRL) corrió pero FALLÓ (bloqueo por IP, Turnstile, etc.). Antes se
+    // omitían estas secciones → la web las pintaba como "Próximamente" (engañoso: sí las
+    // ofrecemos, solo que esta consulta falló). Emitirlas como UNAVAILABLE hace que la web
+    // muestre "no disponible / reintentar" en su lugar. Ver riesgo de UX de fuente fallida.
+    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   }
 
   const report = buildReport({ id, plateDisplay: plate, plateNormalized: plate, generatedAt: at, sources: src });

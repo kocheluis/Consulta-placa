@@ -1,7 +1,7 @@
 'use client';
 
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import type {
   Report,
@@ -55,12 +55,6 @@ const SCORE_TO_TONE: Record<string, Tone> = {
   [ScoreLevel.BAD]: 'danger',
   [ScoreLevel.UNKNOWN]: 'neutral',
 };
-const TIER_NAME: Record<string, string> = {
-  [ReportTier.BASIC]: 'Gratis',
-  [ReportTier.PRO]: 'Pro',
-  [ReportTier.ULTRA]: 'Ultra',
-};
-
 /* ── Helpers de UI ────────────────────────────────────────────────── */
 function DefGrid({ items }: { items: [string, string | null | undefined][] }) {
   const rows = items.filter(([, v]) => v != null && v !== '');
@@ -210,7 +204,15 @@ export default function ReportePage() {
     return <FreeConsultaGate placa={placa} onStarted={actualizar} />;
   }
 
-  return <ReportView report={state.report} cached={state.cached} onRetry={actualizar} preview={preview} />;
+  return (
+    <ReportView
+      report={state.report}
+      cached={state.cached}
+      onRetry={actualizar}
+      preview={preview}
+      generating={state.phase === 'done' && state.generating}
+    />
+  );
 }
 
 /* ── Consulta gratis (BASIC): encola el pedido y arranca el polling ─── */
@@ -258,18 +260,27 @@ function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () =
 }
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
-function ReportView({ report, cached, onRetry, preview }: { report: Report; cached: boolean; onRetry: () => void; preview?: string }) {
+function ReportView({
+  report, cached, onRetry, preview, generating,
+}: {
+  report: Report; cached: boolean; onRetry: () => void; preview?: string; generating: boolean;
+}) {
   const router = useRouter();
   const v = report.vehicle;
   const score = computeScore(report);
-  const sectionByKind = (kind: string | null): SectionResult | undefined =>
-    kind ? report.sections.find((s) => s.kind === kind) : undefined;
 
   // Nivel desbloqueado por el usuario para esta placa (pago por reporte).
   // En preview de operador se fuerza ULTRA para mostrar todas las secciones.
   const [currentTier, setCurrentTier] = useState<Tier>(preview ? 'ULTRA' : 'BASIC');
   const [buying, setBuying] = useState<'PRO' | 'ULTRA' | null>(null);
   const [pendingYape, setPendingYape] = useState<{ tier: 'PRO' | 'ULTRA'; orderId?: string } | null>(null);
+  // Nivel que el usuario acaba de activar: mientras esté seteado, mostramos la pantalla de
+  // carga ("procesado por especialistas") hasta que el motor regenere el reporte completo.
+  const [activating, setActivating] = useState<'PRO' | 'ULTRA' | null>(null);
+  const sawGen = useRef(false);
+  const onRetryRef = useRef(onRetry);
+  onRetryRef.current = onRetry;
+
   useEffect(() => {
     if (preview) { setCurrentTier('ULTRA'); return; }
     getPaidTier(report.placa)
@@ -277,12 +288,50 @@ function ReportView({ report, cached, onRetry, preview }: { report: Report; cach
       .catch(() => {});
   }, [report.placa, preview]);
 
+  // Al activar un nivel, arranca la pantalla de carga y dispara el polling del reporte.
+  const beginActivation = (tier: 'PRO' | 'ULTRA') => {
+    sawGen.current = false;
+    setActivating(tier);
+    onRetryRef.current(); // fuerza una lectura para que aparezca el pedido en curso (generating)
+  };
+
+  // Mientras se activa, sondea el reporte cada 3 s (el motor tarda ~3-10 min en regenerarlo).
+  useEffect(() => {
+    if (!activating) return;
+    const iv = setInterval(() => onRetryRef.current(), 3000);
+    return () => clearInterval(iv);
+  }, [activating]);
+  // Marca que ya vimos el pedido "en proceso" (para no revelar antes de tiempo).
+  useEffect(() => {
+    if (activating && generating) sawGen.current = true;
+  }, [activating, generating]);
+  // Cuando el pedido terminó (arrancó y ya no está generando) → revela el reporte del nuevo nivel.
+  useEffect(() => {
+    if (!activating || !sawGen.current || generating) return;
+    let alive = true;
+    void getPaidTier(report.placa).then((t) => { if (alive) setCurrentTier(t); }).catch(() => {});
+    setActivating(null);
+    onRetryRef.current();
+    return () => { alive = false; };
+  }, [activating, generating, report.placa]);
+  // Salvaguarda: si nunca llegó a "generando" (no se encoló nada) tras ~25 s, revela igual.
+  useEffect(() => {
+    if (!activating) return;
+    const t = setTimeout(() => {
+      if (!sawGen.current) {
+        getPaidTier(report.placa).then(setCurrentTier).catch(() => {});
+        setActivating(null);
+      }
+    }, 25000);
+    return () => clearTimeout(t);
+  }, [activating, report.placa]);
+
   const comprar = async (tier: 'PRO' | 'ULTRA') => {
     setBuying(tier);
     try {
       const res = await buyReport(report.placa, tier);
       if (res.status === 'paid') {
-        setCurrentTier(await getPaidTier(report.placa)); // mock / aprobado al instante
+        beginActivation(tier); // mock / aprobado al instante → a la pantalla de "en proceso"
       } else if (res.redirectUrl) {
         window.location.href = res.redirectUrl; // IziPay real
         return;
@@ -299,13 +348,21 @@ function ReportView({ report, cached, onRetry, preview }: { report: Report; cach
     }
   };
 
-  // Reconsulta el nivel pagado (tras yapear, el usuario pulsa "Verificar").
+  // Reconsulta el nivel pagado (tras yapear, el usuario pulsa "Verificar"). Si ya está pagado,
+  // cierra el modal y arranca la pantalla de "en proceso".
   const verificarPago = async (): Promise<Tier> => {
     const t = await getPaidTier(report.placa);
-    setCurrentTier(t);
-    if (t !== 'BASIC') setPendingYape(null);
+    if (t !== 'BASIC') {
+      setPendingYape(null);
+      beginActivation(t as 'PRO' | 'ULTRA');
+    }
     return t;
   };
+
+  // Mientras se activa un nivel, el reporte se está regenerando → pantalla de carga dedicada.
+  if (activating) {
+    return <LoadingView placa={report.placa} variant="specialists" tier={activating} />;
+  }
 
   const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
   const summary = v ? [v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') : 'Vehículo';
@@ -416,28 +473,11 @@ function ReportView({ report, cached, onRetry, preview }: { report: Report; cach
           )}
         </aside>
 
-        {/* Secciones — desde el catálogo: BASIC con datos, PRO/ULTRA bloqueados */}
-        <main className="grid items-start gap-4 sm:grid-cols-2">
-          {SECTION_CATALOG.map((entry) => {
-            // Las fuentes aún no conectadas (comingSoon) NO se bloquean ni se cobran:
-            // se muestran como "Próximamente" (integridad, ver fuentes-inventario.md).
-            const locked = !entry.comingSoon && TIER_RANK[entry.tier] > TIER_RANK[currentTier as ReportTier];
-            const section = sectionByKind(entry.dataKind);
-            const wide = entry.key === 'identidad' || entry.key === 'ia' || entry.key === 'historial';
-            const needed: 'PRO' | 'ULTRA' = entry.tier === ReportTier.ULTRA ? 'ULTRA' : 'PRO';
-            return (
-              <CatalogCard
-                key={entry.key}
-                entry={entry}
-                locked={locked}
-                wide={wide}
-                busy={buying === needed}
-                onBuy={() => comprar(needed)}
-              >
-                <SectionBody entry={entry} section={section} vehicle={v} onRetry={onRetry} />
-              </CatalogCard>
-            );
-          })}
+        {/* Resultados en 3 paneles apilados: BASIC (gratis) · PRO · ULTRA. */}
+        <main className="flex flex-col gap-6">
+          <TierPanel tierKey={ReportTier.BASIC} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+          <TierPanel tierKey={ReportTier.PRO} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+          <TierPanel tierKey={ReportTier.ULTRA} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
         </main>
       </div>
 
@@ -457,6 +497,150 @@ function ReportView({ report, cached, onRetry, preview }: { report: Report; cach
           onClose={() => setPendingYape(null)}
         />
       )}
+    </div>
+  );
+}
+
+/* ── Panel por nivel (BASIC / PRO / ULTRA) ────────────────────────── */
+const TIER_PANEL_META: Record<string, { name: string; short: string; icon: string; price?: string; desc: string; accent: string }> = {
+  [ReportTier.BASIC]: {
+    name: 'Reporte gratis', short: 'Gratis', icon: 'bolt',
+    desc: 'Identidad del vehículo, propietario, SOAT y revisión técnica.',
+    accent: 'bg-azul-50 text-primary',
+  },
+  [ReportTier.PRO]: {
+    name: 'Reporte Pro', short: 'Pro', icon: 'workspace_premium', price: '15.90',
+    desc: 'Historial de dueños y precios, papeletas, orden de captura, gravámenes y siniestralidad.',
+    accent: 'bg-teal-50 text-teal-700',
+  },
+  [ReportTier.ULTRA]: {
+    name: 'Reporte Ultra', short: 'Ultra', icon: 'auto_awesome', price: '19.90',
+    desc: 'Todo lo de Pro + valorización de mercado, análisis de odómetro y recomendación con IA.',
+    accent: 'bg-violet-50 text-violet-700',
+  },
+};
+
+function TierPanel({
+  tierKey, report, vehicle, currentTier, onActivate, buying, onRetry,
+}: {
+  tierKey: ReportTier;
+  report: Report;
+  vehicle: Report['vehicle'];
+  currentTier: Tier;
+  onActivate: (tier: 'PRO' | 'ULTRA') => void;
+  buying: 'PRO' | 'ULTRA' | null;
+  onRetry: () => void;
+}) {
+  const meta = TIER_PANEL_META[tierKey]!;
+  const entries = SECTION_CATALOG.filter((e) => e.tier === tierKey);
+  const locked = TIER_RANK[tierKey] > TIER_RANK[currentTier as ReportTier];
+  const needed: 'PRO' | 'ULTRA' = tierKey === ReportTier.ULTRA ? 'ULTRA' : 'PRO';
+  const sectionByKind = (kind: string | null): SectionResult | undefined =>
+    kind ? report.sections.find((s) => s.kind === kind) : undefined;
+
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+      {/* Encabezado del panel */}
+      <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+        <div className={`grid h-11 w-11 flex-none place-items-center rounded-xl ${meta.accent}`}>
+          <Icon name={meta.icon} className="text-[24px]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">{meta.name}</h2>
+          <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">{meta.desc}</p>
+        </div>
+        {tierKey === ReportTier.BASIC ? (
+          <Badge tone="success" size="sm" icon="check">Incluido</Badge>
+        ) : locked ? (
+          <Badge tone="neutral" size="sm" icon="lock">{meta.short}</Badge>
+        ) : (
+          <Badge tone="success" size="sm" icon="lock_open">Activo</Badge>
+        )}
+      </div>
+
+      {/* Cuerpo del panel */}
+      <div className="p-5">
+        {locked ? (
+          <TierTeaser
+            entries={entries}
+            priceLabel={meta.price ? `S/ ${meta.price}` : ''}
+            shortName={meta.short}
+            busy={buying === needed}
+            onActivate={() => onActivate(needed)}
+          />
+        ) : (
+          <div className="flex flex-col gap-3">
+            {entries.map((entry) => (
+              <SectionBlock
+                key={entry.key}
+                entry={entry}
+                section={sectionByKind(entry.dataKind)}
+                vehicle={vehicle}
+                onRetry={onRetry}
+              />
+            ))}
+          </div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+/** Teaser de un nivel bloqueado: lista lo que incluye + UN botón para activarlo. */
+function TierTeaser({
+  entries, priceLabel, shortName, busy, onActivate,
+}: {
+  entries: readonly SectionCatalogEntry[];
+  priceLabel: string;
+  shortName: string;
+  busy: boolean;
+  onActivate: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="grid gap-2.5 sm:grid-cols-2">
+        {entries.map((e) => (
+          <div key={e.key} className="flex items-start gap-2.5 rounded-xl border border-border bg-background p-3">
+            <Icon name={e.icon} className="mt-0.5 text-[20px] text-slate-400" />
+            <div className="min-w-0">
+              <p className="font-body text-[14px] font-semibold text-foreground">{e.label}</p>
+              <p className="font-body text-[12.5px] leading-snug text-muted">{e.blurb}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div className="flex flex-col items-center gap-2 rounded-xl border border-dashed border-border bg-background px-4 py-5 text-center">
+        <Button variant="accent" size="lg" icon="lock_open" onClick={onActivate} disabled={busy}>
+          {busy ? 'Procesando…' : `Activar ${shortName}${priceLabel ? ` · ${priceLabel}` : ''}`}
+        </Button>
+        <p className="max-w-sm font-body text-[12.5px] leading-snug text-muted">
+          Al activarlo, nuestros especialistas procesan tu reporte con todas las fuentes oficiales.
+          Estará listo en <strong className="text-foreground">3 a 10 minutos</strong>.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+/** Un bloque de sección dentro de un panel: encabezado (icono + título) + cuerpo real. */
+function SectionBlock({
+  entry, section, vehicle, onRetry,
+}: {
+  entry: SectionCatalogEntry;
+  section?: SectionResult;
+  vehicle: Report['vehicle'];
+  onRetry: () => void;
+}) {
+  return (
+    <div className="rounded-xl border border-border bg-background p-4">
+      <div className="mb-2.5 flex items-center gap-2">
+        <Icon name={entry.icon} className="text-[20px] text-primary" />
+        <h4 className="flex-1 font-heading text-[15px] font-bold text-foreground">{entry.label}</h4>
+        {entry.comingSoon && (
+          <Badge tone="neutral" size="sm" icon="schedule">Próximamente</Badge>
+        )}
+      </div>
+      <SectionBody entry={entry} section={section} vehicle={vehicle} onRetry={onRetry} />
     </div>
   );
 }
@@ -537,62 +721,6 @@ function YapeModal({
           </Button>
         </div>
       </div>
-    </div>
-  );
-}
-
-/* ── Tarjeta de sección (catálogo) con bloqueo por tier ───────────── */
-function CatalogCard({
-  entry,
-  locked,
-  wide,
-  onBuy,
-  busy,
-  children,
-}: {
-  entry: SectionCatalogEntry;
-  locked: boolean;
-  wide?: boolean;
-  onBuy: () => void;
-  busy: boolean;
-  children: ReactNode;
-}) {
-  const neededName = entry.tier === ReportTier.ULTRA ? 'Ultra' : 'Pro';
-  const action = entry.comingSoon ? (
-    <Badge tone="neutral" size="sm" icon="schedule">
-      Próximamente
-    </Badge>
-  ) : locked ? (
-    <Badge tone="neutral" size="sm" icon="lock">
-      {neededName}
-    </Badge>
-  ) : entry.tier === ReportTier.BASIC ? (
-    <Badge tone="neutral" size="sm" icon={null}>
-      Gratis
-    </Badge>
-  ) : null;
-  return (
-    <div className={wide ? 'sm:col-span-2' : ''}>
-      <Card title={entry.label} icon={entry.icon} action={action}>
-        {locked ? (
-          <div className="relative">
-            <div className="pointer-events-none select-none opacity-50 blur-[5px]">
-              <p className="font-body text-sm text-muted">{entry.blurb}</p>
-            </div>
-            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2.5 p-3 text-center">
-              <div className="grid h-11 w-11 place-items-center rounded-full bg-surface shadow-md">
-                <Icon name="lock" className="text-[22px] text-primary" />
-              </div>
-              <span className="font-body text-[13px] font-semibold text-slate-700">Disponible en {neededName}</span>
-              <Button variant="accent" size="sm" iconRight="arrow_forward" onClick={onBuy} disabled={busy}>
-                {busy ? 'Procesando…' : `Mejorar a ${neededName}`}
-              </Button>
-            </div>
-          </div>
-        ) : (
-          children
-        )}
-      </Card>
     </div>
   );
 }
@@ -1008,8 +1136,16 @@ const BUYING_TIPS = [
   'Haz la transferencia de propiedad de inmediato para evitar papeletas ajenas.',
 ];
 
-function LoadingView({ placa, finishing = false }: { placa: string; finishing?: boolean }) {
-  const [pct, setPct] = useState(4);
+function LoadingView({
+  placa, finishing = false, variant = 'default', tier,
+}: {
+  placa: string; finishing?: boolean; variant?: 'default' | 'specialists'; tier?: 'PRO' | 'ULTRA';
+}) {
+  const specialists = variant === 'specialists';
+  // El reporte gratis tarda segundos; el PRO/ULTRA (historial SPRL, etc.) tarda minutos → la
+  // asíntota del progreso simulado sube mucho más lento en el modo "especialistas".
+  const tau = specialists ? 240 : 20;
+  const [pct, setPct] = useState(specialists ? 2 : 4);
   const [tip, setTip] = useState(() => Math.floor(Math.random() * BUYING_TIPS.length));
   // Progreso simulado: sube rápido y se acerca a ~96% (asíntota); salta a 100% al llegar el reporte.
   useEffect(() => {
@@ -1017,10 +1153,10 @@ function LoadingView({ placa, finishing = false }: { placa: string; finishing?: 
     const start = Date.now();
     const id = setInterval(() => {
       const s = (Date.now() - start) / 1000;
-      setPct(Math.min(96, Math.max(4, Math.round(96 * (1 - Math.exp(-s / 20))))));
+      setPct(Math.min(96, Math.max(2, Math.round(96 * (1 - Math.exp(-s / tau))))));
     }, 350);
     return () => clearInterval(id);
-  }, [finishing]);
+  }, [finishing, tau]);
   useEffect(() => {
     const t = setInterval(() => setTip((i) => (i + 1) % BUYING_TIPS.length), 5000);
     return () => clearInterval(t);
@@ -1028,13 +1164,16 @@ function LoadingView({ placa, finishing = false }: { placa: string; finishing?: 
   const R = 54;
   const C = 2 * Math.PI * R;
   const off = C * (1 - pct / 100);
+  const tierName = tier === 'ULTRA' ? 'Ultra' : 'Pro';
   return (
     <div className="bg-background">
       <div className="border-b border-border bg-surface">
         <div className="mx-auto flex max-w-[1240px] items-center gap-2.5 px-4 py-3 sm:px-7">
           <Icon name="directions_car" className="text-xl text-muted" />
           <span className="font-mono text-[15px] font-bold tracking-wide text-foreground">{formatPlateDisplay(placa)}</span>
-          <span className="font-body text-sm text-muted">· Consultando portales oficiales…</span>
+          <span className="font-body text-sm text-muted">
+            · {specialists ? `Procesando tu reporte ${tierName}…` : 'Consultando portales oficiales…'}
+          </span>
         </div>
       </div>
       <div
@@ -1062,15 +1201,30 @@ function LoadingView({ placa, finishing = false }: { placa: string; finishing?: 
           </svg>
           <div className="absolute flex flex-col items-center">
             <span className="font-heading text-[34px] font-extrabold leading-none text-foreground">{pct}%</span>
-            <span className="mt-1 font-body text-xs text-muted">Generando</span>
+            <span className="mt-1 font-body text-xs text-muted">{specialists ? 'Procesando' : 'Generando'}</span>
           </div>
         </div>
 
         <div className="text-center">
-          <h2 className="font-heading text-xl font-bold text-foreground">Generando tu reporte…</h2>
-          <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
-            Estamos consultando los portales oficiales (SUNARP, SOAT, revisión técnica y más). Toma unos segundos — no cierres esta pestaña.
-          </p>
+          {specialists ? (
+            <>
+              <h2 className="font-heading text-xl font-bold text-foreground">
+                Nuestros especialistas están procesando tu reporte {tierName}
+              </h2>
+              <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
+                Estamos reuniendo el historial de dueños, papeletas, gravámenes y más desde las fuentes
+                oficiales. Esto toma de <strong className="text-foreground">3 a 10 minutos</strong> — puedes
+                dejar esta pestaña abierta y te mostraremos el reporte completo apenas esté listo.
+              </p>
+            </>
+          ) : (
+            <>
+              <h2 className="font-heading text-xl font-bold text-foreground">Generando tu reporte…</h2>
+              <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
+                Estamos consultando los portales oficiales (SUNARP, SOAT, revisión técnica y más). Toma unos segundos — no cierres esta pestaña.
+              </p>
+            </>
+          )}
         </div>
 
         {/* Consejos de compra (rotan) */}

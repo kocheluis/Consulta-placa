@@ -20,8 +20,6 @@ import { findChrome, chromeFlags } from './chrome-path.js';
  * del perfil persistente; si expiró, hace login automático.
  */
 
-const PORT = Number(process.env.CDP_SPRL_PORT ?? 9224);
-const PROFILE = process.env.CDP_SPRL_PROFILE ?? join(process.cwd(), '.cdp-sprl-profile');
 const INGRESO = 'https://sprl.sunarp.gob.pe/sprl/ingreso';
 const PARTIDA = 'https://sprl.sunarp.gob.pe/sprl/main/partidas-base-grafica-registral';
 const SIGUELO = 'https://sigueloplus.sunarp.gob.pe/siguelo/';
@@ -33,6 +31,10 @@ const CHROME = findChrome();
 export interface HistorialOptions {
   sprlUser?: string;
   sprlPass?: string;
+  /** Puerto CDP del Chrome del SPRL (por slot de cuenta). Default env CDP_SPRL_PORT ?? 9224. */
+  port?: number;
+  /** Perfil persistente del Chrome del SPRL (por slot). Default env CDP_SPRL_PROFILE. */
+  profile?: string;
   oficina?: string; // si ya se conoce la sede; si no, se saca de SUNARP
   parallel?: boolean; // opt-in: corre las búsquedas de Síguelo en paralelo (conc. 2)
   log?: (m: string) => void;
@@ -46,6 +48,8 @@ export interface HistorialResult {
   timeline: AsientoRecord[];
   flags: { aseguradora: boolean; remate: boolean; financiera: boolean; gravamen: boolean; embargo: boolean };
   error?: string;
+  /** true = SUNARP bloqueó la cuenta por IP (exceso de intentos) → el caller puede hacer failover a otra cuenta. */
+  locked?: boolean;
 }
 
 function sgDecrypt(b64: string): string | null {
@@ -83,6 +87,8 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   const plate = plateRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
   const user = opts.sprlUser ?? process.env.SPRL_USER ?? '';
   const pass = opts.sprlPass ?? process.env.SPRL_PASS ?? '';
+  const PORT = opts.port ?? Number(process.env.CDP_SPRL_PORT ?? 9224);
+  const PROFILE = opts.profile ?? process.env.CDP_SPRL_PROFILE ?? join(process.cwd(), '.cdp-sprl-profile');
   const empty: HistorialResult = { ok: false, sede: opts.oficina ?? '', vehiculo: null, titulos: [], timeline: [], flags: { aseguradora: false, remate: false, financiera: false, gravamen: false, embargo: false } };
   if (!CHROME) return { ...empty, error: 'No encontré chrome.exe.' };
 
@@ -186,7 +192,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const err = blockReason === 'lockout'
         ? 'Cuenta SPRL bloqueada por SUNARP desde el VPS (se superó el número de intentos de login). La cuenta está OK — es un límite temporal por IP. Espera ~1-2 h y reintenta UNA sola vez; no reintentes seguido.'
         : 'no se pudo iniciar sesión en SPRL (revisa SPRL_USER/SPRL_PASS, o el Turnstile del login pidió clic manual)';
-      return { ...empty, sede: oficina, vehiculo, error: err };
+      return { ...empty, sede: oficina, vehiculo, error: err, locked: blockReason === 'lockout' };
     }
     log('sesión SPRL activa');
 

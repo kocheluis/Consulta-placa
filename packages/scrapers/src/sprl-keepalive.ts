@@ -9,10 +9,10 @@ import { spawn, execSync } from 'node:child_process';
 import { appendFileSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './operator/chrome-path.js';
+import { sprlSlots } from './operator/sprl-slots.js';
+import { peruStamp } from './operator/time.js';
 
 const CHROME = findChrome();
-const PORT = Number(process.env.CDP_SPRL_PORT ?? 9224);
-const PROFILE = process.env.CDP_SPRL_PROFILE ?? '/root/app/.cdp-sprl-profile';
 const PARTIDA = 'https://sprl.sunarp.gob.pe/sprl/main/partidas-base-grafica-registral';
 const LOG = process.env.SPRL_KEEPALIVE_LOG ?? '/root/out/sprl-keepalive.log';
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -22,18 +22,19 @@ function portBusy(p: number): boolean {
   catch { return false; }
 }
 
-(async () => {
-  const ts = new Date().toISOString();
+/** Refresca la sesión de UN slot SPRL (perfil/puerto propios). NO hace login. */
+async function refreshSlot(port: number, profile: string, label: string): Promise<string> {
+  const ts = peruStamp();
   // Si el perfil ya está en uso (un reporte con historial corriendo), la sesión está caliente
   // por definición → saltamos este ciclo para no chocar con el Chrome del motor.
-  if (portBusy(PORT)) { appendFileSync(LOG, `${ts} skip=perfil-en-uso\n`); process.exit(0); }
-  if (!CHROME) { appendFileSync(LOG, `${ts} ERROR=sin-chrome\n`); process.exit(0); }
+  if (portBusy(port)) { appendFileSync(LOG, `${ts} ${label} skip=perfil-en-uso\n`); return 'EN-USO'; }
+  if (!CHROME) { appendFileSync(LOG, `${ts} ${label} ERROR=sin-chrome\n`); return 'ERROR'; }
 
   let state = 'ERROR';
-  const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), PARTIDA], { detached: false, stdio: 'ignore' });
+  const proc = spawn(CHROME, [`--remote-debugging-port=${port}`, `--user-data-dir=${profile}`, ...chromeFlags(), PARTIDA], { detached: false, stdio: 'ignore' });
   let browser: Browser | null = null;
   try {
-    for (let i = 0; i < 20 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${PORT}`); } catch { /* retry */ } }
+    for (let i = 0; i < 20 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${port}`); } catch { /* retry */ } }
     if (browser) {
       const ctx = browser.contexts()[0] ?? (await browser.newContext());
       const page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -46,7 +47,17 @@ function portBusy(p: number): boolean {
   } catch { state = 'ERR'; }
   finally { if (browser) await browser.close().catch(() => {}); try { proc.kill(); } catch { /* */ } }
 
-  appendFileSync(LOG, `${ts} sesion=${state}\n`);
-  console.log(`${ts} sesion=${state}`);
+  appendFileSync(LOG, `${ts} ${label} sesion=${state}\n`);
+  console.log(`${ts} ${label} sesion=${state}`);
+  return state;
+}
+
+(async () => {
+  // Refresca CADA slot configurado (cuenta 1 y, si existe, cuenta 2) en secuencia:
+  // cada uno tiene su perfil/puerto propio, así ambas sesiones se mantienen vivas.
+  const slots = sprlSlots();
+  for (const s of slots) {
+    await refreshSlot(s.port, s.profile, `slot${s.index}`);
+  }
   process.exit(0);
 })();

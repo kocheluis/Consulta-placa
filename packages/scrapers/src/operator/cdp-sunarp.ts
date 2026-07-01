@@ -38,6 +38,13 @@ export interface CdpSunarpOptions {
   passiveWaitMs?: number;
   /** Espera máx. de los datos (deja margen para que el operador resuelva, default 180s). */
   dataWaitMs?: number;
+  /**
+   * Cuántas veces recargar la página para reintentar el Turnstile PASIVO si no pasó
+   * (default 2 → 3 intentos). Desde la IP del VPS el pasivo es intermitente; recargar
+   * gatilla un nuevo challenge y suele pasar en el 2º/3er intento (junto al keep-alive
+   * que mantiene caliente el clearance del perfil). Solo aplica en modo automático.
+   */
+  passiveReloads?: number;
   log?: (msg: string) => void;
 }
 
@@ -124,16 +131,24 @@ export async function scrapeSunarpViaCdp(
 
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
 
-    log('esperando Turnstile pasivo (Chrome limpio)…');
+    // Reintento del Turnstile PASIVO: si no pasa, recargamos la página (nuevo challenge)
+    // y volvemos a esperar. Reparte la espera total entre los intentos.
+    const reloads = Math.max(0, opts.passiveReloads ?? 2);
+    const attempts = reloads + 1;
+    const perAttemptMs = Math.max(15000, Math.ceil((opts.passiveWaitMs ?? 45000) / attempts));
+    const turnstileSel = S.turnstileResponse ?? 'input[name="cf-turnstile-response"]';
     let token = '';
-    const passiveTries = Math.ceil((opts.passiveWaitMs ?? 45000) / 1000);
-    for (let i = 0; i < passiveTries && !token; i++) {
-      await wait(1000);
-      token = await page
-        .locator(S.turnstileResponse ?? 'input[name="cf-turnstile-response"]')
-        .first()
-        .inputValue()
-        .catch(() => '');
+    for (let a = 0; a < attempts && !token; a++) {
+      if (a > 0) {
+        log(`Turnstile no pasó pasivo → recarga ${a}/${reloads} (nuevo challenge)…`);
+        await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      }
+      log(`esperando Turnstile pasivo (Chrome limpio, intento ${a + 1}/${attempts})…`);
+      const tries = Math.ceil(perAttemptMs / 1000);
+      for (let i = 0; i < tries && !token; i++) {
+        await wait(1000);
+        token = await page.locator(turnstileSel).first().inputValue().catch(() => '');
+      }
     }
 
     if (token) {
@@ -142,7 +157,7 @@ export async function scrapeSunarpViaCdp(
       await wait(600);
       await page.locator(S.submit).first().click().catch((e) => log(`click: ${(e as Error).message}`));
     } else {
-      log(`Turnstile NO pasó pasivo → resuélvelo en la ventana (placa ${plate} + verificación + Buscar)`);
+      log(`Turnstile NO pasó pasivo tras ${attempts} intento(s) → resuélvelo en la ventana (placa ${plate} + verificación + Buscar)`);
     }
 
     const dataTries = Math.ceil((opts.dataWaitMs ?? 180000) / 1000);

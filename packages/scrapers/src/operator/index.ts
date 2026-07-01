@@ -7,6 +7,8 @@ import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { runHistorialRegistral } from './historial.js';
 import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
+import { peruStamp } from './time.js';
+import { sprlSlots } from './sprl-slots.js';
 import {
   runSatCaptura,
   runCallao,
@@ -84,10 +86,10 @@ async function withPage<T>(ctx: BrowserContext, fn: (p: Page) => Promise<T>): Pr
 
 /** Log POR FUENTE: cada módulo escribe su propio `<id>.log` en el outDir. */
 function startLog(outDir: string, id: string, plate: string): void {
-  try { writeFileSync(join(outDir, `${id}.log`), `${new Date().toISOString()} INICIO ${id} · placa=${plate}\n`, 'utf8'); } catch { /* noop */ }
+  try { writeFileSync(join(outDir, `${id}.log`), `${peruStamp()} INICIO ${id} · placa=${plate}\n`, 'utf8'); } catch { /* noop */ }
 }
 function logLine(outDir: string, id: string, msg: string): void {
-  try { appendFileSync(join(outDir, `${id}.log`), `${new Date().toISOString()} ${msg}\n`); } catch { /* noop */ }
+  try { appendFileSync(join(outDir, `${id}.log`), `${peruStamp()} ${msg}\n`); } catch { /* noop */ }
 }
 /** Línea RESULTADO con el captcha que insertó el OCR (para validar lecturas). */
 function resultLog(r: OperatorSourceResult): string {
@@ -198,7 +200,9 @@ async function runSunarpSource(
   try {
     const r = await scrapeSunarpViaCdp(plate, {
       shotPath,
-      ...(opts.manualSunarp ? { dataWaitMs: 300000 } : {}),
+      // Modo manual: más margen para que el operador resuelva y SIN auto-recargas
+      // (recargar reiniciaría el Turnstile que está resolviendo a mano).
+      ...(opts.manualSunarp ? { dataWaitMs: 300000, passiveReloads: 0 } : {}),
       log: (m) => logLine(outDir, 'sunarp', m),
     });
     if (r.ok) {
@@ -230,7 +234,24 @@ async function runHistorialSource(
   startLog(outDir, 'historial', plate);
   logLine(outDir, 'historial', 'SUNARP→SPRL→Síguelo (CDP)');
   try {
-    const r = await runHistorialRegistral(plate, { shotPath, parallel: process.env.HISTORIAL_PARALLEL === '1', log: (m) => logLine(outDir, 'historial', m) });
+    // Slots de cuenta SPRL con FAILOVER: si SUNARP bloquea la cuenta por IP (lockout),
+    // reintenta con la siguiente cuenta (perfil/puerto propios). Otros errores NO hacen
+    // failover (cambiar de cuenta no los arregla y gastaría tiempo/logins).
+    const slots = sprlSlots();
+    const parallel = process.env.HISTORIAL_PARALLEL === '1';
+    let r: Awaited<ReturnType<typeof runHistorialRegistral>> | null = null;
+    for (let i = 0; i < slots.length; i++) {
+      const s = slots[i]!;
+      if (i > 0) logLine(outDir, 'historial', `failover → cuenta ${s.index} (slot bloqueado por IP)`);
+      r = await runHistorialRegistral(plate, {
+        shotPath, parallel, log: (m) => logLine(outDir, 'historial', m),
+        sprlUser: s.user, sprlPass: s.pass, port: s.port, profile: s.profile,
+      });
+      if (r.ok || !r.locked) break; // éxito, o error no recuperable por failover
+    }
+    if (!r) { // sin slots configurados (dev sin env) → una corrida con defaults del entorno
+      r = await runHistorialRegistral(plate, { shotPath, parallel, log: (m) => logLine(outDir, 'historial', m) });
+    }
     if (r.ok) {
       const flagTxt = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.financiera && 'FINANCIERA', r.flags.gravamen && 'GRAVAMEN', r.flags.embargo && 'EMBARGO'].filter(Boolean).join('/');
       const summary = `${r.timeline.length} asientos · ${r.titulos.length} títulos${flagTxt ? ` · ⚠ ${flagTxt}` : ' · sin banderas'}`;

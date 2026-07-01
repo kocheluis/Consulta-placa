@@ -53,13 +53,18 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
 
   const admin = createAdminClient();
   const { data: rep } = await admin.from('reportes').select('report,status').eq('placa', placa).maybeSingle();
-  if (rep?.report) {
-    const report = operatorPreview ? (rep.report as Report) : stripByTier(rep.report as Report, tier);
-    return NextResponse.json({ generating: false, report });
-  }
 
+  // ¿Hay un pedido activo para esta placa? Se informa SIEMPRE (aunque ya exista un reporte):
+  // al activar PRO/ULTRA se encola una regeneración con todas las fuentes, y la web usa este
+  // flag para mostrar la pantalla de carga ("procesado por especialistas") hasta que termine.
   const { data: ped } = await admin
     .from('pedidos').select('id').eq('placa', placa).in('estado', ['pendiente', 'procesando']).limit(1);
   const generating = !!(ped && ped.length);
+
+  if (rep?.report) {
+    const report = operatorPreview ? (rep.report as Report) : stripByTier(rep.report as Report, tier);
+    return NextResponse.json({ generating, report });
+  }
+
   return NextResponse.json({ generating, report: generating ? null : stub(placa) });
 }
