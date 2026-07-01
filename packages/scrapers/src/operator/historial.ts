@@ -125,6 +125,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // ── [2] SPRL: login (la sesión ya debería estar asentada por el spawn temprano) ──
     const isLogged = async () => /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/.test((await page.locator('body').innerText().catch(() => '')).toUpperCase());
     const passVisible = async () => page.locator('input[type="password"]:visible').first().isVisible().catch(() => false);
+    // SUNARP bloquea la cuenta tras varios intentos ("Se superó el número de intentos…").
+    // Si aparece, hay que ABORTAR sin re-someter: cada intento extra agrava/prolonga el bloqueo.
+    const RX_LOCK = /super[oó].{0,15}n[uú]mero de intentos|vuelva m[aá]s tarde|intente.{0,12}m[aá]s tarde|demasiados intentos|cuenta.{0,25}bloqueada/i;
+    const isLocked = async () => RX_LOCK.test(await page.locator('body').innerText().catch(() => ''));
+    let blockReason = '';
     async function autoLogin(): Promise<boolean> {
       if (await isLogged()) return true;
       if (!user || !pass) { log('sin SPRL_USER/SPRL_PASS en el entorno'); return false; }
@@ -147,6 +152,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
         return false;
       }
+      if (await isLocked()) { blockReason = 'lockout'; log('SPRL bloqueada por SUNARP (exceso de intentos) — NO intento login para no agravarlo'); return false; }
       const pf = page.locator('input[type="password"]:visible').first();
       await page.locator('input[name*="usuario" i], input[formcontrolname*="usuario" i], input[type="text"]:visible').first().fill(user).catch(() => {});
       await pf.fill(pass).catch(() => {});
@@ -159,7 +165,14 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       for (let i = 0; i < (await ing.count().catch(() => 0)); i++) { const b = ing.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); clicked = true; break; } }
       if (!clicked) await pf.press('Enter').catch(() => {});
       for (let i = 0; i < 18 && !(await isLogged()); i++) await wait(1000);
-      if (!(await isLogged())) { await pf.press('Enter').catch(() => {}); for (let i = 0; i < 12 && !(await isLogged()); i++) await wait(1000); }
+      if (!(await isLogged())) {
+        // Antes de re-someter, verifica que SUNARP no nos haya bloqueado: si sí, ABORTAR
+        // (otro Enter = otro intento = agrava el bloqueo por IP).
+        if (await isLocked()) { blockReason = 'lockout'; log('SPRL: "se superó el número de intentos" → aborto (no reintento)'); return false; }
+        await pf.press('Enter').catch(() => {});
+        for (let i = 0; i < 12 && !(await isLogged()); i++) await wait(1000);
+      }
+      if (!(await isLogged()) && (await isLocked())) blockReason = 'lockout';
       return isLogged();
     }
     // Esperar a que la sesión activa se renderice (el re-auth OAuth puede tardar ~20s).
@@ -168,7 +181,13 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // Si sigue sin sesión (logout/expirada), login automático (autoLogin consigue el
     // form solo vía force-clear; un re-login sobre sesión válida también es inocuo).
     if (!logged) { log('sin sesión activa → login automático'); logged = await autoLogin(); }
-    if (!logged) { await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {}); return { ...empty, sede: oficina, vehiculo, error: 'no se pudo iniciar sesión en SPRL (revisa SPRL_USER/SPRL_PASS, o el Turnstile del login pidió clic manual)' }; }
+    if (!logged) {
+      await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
+      const err = blockReason === 'lockout'
+        ? 'Cuenta SPRL bloqueada por SUNARP desde el VPS (se superó el número de intentos de login). La cuenta está OK — es un límite temporal por IP. Espera ~1-2 h y reintenta UNA sola vez; no reintentes seguido.'
+        : 'no se pudo iniciar sesión en SPRL (revisa SPRL_USER/SPRL_PASS, o el Turnstile del login pidió clic manual)';
+      return { ...empty, sede: oficina, vehiculo, error: err };
+    }
     log('sesión SPRL activa');
 
     // Búsqueda SPRL (con espera del form post-login + reintento si no hay títulos).
