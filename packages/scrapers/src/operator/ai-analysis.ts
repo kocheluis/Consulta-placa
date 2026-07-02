@@ -104,6 +104,13 @@ export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | 
   const model = MODEL();
   const summary = buildSummary(report);
 
+  // `effort` NO existe en Haiku 4.5 ni Sonnet 4.5 (devuelven 400). Se envía solo si el modelo
+  // lo soporta (Opus 4.5+/4.6+/4.7/4.8, Sonnet 4.6, Fable 5) → así basta cambiar ANTHROPIC_MODEL
+  // a claude-haiku-4-5 (más asequible) sin tocar código.
+  const supportsEffort = !/haiku|sonnet-4-5/i.test(model);
+  const outputConfig: Record<string, unknown> = { format: { type: 'json_schema', schema: IA_SCHEMA } };
+  if (supportsEffort) outputConfig.effort = 'medium';
+
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
   try {
@@ -114,7 +121,7 @@ export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | 
       body: JSON.stringify({
         model,
         max_tokens: 4000,
-        output_config: { effort: 'medium', format: { type: 'json_schema', schema: IA_SCHEMA } },
+        output_config: outputConfig,
         system: SYSTEM,
         messages: [{
           role: 'user',
