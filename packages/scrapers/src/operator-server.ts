@@ -79,6 +79,11 @@ const baseOpts = (plate: string, source?: string) => ({
 // Pesos (segundos estimados) para que la barra avance de forma realista por fuente.
 const WEIGHT: Record<string, number> = { sunarp: 25, historial: 240, superbid: 80 };
 const weightOf = (id: string) => WEIGHT[id] ?? 30;
+// Tope POR FUENTE (backstop de robustez). Muy por encima de lo normal: solo corta cuelgues
+// reales. historial incluye margen para el failover de la 2ª cuenta SPRL. Override por env
+// SRC_TIMEOUT_<FUENTE>_MS no es necesario hoy; ajustar aquí si hiciera falta.
+const SRC_TIMEOUT_MS: Record<string, number> = { historial: 7 * 60_000, superbid: 45_000, sunarp: 120_000 };
+const SRC_TIMEOUT_DEFAULT = 150_000; // 2.5 min para las fuentes de captcha (SAT/MTC/SBS/Callao)
 // Fuentes en paralelo. DEFAULT 1 (secuencial) porque el VPS actual tiene 1 vCPU: con un
 // solo núcleo, 2+ navegadores compiten por CPU y va MÁS LENTO (medido: 386s/6-8 vs ~330s
 // secuencial). Sube OPERATOR_CONCURRENCY a 2-4 SOLO tras ampliar el VPS a más vCPUs.
@@ -124,10 +129,20 @@ async function runJob(job: Job): Promise<void> {
   const runOne = async (src: string): Promise<void> => {
     const t0 = Date.now();
     let result: OperatorSourceResult;
+    // Tope POR FUENTE (backstop): ninguna fuente puede consumir todo el presupuesto del job.
+    // Si una se pasa, se marca ERROR y el job sigue con las demás → reporte PARCIAL en vez de
+    // que una fuente colgada tumbe todo. Muy por encima de lo normal (historial ~4min).
+    const cap = SRC_TIMEOUT_MS[src] ?? SRC_TIMEOUT_DEFAULT;
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
-      result = await runSingleSource(job.plate, src, baseOpts(job.plate, src));
+      result = await Promise.race([
+        runSingleSource(job.plate, src, baseOpts(job.plate, src)),
+        new Promise<never>((_, rej) => { timer = setTimeout(() => rej(new Error(`timeout de fuente (${Math.round(cap / 1000)}s)`)), cap); }),
+      ]);
     } catch (e) {
       result = { source: src.toUpperCase(), label: src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+    } finally {
+      if (timer) clearTimeout(timer);
     }
     doneW += weightOf(src);
     job.results.push(result);
@@ -263,12 +278,15 @@ async function processPedido(p: Pedido): Promise<void> {
   try {
     await runJob(job);
     const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
-    if (job.error || ok === 0) {
+    // Degradación elegante: solo es ERROR si NINGUNA fuente respondió. Si el job se pasó de
+    // tiempo (job.error) pero algunas fuentes SÍ respondieron, publicamos el reporte PARCIAL
+    // en vez de descartar todo → el cliente igual recibe identidad/SOAT/etc. que sí salieron.
+    if (ok === 0) {
       await queue.setError(p.id, job.error ?? 'ninguna fuente respondió');
-      console.log(`[motor-auto] pedido ${p.id} ERROR`);
+      console.log(`[motor-auto] pedido ${p.id} ERROR${job.error ? ` (${job.error})` : ''}`);
     } else {
       await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
-      console.log(`[motor-auto] pedido ${p.id} LISTO (${ok}/${job.results.length} fuentes)`);
+      console.log(`[motor-auto] pedido ${p.id} LISTO${job.error ? ` (PARCIAL: ${job.error})` : ''} (${ok}/${job.results.length} fuentes)`);
       // Publica el reporte normalizado en Supabase para que el cliente lo vea en placape.pe.
       try {
         const report = toWebReport(p.placa, job.results, new Date().toISOString(), String(p.id));

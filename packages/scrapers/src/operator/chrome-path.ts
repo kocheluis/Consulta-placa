@@ -56,11 +56,12 @@ export function chromeFlags(): string[] {
  */
 export function killEngineChrome(): void {
   if (platform() !== 'linux') return;
-  const ports = [
+  const ports = [...new Set([
     Number(process.env.CDP_SUNARP_PORT ?? 9222),
     Number(process.env.CDP_SPRL_PORT ?? 9224),
+    Number(process.env.CDP_SPRL_PORT_2 ?? 9225), // 2ª cuenta SPRL (si no, su Chrome quedaría huérfano)
     Number(process.env.CDP_SUPERBID_PORT ?? 9225),
-  ];
+  ])];
   for (const p of ports) {
     try { execFile('pkill', ['-f', `remote-debugging-port=${p}`], () => {}); } catch { /* noop */ }
   }
