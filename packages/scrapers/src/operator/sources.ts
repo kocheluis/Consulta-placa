@@ -451,7 +451,7 @@ export async function runAtu(
 
 // Los campos del resultado ATU son inputs readonly; parseamos sus VALORES (unidos por ' | ').
 // Ej. real: "SERVICIO DE TAXI EJECUTIVO", "Habilitado hasta 29/09/2026", "GESTIONES Y SERVICIOS … EIRL".
-function parseAtuFields(vals: string): { modalidad: string | null; estado: string | null; titular: string | null } {
+export function parseAtuFields(vals: string): { modalidad: string | null; estado: string | null; titular: string | null } {
   const arr = vals.split(' | ').map((s) => s.trim()).filter(Boolean);
   const find = (re: RegExp): string | null => arr.find((v) => re.test(v)) ?? null;
   const modalidad = find(/taxi|servicio de|transporte|colectivo|escolar|cuna|mercanc/i);

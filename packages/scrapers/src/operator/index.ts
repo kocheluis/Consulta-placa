@@ -4,6 +4,7 @@ import { mkdirSync, writeFileSync, appendFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { createCaptchaSolver, type CaptchaSolver } from '../captcha/index.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
+import { scrapeAtuViaCdp } from './atu-cdp.js';
 import { runHistorialRegistral } from './historial.js';
 import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
@@ -16,7 +17,6 @@ import {
   runApeseg,
   runSatPapeletas,
   runSbs,
-  runAtu,
   type OperatorSourceResult,
 } from './sources.js';
 
@@ -32,7 +32,7 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'mtc-citv': runMtcCitv,
   'sbs-soat': runSbs,
   'apeseg-soat': runApeseg, // extra/opcional (flaky, redundante con SBS)
-  'atu': runAtu, // taxi/transporte (Lima/Callao) — selectores por validar en vivo
+  // 'atu' NO va aquí: corre por CDP (Chrome real + reCAPTCHA v3 nativo) vía runAtuSource.
 };
 
 /** Fuentes que corren por defecto en la ráfaga del operador. */
@@ -117,7 +117,9 @@ export async function runOperatorReport(
   const wantSunarp = wanted.includes('sunarp');
   const wantHistorial = wanted.includes('historial');
   const wantSuperbid = wanted.includes('superbid');
-  const browserSources = wanted.filter((s) => s !== 'sunarp' && s !== 'historial' && s !== 'superbid' && SOURCE_RUNNERS[s]);
+  // 'atu' va por CDP (Chrome real, reCAPTCHA v3 nativo), NO por el burst headless de Playwright.
+  const wantAtu = wanted.includes('atu');
+  const browserSources = wanted.filter((s) => !['sunarp', 'historial', 'superbid', 'atu'].includes(s) && SOURCE_RUNNERS[s]);
 
   let results: OperatorSourceResult[] = [];
   // Solo lanzamos el Chromium "burst" (Playwright bundled, headless) si hay fuentes
@@ -145,6 +147,7 @@ export async function runOperatorReport(
   }
 
   if (wantSunarp) results.push(await runSunarpSource(plate, solver, shot('sunarp'), opts));
+  if (wantAtu) results.push(await runAtuSource(plate, shot('atu'), opts));
   if (wantHistorial) results.push(await runHistorialSource(plate, shot('historial'), opts));
   if (wantSuperbid) results.push(await runSuperbidSource(plate, shot('superbid'), opts));
 
@@ -166,6 +169,7 @@ export async function runSingleSource(
   const shot = join(opts.outDir, `${sourceId}.png`);
   startLog(opts.outDir, sourceId, plate);
   if (sourceId === 'sunarp') return await runSunarpSource(plate, solver, shot, opts);
+  if (sourceId === 'atu') return await runAtuSource(plate, shot, opts);
   if (sourceId === 'historial') return await runHistorialSource(plate, shot, opts);
   if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
   const runner = SOURCE_RUNNERS[sourceId];
@@ -214,6 +218,38 @@ async function runSunarpSource(
     return { ...base, status: 'ERROR', summary: r.error ?? 'SUNARP no disponible', ms: Date.now() - t0 };
   } catch (e) {
     logLine(outDir, 'sunarp', `ERROR ${(e as Error).message}`);
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+/**
+ * ATU (uso taxi/transporte) por CDP: Chrome real + reCAPTCHA v3 NATIVO (sin CapSolver).
+ * Va aparte de la ráfaga headless porque el v3 puntúa el navegador/IP; solo pasa desde
+ * un Chrome real en IP residencial. Devuelve `source: 'ATU'` → report-transform lo mapea
+ * a la sección TRANSPORTE.
+ */
+async function runAtuSource(
+  plate: string,
+  shotPath: string,
+  _opts: OperatorReportOptions,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'ATU', label: 'ATU · Taxi/transporte (CDP)', category: 'TRANSPORTE' };
+  const outDir = shotPath.replace(/[/\\][^/\\]+$/, '');
+  startLog(outDir, 'atu', plate);
+  logLine(outDir, 'atu', 'CDP híbrido (Chrome real + reCAPTCHA v3 nativo)');
+  try {
+    const r = await scrapeAtuViaCdp(plate, { shotPath, log: (m) => logLine(outDir, 'atu', m) });
+    const d = (r.data ?? {}) as Record<string, unknown>;
+    if (r.ok) {
+      const summary = d.isPublicTransport ? `Habilitado: ${(d.modalidad as string) ?? 'transporte'}` : 'No figura como taxi/transporte';
+      logLine(outDir, 'atu', `RESULTADO ${r.status} · ${summary} · ${Date.now() - t0}ms`);
+      return { ...base, status: r.status, summary, data: r.data, screenshot: shotPath, ms: Date.now() - t0 };
+    }
+    logLine(outDir, 'atu', `ERROR ${r.error ?? 'no disponible'}`);
+    return { ...base, status: 'ERROR', summary: r.error ?? 'ATU no disponible', ms: Date.now() - t0 };
+  } catch (e) {
+    logLine(outDir, 'atu', `ERROR ${(e as Error).message}`);
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
 }
