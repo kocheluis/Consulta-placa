@@ -8,6 +8,17 @@ type State =
   | { phase: 'done'; report: Report | null; error: null; cached: boolean; generating: boolean }
   | { phase: 'error'; report: null; error: string; needsPro: boolean; generating: false };
 
+type DoneState = Extract<State, { phase: 'done' }>;
+/**
+ * ¿El estado ya muestra un reporte con datos REALES? Un stub vacío (sin secciones ni vehículo,
+ * p. ej. antes de la consulta gratis) NO cuenta: en ese caso SÍ queremos el loader de pantalla
+ * completa. Solo un reporte con datos se conserva durante los refrescos/upgrade. Type guard →
+ * al conservar `prev` TypeScript lo estrecha al estado 'done' con reporte no nulo.
+ */
+function hasRealReport(s: State): s is DoneState & { report: Report } {
+  return s.phase === 'done' && !!s.report && (s.report.sections.length > 0 || !!s.report.vehicle);
+}
+
 /**
  * Lee el reporte de la placa desde `/api/reporte/[placa]` (Supabase vía route handler,
  * recortado por el nivel pagado). Hace polling cada 3 s mientras el motor del VPS lo
@@ -35,10 +46,11 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
           // (upgrade PRO/ULTRA) → así detectamos cuándo termina y revelamos el reporte completo.
           if (generating) timer = setTimeout(load, 3000);
         } else if (generating) {
-          // Generando y sin reporte devuelto: si YA mostrábamos uno, consérvalo (no blanquees la
-          // pantalla → evita que el loader de pantalla completa reaparezca durante el upgrade).
-          // Solo la primera carga (sin reporte previo) cae al 'loading' de pantalla completa.
-          setState((prev) => (prev.phase === 'done' && prev.report
+          // Generando y sin reporte devuelto: si YA mostrábamos uno CON DATOS, consérvalo (no
+          // blanquees → evita que el loader de pantalla completa reaparezca durante el upgrade PRO).
+          // Si solo había un stub vacío (consulta gratis inicial), cae al 'loading' de pantalla
+          // completa (el panel con consejos que se ve mientras se genera el reporte BASIC).
+          setState((prev) => (hasRealReport(prev)
             ? { ...prev, generating: true }
             : { phase: 'loading', report: null, error: null, generating: true }));
           timer = setTimeout(load, 3000);
@@ -50,10 +62,10 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
       }
     };
 
-    // Al re-consultar (botón Actualizar o polling de un upgrade PRO/ULTRA) conserva el reporte
-    // ya visible en vez de blanquear la pantalla: así solo cambia lo que llega nuevo. Solo la
-    // primera carga (sin reporte aún) muestra el estado 'loading' de pantalla completa.
-    setState((prev) => (prev.phase === 'done' && prev.report ? prev : { phase: 'loading', report: null, error: null, generating: false }));
+    // Al re-consultar (botón Actualizar o polling de un upgrade PRO/ULTRA) conserva el reporte con
+    // DATOS ya visible en vez de blanquear la pantalla: así solo cambia lo que llega nuevo. La
+    // primera carga (sin reporte) o un stub vacío (pre-consulta gratis) sí van al 'loading' full.
+    setState((prev) => (hasRealReport(prev) ? prev : { phase: 'loading', report: null, error: null, generating: false }));
     load();
     return () => { cancelled = true; clearTimeout(timer); };
   }, [placa, refreshToken, enabled, preview]);
