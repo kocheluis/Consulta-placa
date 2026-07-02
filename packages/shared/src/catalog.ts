@@ -183,9 +183,8 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     tier: ReportTier.ULTRA,
     sources: [],
     concept: null,
-    dataKind: null,
+    dataKind: SectionKind.IA,
     blurb: 'Recomendación de compra, precio justo y banderas, a partir de todo el reporte.',
-    comingSoon: true,
   },
 ];
 

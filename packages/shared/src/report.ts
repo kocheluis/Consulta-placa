@@ -176,6 +176,37 @@ export interface HistorialPayload {
   events: HistorialEvent[];
 }
 
+/** Una bandera de riesgo priorizada por la IA. */
+export interface IaFlag {
+  title: string;
+  /** Severidad: alta (rojo) · media (ámbar) · baja (informativa). */
+  severity: 'alta' | 'media' | 'baja';
+  detail: string;
+}
+
+/**
+ * Payload de la sección IA (ULTRA): recomendación de compra generada por Claude a partir
+ * de TODO el reporte (identidad, historial, papeletas, gravámenes, siniestros, SOAT, CITV).
+ * No inventa valorización de mercado: el comentario de precio se basa solo en los precios
+ * declarados del historial + antigüedad, con su salvedad.
+ */
+export interface IaAnalysis {
+  /** Veredicto global. */
+  verdict: 'comprar' | 'precaucion' | 'evitar';
+  /** Resumen ejecutivo (2-4 frases). */
+  summary: string;
+  /** Recomendación accionable para el comprador. */
+  recommendation: string;
+  /** Comentario cualitativo sobre el precio (no es una tasación de mercado). */
+  priceComment: string;
+  /** Banderas de riesgo priorizadas. */
+  redFlags: IaFlag[];
+  /** Puntos a favor. */
+  positives: string[];
+  /** Modelo que generó el análisis (trazabilidad). */
+  model?: string;
+}
+
 /**
  * Resultado crudo que devuelve un scraper para una sección concreta.
  * Es el contrato estable que aísla la fragilidad de las fuentes externas.

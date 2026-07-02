@@ -16,6 +16,7 @@ import type {
   GravamenesPayload,
   HistorialPayload,
   TransporteInfo,
+  IaAnalysis,
 } from '@app/shared';
 import {
   formatPlateDisplay,
@@ -473,11 +474,10 @@ function ReportView({
           )}
         </aside>
 
-        {/* Resultados en 3 paneles apilados: BASIC (gratis) · PRO · ULTRA. */}
+        {/* BASIC (gratis) arriba; PRO+ULTRA en UN solo panel abajo (oculto → desbloquear → elegir nivel). */}
         <main className="flex flex-col gap-6">
           <TierPanel tierKey={ReportTier.BASIC} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
-          <TierPanel tierKey={ReportTier.PRO} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
-          <TierPanel tierKey={ReportTier.ULTRA} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+          <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
         </main>
       </div>
 
@@ -645,6 +645,161 @@ function SectionBlock({
   );
 }
 
+/* ── Panel combinado PRO + ULTRA (un solo panel) ──────────────────── */
+function PaidPanel({
+  report, vehicle, currentTier, onActivate, buying, onRetry,
+}: {
+  report: Report;
+  vehicle: Report['vehicle'];
+  currentTier: Tier;
+  onActivate: (tier: 'PRO' | 'ULTRA') => void;
+  buying: 'PRO' | 'ULTRA' | null;
+  onRetry: () => void;
+}) {
+  const rank = TIER_RANK[currentTier as ReportTier] ?? 1;
+  const unlockedPro = rank >= TIER_RANK[ReportTier.PRO];
+  const unlockedUltra = rank >= TIER_RANK[ReportTier.ULTRA];
+  const proEntries = SECTION_CATALOG.filter((e) => e.tier === ReportTier.PRO);
+  const ultraEntries = SECTION_CATALOG.filter((e) => e.tier === ReportTier.ULTRA);
+  const sectionByKind = (kind: string | null): SectionResult | undefined =>
+    kind ? report.sections.find((s) => s.kind === kind) : undefined;
+
+  // Aún no desbloqueado (BASIC): un solo panel oculto con dos pasos (Desbloquear → elegir nivel).
+  if (!unlockedPro) {
+    return <LockedPaidPanel proEntries={proEntries} ultraEntries={ultraEntries} onActivate={onActivate} buying={buying} />;
+  }
+
+  // Desbloqueado (Pro o Ultra): muestra las secciones Pro; ULTRA muestra además IA, o upsell si es Pro.
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+      <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+        <div className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-teal-50 text-teal-700">
+          <Icon name={unlockedUltra ? 'auto_awesome' : 'workspace_premium'} className="text-[24px]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">
+            {unlockedUltra ? 'Reporte Ultra' : 'Reporte Pro'}
+          </h2>
+          <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
+            {unlockedUltra
+              ? 'Todo el detalle registral + análisis con IA.'
+              : 'Historial de dueños, papeletas, gravámenes, orden de captura y siniestralidad.'}
+          </p>
+        </div>
+        <Badge tone="success" size="sm" icon="lock_open">Activo</Badge>
+      </div>
+      <div className="flex flex-col gap-3 p-5">
+        {proEntries.map((entry) => (
+          <SectionBlock key={entry.key} entry={entry} section={sectionByKind(entry.dataKind)} vehicle={vehicle} onRetry={onRetry} />
+        ))}
+        {unlockedUltra
+          ? ultraEntries.map((entry) => (
+              <SectionBlock key={entry.key} entry={entry} section={sectionByKind(entry.dataKind)} vehicle={vehicle} onRetry={onRetry} />
+            ))
+          : <UltraUpsell busy={buying === 'ULTRA'} onActivate={() => onActivate('ULTRA')} />}
+      </div>
+    </section>
+  );
+}
+
+/** Panel bloqueado (usuario BASIC): teaser + dos pasos (Desbloquear → Pro/Ultra). */
+function LockedPaidPanel({
+  proEntries, ultraEntries, onActivate, buying,
+}: {
+  proEntries: readonly SectionCatalogEntry[];
+  ultraEntries: readonly SectionCatalogEntry[];
+  onActivate: (tier: 'PRO' | 'ULTRA') => void;
+  buying: 'PRO' | 'ULTRA' | null;
+}) {
+  const [revealed, setRevealed] = useState(false);
+  const all = [...proEntries, ...ultraEntries];
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+      <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+        <div className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-teal-50 text-teal-700">
+          <Icon name="workspace_premium" className="text-[24px]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte completo (Pro y Ultra)</h2>
+          <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
+            Historial de dueños y precios, papeletas, gravámenes, orden de captura, siniestralidad y análisis con IA.
+          </p>
+        </div>
+        <Badge tone="neutral" size="sm" icon="lock">Bloqueado</Badge>
+      </div>
+      <div className="p-5">
+        <div className="grid gap-2.5 sm:grid-cols-2">
+          {all.map((e) => (
+            <div key={e.key} className="flex items-start gap-2.5 rounded-xl border border-border bg-background p-3">
+              <Icon name={e.icon} className="mt-0.5 text-[20px] text-slate-400" />
+              <div className="min-w-0">
+                <p className="flex items-center gap-1.5 font-body text-[14px] font-semibold text-foreground">
+                  {e.label}
+                  {e.tier === ReportTier.ULTRA && <Badge tone="info" size="sm" icon={null}>Ultra</Badge>}
+                </p>
+                <p className="font-body text-[12.5px] leading-snug text-muted">{e.blurb}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div className="mt-5 rounded-xl border border-dashed border-border bg-background px-4 py-5">
+          {!revealed ? (
+            <div className="flex flex-col items-center gap-2 text-center">
+              <Button variant="accent" size="lg" icon="lock_open" onClick={() => setRevealed(true)}>
+                Desbloquear reporte completo
+              </Button>
+              <p className="max-w-sm font-body text-[12.5px] leading-snug text-muted">
+                Elige tu nivel. Nuestros especialistas procesan el reporte y estará listo en 3 a 10 minutos.
+              </p>
+            </div>
+          ) : (
+            <div className="flex flex-col items-center gap-3 text-center">
+              <p className="font-body text-[13px] font-semibold text-foreground">Elige tu nivel</p>
+              <div className="flex flex-col items-stretch gap-2.5 sm:flex-row sm:justify-center">
+                <Button variant="secondary" size="lg" onClick={() => onActivate('PRO')} disabled={!!buying}>
+                  {buying === 'PRO' ? 'Procesando…' : 'Activar Pro · S/ 15.90'}
+                </Button>
+                <div className="relative">
+                  <Button variant="accent" size="lg" icon="auto_awesome" onClick={() => onActivate('ULTRA')} disabled={!!buying}>
+                    {buying === 'ULTRA' ? 'Procesando…' : 'Activar Ultra · S/ 19.90'}
+                  </Button>
+                  <span className="pointer-events-none absolute -top-2.5 right-2 rounded-full bg-teal-600 px-2 py-0.5 font-body text-[10px] font-bold uppercase tracking-wide text-white shadow">
+                    Con IA
+                  </span>
+                </div>
+              </div>
+              <p className="max-w-md font-body text-[12.5px] leading-snug text-muted">
+                <strong className="text-foreground">Ultra</strong> incluye recomendación de compra con IA, valorización y odómetro.
+                Al activar, el reporte se procesa y estará listo en 3 a 10 minutos.
+              </p>
+            </div>
+          )}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+/** Upsell a Ultra dentro del panel Pro ya desbloqueado. */
+function UltraUpsell({ busy, onActivate }: { busy: boolean; onActivate: () => void }) {
+  return (
+    <div className="rounded-xl border border-dashed border-teal-300 bg-teal-50/60 p-4">
+      <div className="mb-2 flex items-center gap-2">
+        <Icon name="auto_awesome" className="text-[20px] text-teal-700" />
+        <h4 className="font-heading text-[15px] font-bold text-foreground">Sube a Ultra</h4>
+        <Badge tone="info" size="sm" icon={null}>Con IA</Badge>
+      </div>
+      <p className="mb-3 font-body text-[13px] leading-snug text-muted">
+        Recomendación de compra con IA a partir de todo el reporte, valorización de mercado y análisis de odómetro.
+      </p>
+      <Button variant="accent" size="md" icon="auto_awesome" onClick={onActivate} disabled={busy}>
+        {busy ? 'Procesando…' : 'Activar Ultra · S/ 19.90'}
+      </Button>
+    </div>
+  );
+}
+
 /* ── Modal de pago con Yape personal (manual) ─────────────────────── */
 function YapeModal({
   plate,
@@ -807,7 +962,63 @@ function SectionBody({
     return section ? <TransporteBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
+  if (entry.key === 'ia') {
+    return section ? <IaBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
   return <ComingSoon blurb={entry.blurb} />;
+}
+
+/* ── Análisis con IA (ULTRA) ──────────────────────────────────────── */
+function IaBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const a = section.payload as IaAnalysis | undefined;
+  if (!a) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  const V: Record<string, { tone: Tone; icon: string; label: string }> = {
+    comprar: { tone: 'success', icon: 'thumb_up', label: 'Comprar' },
+    precaucion: { tone: 'warning', icon: 'warning', label: 'Con precaución' },
+    evitar: { tone: 'danger', icon: 'gpp_bad', label: 'Evitar' },
+  };
+  const verdict = V[a.verdict] ?? V.precaucion!;
+  const sevTone: Record<string, Tone> = { alta: 'danger', media: 'warning', baja: 'neutral' };
+  return (
+    <div className="flex flex-col gap-3">
+      <StatusLine tone={verdict.tone} icon={verdict.icon}>Veredicto de la IA: {verdict.label}</StatusLine>
+      {a.summary && <p className="font-body text-[15px] leading-relaxed text-foreground">{a.summary}</p>}
+
+      {a.redFlags.length > 0 && (
+        <div className="flex flex-col gap-2">
+          {a.redFlags.map((f, i) => (
+            <div key={i} className="rounded-lg border border-border bg-surface p-3">
+              <div className="flex items-center gap-2">
+                <Badge tone={sevTone[f.severity] ?? 'neutral'} size="sm" icon={null}>{f.severity}</Badge>
+                <span className="font-body text-[14px] font-semibold text-foreground">{f.title}</span>
+              </div>
+              <p className="mt-1 font-body text-[13px] text-muted">{f.detail}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {a.positives.length > 0 && (
+        <div className="rounded-lg border border-success/30 bg-success-bg p-3">
+          <p className="mb-1 font-body text-xs font-bold uppercase tracking-wide text-success">Puntos a favor</p>
+          <ul className="list-disc pl-5 font-body text-[13px] text-foreground">
+            {a.positives.map((p, i) => <li key={i}>{p}</li>)}
+          </ul>
+        </div>
+      )}
+
+      <div className="rounded-lg border border-border bg-background p-3">
+        <p className="font-body text-[13px] leading-relaxed text-foreground"><strong>Recomendación:</strong> {a.recommendation}</p>
+        {a.priceComment && <p className="mt-1.5 font-body text-[12.5px] leading-snug text-muted"><strong>Precio:</strong> {a.priceComment}</p>}
+      </div>
+
+      <p className="font-body text-[11px] leading-snug text-slate-400">
+        Análisis generado por IA a partir del reporte. Es referencial y no reemplaza una inspección mecánica ni asesoría legal.
+      </p>
+    </div>
+  );
 }
 
 function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
@@ -1224,9 +1435,11 @@ function LoadingView({
                 Nuestros especialistas están procesando tu reporte {tierName}
               </h2>
               <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
-                Estamos reuniendo el historial de dueños, papeletas, gravámenes y más desde las fuentes
-                oficiales. Esto toma de <strong className="text-foreground">3 a 10 minutos</strong> — puedes
-                dejar esta pestaña abierta y te mostraremos el reporte completo apenas esté listo.
+                Estamos reuniendo el historial de dueños y precios, papeletas, gravámenes, siniestralidad
+                {tier === 'ULTRA' ? ' y el análisis con IA' : ''} desde las fuentes oficiales. Este reporte
+                <strong className="text-foreground"> toma más tiempo</strong> por la cantidad de información que
+                se analiza: de <strong className="text-foreground">3 a 10 minutos</strong>. Puedes dejar esta
+                pestaña abierta —te mostraremos el reporte completo apenas esté listo.
               </p>
             </>
           ) : (

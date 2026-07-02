@@ -9,6 +9,7 @@ import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
 import { publishReport, fetchReport } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
+import { analyzeReportWithAI, attachIaSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
 import type { Report } from '@app/shared';
 
@@ -201,6 +202,8 @@ async function tryReuseReport(p: Pedido, tier: string): Promise<boolean> {
   if (!existing || !storedOwner) return false;
   // Nivel suficiente: si piden PRO/ULTRA, el guardado debe ser "full" (no solo BASIC).
   if (tier !== 'BASIC' && !storedIsFull(existing.report)) return false;
+  // ULTRA exige que el reporte guardado YA tenga el análisis IA (un reporte PRO no lo tiene).
+  if (tier === 'ULTRA' && !existing.report.sections.some((s) => s.kind === 'IA' && s.status === 'AVAILABLE')) return false;
   // Frescura: dentro de la ventana de reúso.
   const ageMs = Date.now() - new Date(existing.updatedAt).getTime();
   if (!(ageMs >= 0 && ageMs < REUSE_MS)) return false;
@@ -289,7 +292,12 @@ async function processPedido(p: Pedido): Promise<void> {
       console.log(`[motor-auto] pedido ${p.id} LISTO${job.error ? ` (PARCIAL: ${job.error})` : ''} (${ok}/${job.results.length} fuentes)`);
       // Publica el reporte normalizado en Supabase para que el cliente lo vea en placape.pe.
       try {
-        const report = toWebReport(p.placa, job.results, new Date().toISOString(), String(p.id));
+        let report = toWebReport(p.placa, job.results, new Date().toISOString(), String(p.id));
+        // ULTRA: análisis con IA sobre el reporte completo (recomendación + banderas + precio).
+        if (tier === 'ULTRA') {
+          const ia = await analyzeReportWithAI(report);
+          if (ia) { report = attachIaSection(report, ia, new Date().toISOString()); console.log(`[ia] análisis IA agregado a ${p.placa} · veredicto=${ia.verdict}`); }
+        }
         const pub = await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: String(p.id) });
         console.log(`[reportes] publicado para ${p.placa}: ${pub ? 'sí' : 'no (¿Supabase sin configurar?)'}`);
       } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }

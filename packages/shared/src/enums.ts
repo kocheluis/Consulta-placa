@@ -27,6 +27,8 @@ export const SectionKind = {
   GNV: 'GNV',
   DEUDA_BANCARIA: 'DEUDA_BANCARIA',
   PNP: 'PNP',
+  /** Análisis con IA (ULTRA): recomendación de compra a partir de todo el reporte. */
+  IA: 'IA',
 } as const;
 export type SectionKind = (typeof SectionKind)[keyof typeof SectionKind];
 
