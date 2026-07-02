@@ -45,7 +45,8 @@ function portBusy(p: number): boolean {
       let token = '';
       for (let i = 0; i < 25 && !token; i++) {
         await wait(1000);
-        token = await page.locator('input[name="cf-turnstile-response"]').first().inputValue().catch(() => '');
+        // inputValue con timeout: sin él, si el input no existe, cada llamada cuelga 30s.
+        token = await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 1000 }).catch(() => '');
       }
       state = token ? 'VIVO' : 'CAIDO';
     } else state = 'NO-CDP';

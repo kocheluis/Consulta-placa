@@ -147,7 +147,10 @@ export async function scrapeSunarpViaCdp(
       const tries = Math.ceil(perAttemptMs / 1000);
       for (let i = 0; i < tries && !token; i++) {
         await wait(1000);
-        token = await page.locator(turnstileSel).first().inputValue().catch(() => '');
+        // OJO: inputValue SIEMPRE con timeout. Sin él, si el input del Turnstile no existe
+        // (página en mal estado / colisión de perfil), Playwright espera su timeout por
+        // defecto (30s) POR LLAMADA → el loop se dispara a minutos y revienta el tope del job.
+        token = await page.locator(turnstileSel).first().inputValue({ timeout: 1000 }).catch(() => '');
       }
     }
 
