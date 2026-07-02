@@ -94,6 +94,24 @@ async function connectOrLaunch(
   }
 }
 
+/**
+ * Mutex POR PUERTO para el perfil de Chrome del CDP. Dos `scrapeSunarpViaCdp` concurrentes
+ * sobre el MISMO puerto/perfil (p. ej. la fuente `sunarp` y el SUNARP interno de `historial`
+ * corriendo en paralelo con OPERATOR_CONCURRENCY>1) chocan: Chrome NO permite dos instancias
+ * del mismo `user-data-dir` → una queda con la página rota → el Turnstile nunca renderiza.
+ * Este lock los pone en fila; las fuentes que no usan este perfil (captcha) siguen en paralelo.
+ */
+const portQueues = new Map<number, Promise<void>>();
+async function acquirePortLock(port: number): Promise<() => void> {
+  const prev = portQueues.get(port) ?? Promise.resolve();
+  let release!: () => void;
+  const mine = new Promise<void>((r) => { release = r; });
+  // El siguiente que pida el lock espera a que ESTE termine (prev → mine).
+  portQueues.set(port, prev.then(() => mine));
+  await prev; // espera tu turno
+  return release;
+}
+
 export async function scrapeSunarpViaCdp(
   plateRaw: string,
   opts: CdpSunarpOptions,
@@ -108,6 +126,8 @@ export async function scrapeSunarpViaCdp(
   const profileDir =
     opts.profileDir ?? process.env.CDP_CHROME_PROFILE ?? join(process.cwd(), '.cdp-chrome-profile');
 
+  // Serializa el acceso a este perfil/puerto (evita la colisión sunarp↔historial en 9222).
+  const releaseLock = await acquirePortLock(port);
   let browser: Browser | null = null;
   let dataImage: string | null = null;
   try {
@@ -202,5 +222,6 @@ export async function scrapeSunarpViaCdp(
     // Desconecta la sesión CDP pero NO mata el Chrome → conserva el clearance
     // para la próxima placa (passive Turnstile más rápido).
     if (browser) await browser.close().catch(() => {});
+    releaseLock(); // libera el perfil para el siguiente scrape (sunarp/historial)
   }
 }
