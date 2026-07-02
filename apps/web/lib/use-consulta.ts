@@ -35,7 +35,12 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
           // (upgrade PRO/ULTRA) → así detectamos cuándo termina y revelamos el reporte completo.
           if (generating) timer = setTimeout(load, 3000);
         } else if (generating) {
-          setState({ phase: 'loading', report: null, error: null, generating: true });
+          // Generando y sin reporte devuelto: si YA mostrábamos uno, consérvalo (no blanquees la
+          // pantalla → evita que el loader de pantalla completa reaparezca durante el upgrade).
+          // Solo la primera carga (sin reporte previo) cae al 'loading' de pantalla completa.
+          setState((prev) => (prev.phase === 'done' && prev.report
+            ? { ...prev, generating: true }
+            : { phase: 'loading', report: null, error: null, generating: true }));
           timer = setTimeout(load, 3000);
         } else {
           setState({ phase: 'error', report: null, error: 'Aún no has generado este reporte.', needsPro: true, generating: false });
