@@ -142,6 +142,49 @@ export async function enqueueFreeBasic(plateRaw: string): Promise<{ ok: boolean;
   }
 }
 
+/** ¿El reporte guardado ya corrió las fuentes PRO? (secciones CAPTURA/HISTORIAL/GRAVAMENES). */
+function reportCoversPro(report: unknown): boolean {
+  const secs = ((report as { sections?: Array<{ kind?: string }> })?.sections) ?? [];
+  return secs.some((s) => s.kind === 'CAPTURA' || s.kind === 'HISTORIAL' || s.kind === 'GRAVAMENES');
+}
+function reportHasIa(report: unknown): boolean {
+  const secs = ((report as { sections?: Array<{ kind?: string; status?: string }> })?.sections) ?? [];
+  return secs.some((s) => s.kind === 'IA' && s.status === 'AVAILABLE');
+}
+
+/**
+ * Encola (si hace falta) la generación del reporte del NIVEL PAGADO por el usuario para una placa.
+ * Idempotente: 'ready' si ya cubre el nivel, 'generating' si hay un pedido activo, 'queued' si lo
+ * encola. Verifica el pago server-side (getPaidTier). Lo llama la web cuando el usuario tiene PRO/
+ * ULTRA pero el reporte guardado aún no trae ese nivel → así la generación siempre arranca y la
+ * pantalla de carga termina resolviéndose (no queda colgada).
+ */
+export async function enqueuePaidReport(plateRaw: string): Promise<{ ok: boolean; status: 'queued' | 'generating' | 'ready' | 'not_paid' | 'invalid' }> {
+  const placa = (plateRaw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (placa.length < 6 || placa.length > 7) return { ok: false, status: 'invalid' };
+  try {
+    const sb = await createClient();
+    const { data: { user } } = await sb.auth.getUser();
+    if (!user) return { ok: false, status: 'not_paid' };
+    const tier = await getPaidTier(placa);
+    if (tier === 'BASIC') return { ok: false, status: 'not_paid' };
+
+    const admin = createAdminClient();
+    const { data: rep } = await admin.from('reportes').select('report').eq('placa', placa).maybeSingle();
+    if (rep?.report && reportCoversPro(rep.report) && (tier !== 'ULTRA' || reportHasIa(rep.report))) {
+      return { ok: true, status: 'ready' };
+    }
+    const { data: ped } = await admin
+      .from('pedidos').select('id').eq('placa', placa).in('estado', ['pendiente', 'procesando']).limit(1);
+    if (ped && ped.length) return { ok: true, status: 'generating' };
+    await admin.from('pedidos').insert({ placa, estado: 'pendiente', tier, user_id: user.id, email: user.email ?? null });
+    return { ok: true, status: 'queued' };
+  } catch (e) {
+    console.error('[pedidos] enqueuePaidReport falló:', (e as Error).message);
+    return { ok: false, status: 'invalid' };
+  }
+}
+
 /**
  * Datos de una compra + email del comprador, para notificar (webhook/panel admin,
  * que solo conocen el orderId). Usa el cliente admin (service_role + Auth admin).

@@ -211,7 +211,6 @@ export default function ReportePage() {
       cached={state.cached}
       onRetry={actualizar}
       preview={preview}
-      generating={state.phase === 'done' && state.generating}
     />
   );
 }
@@ -262,9 +261,9 @@ function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () =
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
 function ReportView({
-  report, cached, onRetry, preview, generating,
+  report, cached, onRetry, preview,
 }: {
-  report: Report; cached: boolean; onRetry: () => void; preview?: string; generating: boolean;
+  report: Report; cached: boolean; onRetry: () => void; preview?: string;
 }) {
   const router = useRouter();
   const v = report.vehicle;
@@ -275,64 +274,34 @@ function ReportView({
   const [currentTier, setCurrentTier] = useState<Tier>(preview ? 'ULTRA' : 'BASIC');
   const [buying, setBuying] = useState<'PRO' | 'ULTRA' | null>(null);
   const [pendingYape, setPendingYape] = useState<{ tier: 'PRO' | 'ULTRA'; orderId?: string } | null>(null);
-  // Nivel que el usuario acaba de activar: mientras esté seteado, mostramos la pantalla de
-  // carga ("procesado por especialistas") hasta que el motor regenere el reporte completo.
-  const [activating, setActivating] = useState<'PRO' | 'ULTRA' | null>(null);
-  const sawGen = useRef(false);
   const onRetryRef = useRef(onRetry);
   onRetryRef.current = onRetry;
+  const kicked = useRef<string>(''); // evita re-encolar en bucle (clave placa+nivel)
 
   useEffect(() => {
     if (preview) { setCurrentTier('ULTRA'); return; }
-    getPaidTier(report.placa)
-      .then(setCurrentTier)
-      .catch(() => {});
+    getPaidTier(report.placa).then(setCurrentTier).catch(() => {});
   }, [report.placa, preview]);
 
-  // Al activar un nivel, arranca la pantalla de carga y dispara el polling del reporte.
-  const beginActivation = (tier: 'PRO' | 'ULTRA') => {
-    sawGen.current = false;
-    setActivating(tier);
-    onRetryRef.current(); // fuerza una lectura para que aparezca el pedido en curso (generating)
-  };
-
-  // Mientras se activa, sondea el reporte cada 3 s (el motor tarda ~3-10 min en regenerarlo).
-  useEffect(() => {
-    if (!activating) return;
-    const iv = setInterval(() => onRetryRef.current(), 3000);
-    return () => clearInterval(iv);
-  }, [activating]);
-  // Marca que ya vimos el pedido "en proceso" (para no revelar antes de tiempo).
-  useEffect(() => {
-    if (activating && generating) sawGen.current = true;
-  }, [activating, generating]);
-  // Cuando el pedido terminó (arrancó y ya no está generando) → revela el reporte del nuevo nivel.
-  useEffect(() => {
-    if (!activating || !sawGen.current || generating) return;
-    let alive = true;
-    void getPaidTier(report.placa).then((t) => { if (alive) setCurrentTier(t); }).catch(() => {});
-    setActivating(null);
-    onRetryRef.current();
-    return () => { alive = false; };
-  }, [activating, generating, report.placa]);
-  // Salvaguarda: si nunca llegó a "generando" (no se encoló nada) tras ~25 s, revela igual.
-  useEffect(() => {
-    if (!activating) return;
-    const t = setTimeout(() => {
-      if (!sawGen.current) {
-        getPaidTier(report.placa).then(setCurrentTier).catch(() => {});
-        setActivating(null);
-      }
-    }, 25000);
-    return () => clearTimeout(t);
-  }, [activating, report.placa]);
+  // ¿El reporte guardado YA cubre el nivel pagado? (guiado por datos, sobrevive recargas).
+  // PRO = corrieron las fuentes PRO (aparece CAPTURA/HISTORIAL/GRAVAMENES); ULTRA = además la IA.
+  const rankNow = TIER_RANK[currentTier as ReportTier] ?? 1;
+  const proReady = report.sections.some((s) => s.kind === 'CAPTURA' || s.kind === 'HISTORIAL' || s.kind === 'GRAVAMENES');
+  const ultraReady = report.sections.some((s) => s.kind === 'IA' && s.status === SectionStatus.AVAILABLE);
+  const awaitingUltra = !preview && currentTier === 'ULTRA' && !ultraReady;
+  const awaitingPro = !preview && rankNow >= TIER_RANK[ReportTier.PRO] && !proReady;
+  const awaitingPaid = awaitingPro || awaitingUltra;
+  const awaitingTier: 'PRO' | 'ULTRA' = awaitingUltra ? 'ULTRA' : 'PRO';
 
   const comprar = async (tier: 'PRO' | 'ULTRA') => {
     setBuying(tier);
     try {
       const res = await buyReport(report.placa, tier);
       if (res.status === 'paid') {
-        beginActivation(tier); // mock / aprobado al instante → a la pantalla de "en proceso"
+        // Aprobado (mock/inline): al desbloquear el nivel, `awaitingPaid` mostrará la pantalla
+        // de carga hasta que el motor genere el reporte completo.
+        setCurrentTier(await getPaidTier(report.placa));
+        onRetryRef.current();
       } else if (res.redirectUrl) {
         window.location.href = res.redirectUrl; // IziPay real
         return;
@@ -350,19 +319,32 @@ function ReportView({
   };
 
   // Reconsulta el nivel pagado (tras yapear, el usuario pulsa "Verificar"). Si ya está pagado,
-  // cierra el modal y arranca la pantalla de "en proceso".
+  // cierra el modal; `awaitingPaid` toma el relevo y muestra la carga.
   const verificarPago = async (): Promise<Tier> => {
     const t = await getPaidTier(report.placa);
-    if (t !== 'BASIC') {
-      setPendingYape(null);
-      beginActivation(t as 'PRO' | 'ULTRA');
-    }
+    if (t !== 'BASIC') { setCurrentTier(t); setPendingYape(null); onRetryRef.current(); }
     return t;
   };
 
-  // Mientras se activa un nivel, el reporte se está regenerando → pantalla de carga dedicada.
-  if (activating) {
-    return <LoadingView placa={report.placa} variant="specialists" tier={activating} />;
+  // Esperando el reporte del nivel pagado: (1) asegura que la generación esté encolada (una vez
+  // por placa+nivel) y (2) sondea cada 4 s hasta que el reporte esté listo. Sobrevive recargas.
+  useEffect(() => {
+    if (!awaitingPaid) return;
+    const tierKey = `${report.placa}:${awaitingTier}`;
+    if (kicked.current !== tierKey) {
+      kicked.current = tierKey;
+      void fetch('/api/generar-reporte', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placa: report.placa }),
+      }).catch(() => {});
+    }
+    const iv = setInterval(() => onRetryRef.current(), 4000);
+    return () => clearInterval(iv);
+  }, [awaitingPaid, awaitingTier, report.placa]);
+
+  // Reporte de pago aún no listo → pantalla "procesado por especialistas" (3-10 min).
+  if (awaitingPaid) {
+    return <LoadingView placa={report.placa} variant="specialists" tier={awaitingTier} />;
   }
 
   const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
