@@ -45,7 +45,10 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
       }
     };
 
-    setState({ phase: 'loading', report: null, error: null, generating: false });
+    // Al re-consultar (botón Actualizar o polling de un upgrade PRO/ULTRA) conserva el reporte
+    // ya visible en vez de blanquear la pantalla: así solo cambia lo que llega nuevo. Solo la
+    // primera carga (sin reporte aún) muestra el estado 'loading' de pantalla completa.
+    setState((prev) => (prev.phase === 'done' && prev.report ? prev : { phase: 'loading', report: null, error: null, generating: false }));
     load();
     return () => { cancelled = true; clearTimeout(timer); };
   }, [placa, refreshToken, enabled, preview]);

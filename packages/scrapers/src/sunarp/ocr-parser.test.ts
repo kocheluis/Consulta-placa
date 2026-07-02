@@ -42,6 +42,16 @@ describe('parseSunarpOcr', () => {
     expect(r!.ownerName).toBe('QUALITAS COMPAÑIA DE SEGUROS S.A.');
   });
 
+  it('corrige el paréntesis del OCR a J en serie/VIN y no deja símbolos', () => {
+    // Caso real (placa AYE066): el OCR leyó la J como ")" → "…4575)4002451".
+    const ocr = `N9 SERIE: 9BWAL4575)4002451\nN9 VIN: 9BWAL4575)4002451\nNC MOTOR: CWS03-1524`;
+    const [r] = parseSunarpOcr(ocr, 'AYE-066');
+    expect(r!.vehicle?.serie).toBe('9BWAL4575J4002451');
+    expect(r!.vehicle?.vin).toBe('9BWAL4575J4002451');
+    // Cualquier otro símbolo (guion aquí) se elimina: solo letras y números.
+    expect(r!.vehicle?.engineNumber).toBe('CWS031524');
+  });
+
   it('marca robo cuando ANOTACIONES menciona robo/captura', () => {
     const [r] = parseSunarpOcr('N9 PLACA: ABC123\nANOTACIONES: ORDEN DE CAPTURA POR ROBO', 'ABC-123');
     expect(r!.vehicle?.stolenAlert).toBe(true);

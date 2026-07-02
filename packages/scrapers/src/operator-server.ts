@@ -89,12 +89,20 @@ const SRC_TIMEOUT_DEFAULT = 150_000; // 2.5 min para las fuentes de captcha (SAT
 // solo núcleo, 2+ navegadores compiten por CPU y va MÁS LENTO (medido: 386s/6-8 vs ~330s
 // secuencial). Sube OPERATOR_CONCURRENCY a 2-4 SOLO tras ampliar el VPS a más vCPUs.
 const CONCURRENCY = Math.max(1, Number(process.env.OPERATOR_CONCURRENCY ?? 1));
+// El reporte GRATIS (BASIC) son solo 3 fuentes ligeras (SUNARP + SBS + MTC) y el grueso de su
+// tiempo es ESPERA de red (CapSolver + portales), no CPU. Además SUNARP corre en un Chrome CDP
+// aparte, así que solaparlas con las otras dos casi no compite por el núcleo. Por eso el BASIC
+// SÍ va en paralelo (default 3) aunque el reporte de pago (6-8 fuentes pesadas) siga secuencial
+// en el VPS de 1 vCPU. Revertir con BASIC_CONCURRENCY=1 si hiciera falta.
+const BASIC_CONCURRENCY = Math.max(1, Number(process.env.BASIC_CONCURRENCY ?? 3));
 const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
   id: string; plate: string; sources: string[];
   results: OperatorSourceResult[]; percent: number; current: string; step: string;
   done: boolean; cancelled: boolean; error?: string;
+  /** Fuentes concurrentes para ESTE job (BASIC va en paralelo; pago, secuencial). */
+  concurrency?: number;
 }
 const jobs = new Map<string, Job>();
 const newId = () => `j${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
@@ -155,7 +163,8 @@ async function runJob(job: Job): Promise<void> {
       if (src) await runOne(src);
     }
   };
-  await Promise.all(Array.from({ length: Math.min(CONCURRENCY, job.sources.length) }, worker));
+  const conc = Math.max(1, job.concurrency ?? CONCURRENCY);
+  await Promise.all(Array.from({ length: Math.min(conc, job.sources.length) }, worker));
 
   clearInterval(tick);
   clearTimeout(killer);
@@ -275,7 +284,7 @@ async function processPedido(p: Pedido): Promise<void> {
       console.warn('[dedup] verificación falló, regenero:', (e as Error).message);
     }
   }
-  const job: Job = { id: newId(), plate: p.placa, sources, results: [], percent: 0, current: sources[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false };
+  const job: Job = { id: newId(), plate: p.placa, sources, results: [], percent: 0, current: sources[0] ?? 'sunarp', step: 'auto', done: false, cancelled: false, concurrency: tier === 'BASIC' ? BASIC_CONCURRENCY : CONCURRENCY };
   jobs.set(job.id, job);
   currentAutoJobId = job.id;
   try {
@@ -288,9 +297,10 @@ async function processPedido(p: Pedido): Promise<void> {
       await queue.setError(p.id, job.error ?? 'ninguna fuente respondió');
       console.log(`[motor-auto] pedido ${p.id} ERROR${job.error ? ` (${job.error})` : ''}`);
     } else {
-      await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
-      console.log(`[motor-auto] pedido ${p.id} LISTO${job.error ? ` (PARCIAL: ${job.error})` : ''} (${ok}/${job.results.length} fuentes)`);
-      // Publica el reporte normalizado en Supabase para que el cliente lo vea en placape.pe.
+      // Publica el reporte en Supabase ANTES de marcar el pedido 'listo'. Si se hiciera al revés,
+      // habría una carrera: `generating` pasa a false (pedido listo) pero el reporte aún no está
+      // publicado → la web recibe el stub vacío y muestra "Generar consulta gratis" (y deja de
+      // sondear). Publicando primero, cuando `generating` cae a false el reporte YA está visible.
       try {
         let report = toWebReport(p.placa, job.results, new Date().toISOString(), String(p.id));
         // ULTRA: análisis con IA sobre el reporte completo (recomendación + banderas + precio).
@@ -301,6 +311,8 @@ async function processPedido(p: Pedido): Promise<void> {
         const pub = await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: String(p.id) });
         console.log(`[reportes] publicado para ${p.placa}: ${pub ? 'sí' : 'no (¿Supabase sin configurar?)'}`);
       } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
+      await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
+      console.log(`[motor-auto] pedido ${p.id} LISTO${job.error ? ` (PARCIAL: ${job.error})` : ''} (${ok}/${job.results.length} fuentes)`);
       // Entrega al cliente: correo + WhatsApp con el enlace del reporte listo.
       await notifyReady(p, tier);
       if (N8N_WEBHOOK) {

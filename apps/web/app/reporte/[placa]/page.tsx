@@ -293,6 +293,23 @@ function ReportView({
   const awaitingPaid = awaitingPro || awaitingUltra;
   const awaitingTier: 'PRO' | 'ULTRA' = awaitingUltra ? 'ULTRA' : 'PRO';
 
+  // Cierre visual del panel de pago: cuando el reporte pagado queda listo, mantén el anillo en
+  // 100% ~0.9 s antes de revelar las secciones (mismo gesto que el reporte gratis). Al terminar,
+  // `awaitingTier` vuelve a 'PRO' por defecto, así que recordamos el último nivel en curso.
+  const lastPaidTier = useRef<'PRO' | 'ULTRA'>('PRO');
+  if (awaitingPaid) lastPaidTier.current = awaitingTier;
+  const [paidFinishing, setPaidFinishing] = useState(false);
+  const wasAwaiting = useRef(awaitingPaid);
+  useEffect(() => {
+    if (wasAwaiting.current && !awaitingPaid) {
+      setPaidFinishing(true);
+      const t = setTimeout(() => setPaidFinishing(false), 900);
+      wasAwaiting.current = awaitingPaid;
+      return () => clearTimeout(t);
+    }
+    wasAwaiting.current = awaitingPaid;
+  }, [awaitingPaid]);
+
   const comprar = async (tier: 'PRO' | 'ULTRA') => {
     setBuying(tier);
     try {
@@ -342,10 +359,8 @@ function ReportView({
     return () => clearInterval(iv);
   }, [awaitingPaid, awaitingTier, report.placa]);
 
-  // Reporte de pago aún no listo → pantalla "procesado por especialistas" (3-10 min).
-  if (awaitingPaid) {
-    return <LoadingView placa={report.placa} variant="specialists" tier={awaitingTier} />;
-  }
+  // El reporte de pago aún no está listo → el resto del reporte (gratis) sigue visible; solo el
+  // panel PRO/ULTRA muestra la carga (ver <PaidPanelLoading/> en el <main> de abajo).
 
   const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
   const summary = v ? [v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') : 'Vehículo';
@@ -459,7 +474,11 @@ function ReportView({
         {/* BASIC (gratis) arriba; PRO+ULTRA en UN solo panel abajo (oculto → desbloquear → elegir nivel). */}
         <main className="flex flex-col gap-6">
           <TierPanel tierKey={ReportTier.BASIC} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
-          <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+          {awaitingPaid || paidFinishing ? (
+            <PaidPanelLoading tier={awaitingPaid ? awaitingTier : lastPaidTier.current} finishing={paidFinishing} />
+          ) : (
+            <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+          )}
         </main>
       </div>
 
@@ -1341,107 +1360,128 @@ const BUYING_TIPS = [
   'Haz la transferencia de propiedad de inmediato para evitar papeletas ajenas.',
 ];
 
-function LoadingView({
-  placa, finishing = false, variant = 'default', tier,
-}: {
-  placa: string; finishing?: boolean; variant?: 'default' | 'specialists'; tier?: 'PRO' | 'ULTRA';
-}) {
-  const specialists = variant === 'specialists';
-  // El reporte gratis tarda segundos; el PRO/ULTRA (historial SPRL, etc.) tarda minutos → la
-  // asíntota del progreso simulado sube mucho más lento en el modo "especialistas".
-  const tau = specialists ? 240 : 20;
-  const [pct, setPct] = useState(specialists ? 2 : 4);
-  const [tip, setTip] = useState(() => Math.floor(Math.random() * BUYING_TIPS.length));
-  // Progreso simulado: sube rápido y se acerca a ~96% (asíntota); salta a 100% al llegar el reporte.
+/** Progreso simulado: sube rápido y se acerca a ~96% (asíntota); salta a 100% al terminar (`finishing`).
+ *  `tau` alto = sube más lento (reportes de pago que tardan minutos); `initial` = punto de partida. */
+function useSimulatedProgress(tau: number, initial: number, finishing = false): number {
+  const [pct, setPct] = useState(initial);
   useEffect(() => {
     if (finishing) { setPct(100); return; }
     const start = Date.now();
     const id = setInterval(() => {
       const s = (Date.now() - start) / 1000;
-      setPct(Math.min(96, Math.max(2, Math.round(96 * (1 - Math.exp(-s / tau))))));
+      setPct(Math.min(96, Math.max(initial, Math.round(96 * (1 - Math.exp(-s / tau))))));
     }, 350);
     return () => clearInterval(id);
-  }, [finishing, tau]);
+  }, [finishing, tau, initial]);
+  return pct;
+}
+
+/** Anillo de progreso circular reutilizable. */
+function ProgressRing({ pct, label, size = 148 }: { pct: number; label: string; size?: number }) {
+  const R = 54;
+  const C = 2 * Math.PI * R;
+  const off = C * (1 - pct / 100);
+  return (
+    <div className="relative grid place-items-center">
+      <svg width={size} height={size} viewBox="0 0 148 148">
+        <circle cx="74" cy="74" r={R} fill="none" stroke="#E2E8F0" strokeWidth="11" />
+        <circle
+          cx="74" cy="74" r={R} fill="none" stroke="#16B5A3" strokeWidth="11" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={off} transform="rotate(-90 74 74)"
+          style={{ transition: 'stroke-dashoffset 0.4s ease-out' }}
+        />
+      </svg>
+      <div className="absolute flex flex-col items-center">
+        <span className="font-heading text-[34px] font-extrabold leading-none text-foreground">{pct}%</span>
+        <span className="mt-1 font-body text-xs text-muted">{label}</span>
+      </div>
+    </div>
+  );
+}
+
+/** Consejos de compra que rotan cada 5 s. */
+function useBuyingTip(): number {
+  const [tip, setTip] = useState(() => Math.floor(Math.random() * BUYING_TIPS.length));
   useEffect(() => {
     const t = setInterval(() => setTip((i) => (i + 1) % BUYING_TIPS.length), 5000);
     return () => clearInterval(t);
   }, []);
-  const R = 54;
-  const C = 2 * Math.PI * R;
-  const off = C * (1 - pct / 100);
-  const tierName = tier === 'ULTRA' ? 'Ultra' : 'Pro';
+  return tip;
+}
+
+function BuyingTip({ tip }: { tip: number }) {
+  return (
+    <div className="w-full rounded-xl border border-azul-200 bg-azul-50 p-4">
+      <p className="mb-1.5 flex items-center gap-1.5 font-body text-xs font-bold uppercase tracking-wide text-azul-700">
+        <Icon name="lightbulb" className="text-[16px]" /> Consejo al comprar
+      </p>
+      <p key={tip} className="font-body text-[15px] leading-snug text-foreground">{BUYING_TIPS[tip]}</p>
+    </div>
+  );
+}
+
+function LoadingView({ placa, finishing = false }: { placa: string; finishing?: boolean }) {
+  const pct = useSimulatedProgress(20, 4, finishing);
+  const tip = useBuyingTip();
   return (
     <div className="bg-background">
       <div className="border-b border-border bg-surface">
         <div className="mx-auto flex max-w-[1240px] items-center gap-2.5 px-4 py-3 sm:px-7">
           <Icon name="directions_car" className="text-xl text-muted" />
           <span className="font-mono text-[15px] font-bold tracking-wide text-foreground">{formatPlateDisplay(placa)}</span>
-          <span className="font-body text-sm text-muted">
-            · {specialists ? `Procesando tu reporte ${tierName}…` : 'Consultando portales oficiales…'}
-          </span>
+          <span className="font-body text-sm text-muted">· Consultando portales oficiales…</span>
         </div>
       </div>
-      <div
-        className="mx-auto grid max-w-[560px] place-items-center gap-7 px-4 py-14 sm:py-20"
-        aria-busy="true"
-        aria-live="polite"
-      >
-        {/* Anillo de progreso */}
-        <div className="relative grid place-items-center">
-          <svg width="148" height="148" viewBox="0 0 148 148">
-            <circle cx="74" cy="74" r={R} fill="none" stroke="#E2E8F0" strokeWidth="11" />
-            <circle
-              cx="74"
-              cy="74"
-              r={R}
-              fill="none"
-              stroke="#16B5A3"
-              strokeWidth="11"
-              strokeLinecap="round"
-              strokeDasharray={C}
-              strokeDashoffset={off}
-              transform="rotate(-90 74 74)"
-              style={{ transition: 'stroke-dashoffset 0.4s ease-out' }}
-            />
-          </svg>
-          <div className="absolute flex flex-col items-center">
-            <span className="font-heading text-[34px] font-extrabold leading-none text-foreground">{pct}%</span>
-            <span className="mt-1 font-body text-xs text-muted">{specialists ? 'Procesando' : 'Generando'}</span>
-          </div>
-        </div>
-
+      <div className="mx-auto grid max-w-[560px] place-items-center gap-7 px-4 py-14 sm:py-20" aria-busy="true" aria-live="polite">
+        <ProgressRing pct={pct} label="Generando" />
         <div className="text-center">
-          {specialists ? (
-            <>
-              <h2 className="font-heading text-xl font-bold text-foreground">
-                Nuestros especialistas están procesando tu reporte {tierName}
-              </h2>
-              <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
-                Estamos reuniendo el historial de dueños y precios, papeletas, gravámenes, siniestralidad
-                {tier === 'ULTRA' ? ' y el análisis con IA' : ''} desde las fuentes oficiales. Este reporte
-                <strong className="text-foreground"> toma más tiempo</strong> por la cantidad de información que
-                se analiza: de <strong className="text-foreground">3 a 10 minutos</strong>. Puedes dejar esta
-                pestaña abierta —te mostraremos el reporte completo apenas esté listo.
-              </p>
-            </>
-          ) : (
-            <>
-              <h2 className="font-heading text-xl font-bold text-foreground">Generando tu reporte…</h2>
-              <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
-                Estamos consultando los portales oficiales (SUNARP, SOAT, revisión técnica y más). Toma unos segundos — no cierres esta pestaña.
-              </p>
-            </>
-          )}
-        </div>
-
-        {/* Consejos de compra (rotan) */}
-        <div className="w-full rounded-xl border border-azul-200 bg-azul-50 p-4">
-          <p className="mb-1.5 flex items-center gap-1.5 font-body text-xs font-bold uppercase tracking-wide text-azul-700">
-            <Icon name="lightbulb" className="text-[16px]" /> Consejo al comprar
+          <h2 className="font-heading text-xl font-bold text-foreground">Generando tu reporte…</h2>
+          <p className="mx-auto mt-1.5 max-w-sm font-body text-sm text-muted">
+            Estamos consultando los portales oficiales (SUNARP, SOAT, revisión técnica y más). Toma unos segundos — no cierres esta pestaña.
           </p>
-          <p key={tip} className="font-body text-[15px] leading-snug text-foreground">{BUYING_TIPS[tip]}</p>
         </div>
+        <BuyingTip tip={tip} />
       </div>
     </div>
+  );
+}
+
+/** Carga scoped a la sección de pago: se muestra en lugar del panel PRO/ULTRA mientras el motor
+ *  reúne las fuentes de pago. El resto del reporte (gratis) sigue visible; al terminar, se retira
+ *  y aparecen las secciones completas. */
+function PaidPanelLoading({ tier, finishing = false }: { tier: 'PRO' | 'ULTRA'; finishing?: boolean }) {
+  const tierName = tier === 'ULTRA' ? 'Ultra' : 'Pro';
+  const pct = useSimulatedProgress(240, 2, finishing);
+  const tip = useBuyingTip();
+  return (
+    <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+      <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+        <div className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-teal-50 text-teal-700">
+          <Icon name={tier === 'ULTRA' ? 'auto_awesome' : 'workspace_premium'} className="text-[24px]" />
+        </div>
+        <div className="min-w-0 flex-1">
+          <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte {tierName}</h2>
+          <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">Reuniendo las fuentes oficiales…</p>
+        </div>
+        <Badge tone="info" size="sm" icon="hourglass_top">Procesando</Badge>
+      </div>
+      <div className="grid place-items-center gap-6 px-4 py-10 sm:py-12" aria-busy="true" aria-live="polite">
+        <ProgressRing pct={pct} label="Procesando" size={128} />
+        <div className="text-center">
+          <h3 className="font-heading text-lg font-bold text-foreground">
+            Nuestros especialistas están procesando tu reporte {tierName}
+          </h3>
+          <p className="mx-auto mt-1.5 max-w-md font-body text-sm text-muted">
+            Estamos reuniendo el historial de dueños y precios, papeletas, gravámenes, siniestralidad
+            {tier === 'ULTRA' ? ' y el análisis con IA' : ''} desde las fuentes oficiales. Toma de{' '}
+            <strong className="text-foreground">3 a 10 minutos</strong>. Puedes dejar esta pestaña
+            abierta — se completará aquí mismo apenas esté listo.
+          </p>
+        </div>
+        <div className="w-full max-w-md">
+          <BuyingTip tip={tip} />
+        </div>
+      </div>
+    </section>
   );
 }

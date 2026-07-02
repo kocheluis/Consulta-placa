@@ -56,8 +56,12 @@ export function chromeFlags(): string[] {
  */
 export function killEngineChrome(): void {
   if (platform() !== 'linux') return;
+  // KEEP_SUNARP_WARM=1: NO mata el Chrome de SUNARP entre reportes → la próxima consulta reusa
+  // el clearance CALIENTE y el Turnstile pasa pasivo en ~6s (en vez de relanzar frío y esperar
+  // ~30-45s de recargas). Cuesta ~1 Chrome de RAM sostenido; enciéndelo si el VPS lo aguanta.
+  const keepSunarpWarm = process.env.KEEP_SUNARP_WARM === '1';
   const ports = [...new Set([
-    Number(process.env.CDP_SUNARP_PORT ?? 9222),
+    ...(keepSunarpWarm ? [] : [Number(process.env.CDP_SUNARP_PORT ?? 9222)]),
     Number(process.env.CDP_SPRL_PORT ?? 9224),
     Number(process.env.CDP_SPRL_PORT_2 ?? 9225), // 2ª cuenta SPRL (si no, su Chrome quedaría huérfano)
     Number(process.env.CDP_SUPERBID_PORT ?? 9225),

@@ -33,6 +33,26 @@ function cleanStrict(v: string | undefined): string | null {
   return ['ninguna', 'ninguno', 'no registra', 's/n'].includes(n) ? null : t;
 }
 
+// Confusiones de glifo del OCR en identificadores (serie/VIN/motor). En la tipografía de la
+// tarjeta de SUNARP la LETRA "J" se lee a veces como paréntesis — validado a mano: "…4575)4002451"
+// era "…4575J4002451". Ambos paréntesis mapean a J (misma letra, curvatura opuesta).
+const OCR_IDENT_FIX: Record<string, string> = { ')': 'J', '(': 'J' };
+
+/**
+ * Normaliza un identificador alfanumérico (serie/VIN/motor): SIEMPRE es letras y números,
+ * nunca símbolos. Corrige las confusiones conocidas del OCR (paréntesis→J) y elimina cualquier
+ * otro símbolo restante, para que estos campos nunca muestren signos raros al usuario.
+ */
+function cleanIdent(v: string | undefined): string | null {
+  const t = cleanValue(v);
+  if (!t) return null;
+  const fixed = t
+    .toUpperCase()
+    .replace(/[()]/g, (c) => OCR_IDENT_FIX[c] ?? '')
+    .replace(/[^A-Z0-9]/g, ''); // fuera guiones/espacios/otros símbolos que el OCR pudo inventar
+  return fixed || null;
+}
+
 /** Una línea que empieza con fecha dd/mm/aaaa = pie del certificado, no un dato. */
 const TIMESTAMP_RE = /^\d{1,2}\/\d{1,2}\/\d{4}/;
 
@@ -101,9 +121,9 @@ export function parseSunarpOcr(ocrText: string, plateDisplay: string): SourceRes
     model: cleanValue(data.modelo),
     year: Number.isFinite(year) ? year : null,
     color: cleanValue(data.color),
-    serie: cleanValue(data.serie),
-    vin: cleanValue(data.vin),
-    engineNumber: cleanValue(data.motor),
+    serie: cleanIdent(data.serie),
+    vin: cleanIdent(data.vin),
+    engineNumber: cleanIdent(data.motor),
     registralStatus,
     annotations,
     sede: cleanValue(data.sede),
