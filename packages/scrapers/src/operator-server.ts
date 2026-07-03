@@ -888,13 +888,17 @@ function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!b
   var pl=SELECTED;
   box.innerHTML='<div class="meta" style="margin:14px 0 8px">Generando enlace firmado…</div>';
   // Pide un token de preview FIRMADO y efímero (opción B): el secreto no viaja en la URL, solo la
-  // firma con expiración. Un enlace filtrado muere pronto y solo abre esta placa.
+  // firma con expiración. Un enlace filtrado muere pronto y solo abre esta placa. NO se embebe en
+  // iframe: la web pone X-Frame-Options: DENY / CSP frame-ancestors 'none' (anti-clickjacking, a
+  // propósito) → un iframe siempre daría "rechazó la conexión". Se abre en una pestaña nueva.
   fetch('/api/preview-token?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(o){
     var tok=o&&o.token, mins=Math.round(((o&&o.ttl)||600)/60);
     var url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(tok?'?preview='+encodeURIComponent(tok):'');
-    box.innerHTML='<div class="meta" style="margin:14px 0 8px">Reporte tal como lo ve el cliente · <a href="'+url+'" target="_blank" style="color:#0C6F64">abrir en pestaña ↗</a>'+
-      (tok?(' · enlace firmado, expira en '+mins+' min'):' · <b style="color:#B45309">⚠ sin OPERATOR_PREVIEW_TOKEN: se verá con candado</b>')+'</div>'+
-      '<iframe src="'+url+'" style="width:100%;height:1600px;border:1px solid var(--bd);border-radius:12px;background:#fff"></iframe>';
+    box.innerHTML='<div class="card wide" style="margin-top:14px">'+
+      '<div class="sum">La web se abre en una <b>pestaña nueva</b> (no embebida): placape.pe bloquea el iframe por seguridad anti-clickjacking (X-Frame-Options / CSP). El enlace es el reporte tal como lo ve el cliente.</div>'+
+      '<div style="margin-top:10px"><a href="'+url+'" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:var(--teal);color:#fff;font-weight:600;padding:10px 16px;border-radius:10px;text-decoration:none">Abrir el reporte del cliente ↗</a></div>'+
+      '<div class="meta" style="margin-top:8px">'+(tok?('Enlace firmado · expira en '+mins+' min · válido solo para esta placa'):'<b style="color:#B45309">⚠ sin OPERATOR_PREVIEW_TOKEN: se verá con candado</b>')+'</div>'+
+    '</div>';
   }).catch(function(e){box.innerHTML='<div class="meta">✖ '+esc(e)+'</div>';});}
 function showLiveLogs(pl){var d=document.getElementById('pdetail');
   fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
