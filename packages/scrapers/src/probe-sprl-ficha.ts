@@ -59,6 +59,11 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
         await page.goto(INGRESO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
         for (let i = 0; i < 25 && !(await passVisible()); i++) await wait(1000);
       }
+      // Fallback: la home del SPRL muestra un botón "INGRESAR" que abre el form (igual que historial.ts).
+      if (!(await passVisible())) {
+        await page.locator('a:has-text("INGRESAR"), button:has-text("INGRESAR"), a:has-text("Acceder")').first().click({ timeout: 6000 }).catch(() => {});
+        for (let i = 0; i < 15 && !(await passVisible()); i++) await wait(1000);
+      }
       if (await isLocked()) { console.log('⚠ SLOT 2 BLOQUEADA por SUNARP (exceso de intentos) → aborto, no reintento'); await page.screenshot({ path: `sprl2-locked-${plate}.png`, fullPage: true }).catch(() => {}); proc.kill(); process.exit(0); }
       if (!(await passVisible())) { console.log('no apareció el form de login'); await page.screenshot({ path: `sprl2-noform-${plate}.png`, fullPage: true }).catch(() => {}); proc.kill(); process.exit(0); }
       await page.locator('input[name*="usuario" i], input[formcontrolname*="usuario" i], input[type="text"]:visible').first().fill(slot.user).catch(() => {});
