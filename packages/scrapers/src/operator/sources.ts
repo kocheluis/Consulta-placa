@@ -136,10 +136,11 @@ export async function runMtcCitv(
   try {
     let dialog = '';
     page.on('dialog', (d) => { dialog = d.message(); d.accept().catch(() => {}); });
-    // 'domcontentloaded' (no 'networkidle'): el portal ASP.NET del MTC mantiene conexiones
-    // abiertas y NUNCA llega a networkidle → el goto expiraba a los 60s. Los waits explícitos
-    // del captcha/inputs de abajo garantizan que la página esté lista.
-    await page.goto('https://portal.mtc.gob.pe/reportedgtt/form/frmConsultaCITV.aspx', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // El portal VIEJO (portal.mtc.gob.pe/reportedgtt/…frmConsultaCITV.aspx) MURIÓ (302 → cuelga 60s).
+    // El NUEVO (rec.mtc.gob.pe/Citv/ArConsultaCitv) reusa los MISMOS IDs (#selBUS_Filtro, #texFiltro,
+    // #imgCaptcha, #texCaptcha, #btnBuscar) y el MISMO formato de certificado; los errores de captcha
+    // llegan por alert (dialog "El Código ingresado no es válido"). Validado en vivo (ADY067, jul-2026).
+    await page.goto('https://rec.mtc.gob.pe/Citv/ArConsultaCitv', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(1200);
     const sel = page.locator('#selBUS_Filtro');
     const selectPlaca = async () => { if (await sel.count()) await sel.selectOption({ label: 'Placa' }).catch(() => {}); await wait(500); };
@@ -147,28 +148,26 @@ export async function runMtcCitv(
     const capInput = page.locator('#texCaptcha');
     const plateInput = page.locator('#texFiltro');
     const buscar = page.locator('#btnBuscar');
-    const OK = /ÚLTIMO DOCUMENTO|ultimo documento|NRO DE CERTIFICADO|certificad/i;
+    // Señal de RESULTADO REAL = un código de certificado CITV (C-AAAA-…). NO uses la cabecera de la
+    // tabla ("NRO DE CERTIFICADO"): aparece aunque el resultado esté vacío → daría falso positivo.
+    const OK = /\bC-\d{4}-\d/i;
+    const CAP_ERR = /captcha|c[oó]digo ingresado|no es v[aá]lid|verifique/i;
     let cap = '';
 
     for (let i = 1; i <= 4; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1000); }
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1200); }
       await selectPlaca();
       await plateInput.fill(plate);
       dialog = '';
       await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
-      await wait(500); // el #imgCaptcha es base64 puesto por JS; deja que termine
+      await wait(900); // el #imgCaptcha lo pone JS; deja que termine de renderizar
       cap = await readCaptcha(solver, img);
       await capInput.fill(cap);
       await buscar.click();
       let body = '';
-      for (let k = 0; k < 10; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; }
-      if (/captcha|c[oó]digo ingresado/i.test(dialog)) continue;
-      // "No se encontró información" = resultado válido: el vehículo NO tiene CITV (p. ej.
-      // auto nuevo, aún no obligatorio). Es SIN_REGISTRO, no un error → captura y no reintentes.
-      if (/no se encontr|no existe|sin (resultado|informaci|registro)/i.test(dialog)) {
-        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        return { ...base, status: 'SIN_REGISTRO', summary: `Sin CITV registrado · MTC: "${dialog.trim().slice(0, 70)}"`, data: { mensaje: dialog.trim(), captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
-      }
+      for (let k = 0; k < 12; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; }
+      // Captcha rechazado (alert) → reintenta con uno nuevo.
+      if (CAP_ERR.test(dialog)) continue;
       if (OK.test(body)) {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         const certs = parseMtcCerts(body, plate);
@@ -179,9 +178,14 @@ export async function runMtcCitv(
         const lunas = /lunas|polariza|oscurec/i.test(body) ? 'mención en CITV (revisar)' : 'sin mención en CITV';
         return { ...base, status: 'ENCONTRADO', summary: vig ? `CITV ${vig.estado} hasta ${vig.vigenteHasta}` : `${certs.length} certificado(s) CITV`, data: { certificados: certs, observaciones, lunasPolarizadas: lunas, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
+      // Captcha ACEPTADO (no hubo alert de captcha) pero SIN certificado → el vehículo no tiene CITV
+      // (auto nuevo / aún no obligatorio). Es SIN_REGISTRO, no un error → no reintentes.
+      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+      const msg = dialog.trim();
+      return { ...base, status: 'SIN_REGISTRO', summary: msg ? `Sin CITV registrado · MTC: "${msg.slice(0, 70)}"` : 'Sin CITV registrado', data: { mensaje: msg || null, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o sin datos tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
