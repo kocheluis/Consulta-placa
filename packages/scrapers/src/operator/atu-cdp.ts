@@ -28,13 +28,10 @@ export interface CdpAtuOptions {
   profileDir?: string;
   /** Cuántos reintentos si el reCAPTCHA rechaza por score (default 2 → 3 intentos). */
   retries?: number;
-  /** Segundos de "reposo" tras cargar la página antes de la 1ª consulta (default 4500ms).
-   *  El reCAPTCHA v3 puntúa el tiempo en página + interacción: entrar y consultar de
-   *  inmediato baja el score → sube el 1er intento fallido. Dejarlo respirar lo mejora. */
+  /** "Reposo" tras cargar la página antes de la 1ª consulta (default 3000ms): da tiempo a que
+   *  cargue el script del reCAPTCHA y suma señal de interacción. NO evita el cold-start del v3
+   *  (eso lo cubre el bucle de reintentos), solo ayuda a que el grecaptcha esté listo al clic. */
   warmupMs?: number;
-  /** Recarga previa para madurar el score del v3 antes de la 1ª consulta (default true).
-   *  Evita el cold-start del primer execute() (que suele fallar). */
-  primeReload?: boolean;
   /** Ruta para guardar screenshot del resultado. */
   shotPath?: string;
   log?: (msg: string) => void;
@@ -108,27 +105,19 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       await wait(220);
     };
 
-    // Reposo inicial + gestos: el v3 puntúa tiempo-en-página e interacción antes del execute().
-    const warmupMs = Math.max(0, opts.warmupMs ?? 4500);
+    // Reposo inicial + gestos: da tiempo a que cargue el script del reCAPTCHA y suma señal de
+    // interacción. OJO: el v3 de ATU necesita DOS execute() (el 1º "calienta" el score y el 2º
+    // pasa); eso lo resuelve el bucle de reintentos, no el reposo. En PRODUCCIÓN el Chrome queda
+    // vivo entre placas → tras la 1ª placa la sesión ya está madura y la 1ª consulta pasa directo.
+    const warmupMs = Math.max(0, opts.warmupMs ?? 3000);
     await acceptCookies();
     await humanize();
-    log(`reposo inicial ${warmupMs}ms + gestos (calienta el score del v3)…`);
+    log(`reposo inicial ${warmupMs}ms + gestos…`);
     await wait(warmupMs);
-
-    // PRIME del reCAPTCHA v3: el PRIMER execute() de una sesión nueva puntúa bajo (cold start) →
-    // por eso "falla el 1er intento y pasa al recargar". Una recarga previa (mismo cookie de
-    // sesión, 2º pageview) madura el score, así la 1ª consulta REAL ya es el "segundo challenge".
-    if (opts.primeReload ?? true) {
-      log('prime: recarga previa para madurar el score del v3…');
-      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      await acceptCookies();
-      await humanize();
-      await wait(Math.min(warmupMs, 3000));
-    }
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       if (attempt > 0) {
-        log(`reCAPTCHA rechazó (score bajo) → recarga ${attempt}/${retries}…`);
+        log(`recarga ${attempt}/${retries} (madurando el score del v3)…`);
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       }
       await wait(1200);
@@ -141,13 +130,18 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       await humanize();
       // Clic en Buscar → dejamos que el reCAPTCHA v3 NATIVO se ejecute (sin inyectar token).
       await page.locator('button:has-text("Buscar"), button[type="submit"]').first().click().catch(() => {});
-      await wait(7000);
-      await page.waitForLoadState('networkidle').catch(() => {});
-
-      const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-      if (/verificar\s*re-?captcha/i.test(body)) continue; // score bajo → reintenta
-      const done = /consultar otra placa|fecha y hora de consulta/i.test(body);
-      if (!done) continue; // respuesta no reconocida → reintenta
+      // Sondea el resultado (rechazo del v3 o datos ya cargados) en vez de esperar un fijo largo:
+      // así el intento de "calentamiento" (que sabemos que rebota) no desperdicia segundos.
+      const RECAP = /verificar\s*re-?captcha/i;
+      const DONE = /consultar otra placa|fecha y hora de consulta/i;
+      let body = '';
+      for (let k = 0; k < 20; k++) {
+        await wait(500);
+        body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+        if (RECAP.test(body) || DONE.test(body)) break;
+      }
+      if (RECAP.test(body)) { log(`intento ${attempt + 1}: v3 aún tibio (cold start) → reintento`); continue; }
+      if (!DONE.test(body)) { log(`intento ${attempt + 1}: respuesta no reconocida → reintento`); continue; }
 
       // Los campos del resultado son inputs readonly: sus valores NO salen en innerText.
       const fieldVals = String((await page.evaluate(
