@@ -6,6 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { createCaptchaSolver } from './captcha/index.js';
+import { evalCaptchaMath } from './operator/sources.js';
 
 (function loadEnvFile() {
   const f = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
@@ -44,15 +45,18 @@ try {
   const valor = p.locator('#valor_busqueda');
   const capInput = p.locator('#captcha');
   const capImg = p.locator('img[src^="data:image"]').first();
-  const ERR = /error al ingresar el c[oó]digo de seguridad/i;
+  const ERR = /error al ingresar/i; // robusto al mojibake ("cÃ³digo de seguridad")
+  const NODATA = /no hay resultados para mostrar/i;
 
-  for (let i = 1; i <= 5; i++) {
+  let dumped = false;
+  for (let i = 1; i <= 8 && !dumped; i++) {
     if (i > 1) { await p.reload({ waitUntil: 'networkidle' }); await wait(1500); }
     await selPlaca();
     await valor.fill(plate);
     await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
-    const sol = (await solver.solveImage((await capImg.screenshot()).toString('base64'))).trim();
-    console.log(`intento ${i}: captcha=${sol}`);
+    const raw = (await solver.solveImage((await capImg.screenshot()).toString('base64'))).trim();
+    const sol = evalCaptchaMath(raw);
+    console.log(`intento ${i}: captcha="${raw}"${sol !== raw ? ` → ${sol}` : ''}`);
     await capInput.fill(sol);
     dialog = '';
     await p.locator('button:has-text("Buscar"), input[value*="Buscar" i]').first().click().catch(() => {});
@@ -60,12 +64,13 @@ try {
     const body = (await p.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
     if (ERR.test(body) || /captcha|seguridad/i.test(dialog)) { console.log('   captcha rechazado, reintento…'); continue; }
 
-    // Éxito: volcar la estructura para poder afinar el parser.
-    console.log('\n===== BODY innerText (primeros 6000) =====\n' + body.slice(0, 6000));
+    // Éxito (o SIN_REGISTRO): volcar la estructura para afinar el parser.
+    console.log('\n===== ' + (NODATA.test(body) ? 'SIN PAPELETAS' : 'CON RESULTADOS') + ' =====');
+    console.log('\n===== BODY innerText (primeros 7000) =====\n' + body.slice(0, 7000));
     const tables = await p.$$eval('table', (ts) => ts.map((t, i) => {
       const rows = Array.from(t.querySelectorAll('tr')).map((tr) =>
         Array.from(tr.querySelectorAll('th,td')).map((c) => (c.textContent || '').trim()));
-      return { i, rowCount: rows.length, firstRows: rows.slice(0, 5), htmlHead: t.outerHTML.slice(0, 1500) };
+      return { i, rowCount: rows.length, firstRows: rows.slice(0, 6), htmlHead: t.outerHTML.slice(0, 1600) };
     }));
     console.log(`\n===== ${tables.length} TABLE(S) =====`);
     for (const t of tables) {
@@ -73,8 +78,9 @@ try {
       console.log('  primeras filas:', JSON.stringify(t.firstRows));
       console.log('  HTML(head):', t.htmlHead.replace(/\s+/g, ' '));
     }
-    break;
+    dumped = true;
   }
+  if (!dumped) console.log('\n✖ No se pudo pasar el captcha en 8 intentos.');
 } finally {
   await b.close();
   process.exit(0);

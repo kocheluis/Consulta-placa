@@ -23,6 +23,20 @@ async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string>
   return (await solver.solveImage(b64)).trim();
 }
 
+/**
+ * Callao usa un captcha de OPERACIÓN ("6 - 4 = ?"): CapSolver devuelve el texto de la operación,
+ * no el resultado. Si el texto es una operación con "=" explícito, la evalúa y devuelve el número;
+ * si no (captcha alfanumérico normal), lo deja igual. El "=" evita corromper captchas numéricos
+ * donde el OCR mete un "-" espurio (p. ej. "8738").
+ */
+export function evalCaptchaMath(s: string): string {
+  const m = s.replace(/\s+/g, '').match(/^(\d{1,3})([-+xX*×])(\d{1,3})=/);
+  if (!m) return s;
+  const a = Number(m[1]), b = Number(m[3]);
+  const r = m[2] === '+' ? a + b : m[2] === '-' ? a - b : a * b;
+  return String(r);
+}
+
 async function findFrameWith(page: Page, selector: string): Promise<Frame | null> {
   for (const f of page.frames()) if (await f.locator(selector).count().catch(() => 0)) return f;
   return null;
@@ -95,7 +109,8 @@ export async function runCallao(
     const valor = page.locator('#valor_busqueda');
     const capInput = page.locator('#captcha');
     const capImg = page.locator('img[src^="data:image"]').first();
-    const ERR = /error al ingresar el c[oó]digo de seguridad/i;
+    // Robusto al mojibake del portal ("cÃ³digo de seguridad"): matchea solo el prefijo ASCII.
+    const ERR = /error al ingresar/i;
     const NODATA = /no hay resultados para mostrar/i;
     let cap = '';
 
@@ -106,7 +121,7 @@ export async function runCallao(
       dialog = '';
       await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
       await wait(400);
-      cap = await readCaptcha(solver, capImg);
+      cap = evalCaptchaMath(await readCaptcha(solver, capImg)); // captcha de operación → resultado
       await capInput.fill(cap);
       await page.locator('button:has-text("Buscar"), input[value*="Buscar" i]').first().click().catch(() => {});
       await wait(4500);
