@@ -33,11 +33,19 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
   if (!slot || !slot.user || !slot.pass) { console.log('SLOT 2 no configurado (falta SPRL_USER_2/SPRL_PASS_2)'); process.exit(1); }
   console.log(`SPRL slot 2 (puerto ${slot.port}, perfil ${slot.profile}) → placa ${plate}`);
 
-  const proc = spawn(chrome, [`--remote-debugging-port=${slot.port}`, `--user-data-dir=${slot.profile}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
-  proc.on('error', (e) => console.log('spawn', e.message));
+  // CONNECT-FIRST: si ya hay un Chrome caliente en el puerto (de una corrida previa), reúsalo →
+  // conserva la sesión SPRL (el token vive en sessionStorage y muere al cerrar Chrome) y evita
+  // re-logins que arriesgan bloquear el slot 2. El Chrome se deja vivo (limpiar con pkill al final).
   let browser: Browser | null = null;
-  for (let i = 0; i < 25 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${slot.port}`); } catch { /* retry */ } }
-  if (!browser) { console.log('no conecté CDP'); proc.kill(); process.exit(1); }
+  let proc: ReturnType<typeof spawn> | null = null;
+  try { browser = await chromium.connectOverCDP(`http://localhost:${slot.port}`); console.log('reusando Chrome CDP caliente en :' + slot.port); } catch { /* no hay, lanzar */ }
+  if (!browser) {
+    console.log('lanzando Chrome nuevo (habrá login)…');
+    proc = spawn(chrome, [`--remote-debugging-port=${slot.port}`, `--user-data-dir=${slot.profile}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
+    proc.on('error', (e) => console.log('spawn', e.message));
+    for (let i = 0; i < 25 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${slot.port}`); } catch { /* retry */ } }
+  }
+  if (!browser) { console.log('no conecté CDP'); proc?.kill(); process.exit(1); }
 
   try {
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
@@ -68,8 +76,8 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
         await page.locator('a:has-text("INGRESAR"), button:has-text("INGRESAR"), a:has-text("Acceder")').first().click({ timeout: 6000 }).catch(() => {});
         for (let i = 0; i < 15 && !(await passVisible()); i++) await wait(1000);
       }
-      if (await isLocked()) { console.log('⚠ SLOT 2 BLOQUEADA por SUNARP (exceso de intentos) → aborto, no reintento'); await page.screenshot({ path: `sprl2-locked-${plate}.png`, fullPage: true }).catch(() => {}); proc.kill(); process.exit(0); }
-      if (!(await passVisible())) { console.log('no apareció el form de login'); await page.screenshot({ path: `sprl2-noform-${plate}.png`, fullPage: true }).catch(() => {}); proc.kill(); process.exit(0); }
+      if (await isLocked()) { console.log('⚠ SLOT 2 BLOQUEADA por SUNARP (exceso de intentos) → aborto, no reintento'); await page.screenshot({ path: `sprl2-locked-${plate}.png`, fullPage: true }).catch(() => {}); proc?.kill(); process.exit(0); }
+      if (!(await passVisible())) { console.log('no apareció el form de login'); await page.screenshot({ path: `sprl2-noform-${plate}.png`, fullPage: true }).catch(() => {}); proc?.kill(); process.exit(0); }
       await page.locator('input[name*="usuario" i], input[formcontrolname*="usuario" i], input[type="text"]:visible').first().fill(slot.user).catch(() => {});
       await page.locator('input[type="password"]:visible').first().fill(slot.pass).catch(() => {});
       let lt = '';
@@ -79,9 +87,9 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
       for (let i = 0; i < (await ing.count().catch(() => 0)); i++) { const b = ing.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); break; } }
       for (let i = 0; i < 18 && !(await isLogged()); i++) await wait(1000);
       logged = await isLogged();
-      if (!logged && (await isLocked())) { console.log('⚠ SLOT 2 quedó BLOQUEADA tras el intento → aborto'); proc.kill(); process.exit(0); }
+      if (!logged && (await isLocked())) { console.log('⚠ SLOT 2 quedó BLOQUEADA tras el intento → aborto'); proc?.kill(); process.exit(0); }
     }
-    if (!logged) { console.log('no se pudo iniciar sesión (revisa creds o Turnstile manual)'); await page.screenshot({ path: `sprl2-nologin-${plate}.png`, fullPage: true }).catch(() => {}); proc.kill(); process.exit(0); }
+    if (!logged) { console.log('no se pudo iniciar sesión (revisa creds o Turnstile manual)'); await page.screenshot({ path: `sprl2-nologin-${plate}.png`, fullPage: true }).catch(() => {}); proc?.kill(); process.exit(0); }
     console.log('✓ sesión SPRL activa (slot 2)');
 
     // Buscar la partida por PLACA (sin oficina; el SPRL busca por placa directo).
@@ -101,27 +109,20 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
     for (let i = 0; i < (await buscarBtns.count().catch(() => 0)); i++) { const b = buscarBtns.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); break; } }
     await respP;
     await wait(2500);
-    // La fila trae 3 acciones: [0] Ver Detalle · [1] Ver Asientos · [2] Boleta Informativa (pago).
-    // Las CARACTERÍSTICAS (versión, carrocería…) deben estar en "Ver Detalle" (col 0), gratis.
-    const rowBtns = page.locator('.ant-table-tbody tr button, table tbody tr button, .ant-table-tbody tr a, table tbody tr a');
-    const nBtns = await rowBtns.count().catch(() => 0);
-    console.log(`acciones en la fila: ${nBtns}`);
-    for (let i = 0; i < Math.min(nBtns, 6); i++) {
-      const b = rowBtns.nth(i);
-      const t = ((await b.getAttribute('title').catch(() => '')) || (await b.getAttribute('aria-label').catch(() => '')) || (await b.innerText().catch(() => ''))).replace(/\s+/g, ' ').trim();
-      console.log(`  acción[${i}]: "${t.slice(0, 45)}"`);
-    }
-    // Vuelca el HTML de la fila de resultado para identificar el botón "Ver Detalle" (onclick/ícono)
-    // sin gastar más logins. Se imprime inline para leerlo directo en la salida.
-    const rowHtml = await page.locator('.ant-table-tbody tr, table tbody tr').first().evaluate((el) => (el as HTMLElement).outerHTML).catch(() => '');
+    // Fila de DATOS = la que contiene la placa (no la de cabecera Costo/Usuario). Sus acciones son
+    // <app-button>: [0] Ver Detalle · [1] Ver Asientos · [2] Boleta Informativa (pago). Las
+    // CARACTERÍSTICAS (versión, carrocería…) deben estar en "Ver Detalle" (col 0), gratis.
+    const dataRow = page.locator('tr', { hasText: new RegExp(plate, 'i') }).first();
+    const rowHtml = await dataRow.evaluate((el) => (el as HTMLElement).outerHTML).catch(() => '');
     writeFileSync(`sprl2-result-${plate}.html`, rowHtml);
-    console.log('--- FILA HTML (900) ---');
-    console.log(rowHtml.replace(/\s+/g, ' ').slice(0, 900));
+    console.log('--- FILA DE DATOS HTML (1000) ---');
+    console.log(rowHtml.replace(/\s+/g, ' ').slice(0, 1000));
     console.log('--- fin fila ---');
-    // Clic en "Ver Detalle" (col 0). Acepta el confirm (handler global) y espera la carga.
-    const detalle = page.locator('a[title*="detalle" i], button[title*="detalle" i], a:has-text("Ver Detalle"), button:has-text("Ver Detalle")').first();
-    if (await detalle.count().catch(() => 0)) { await detalle.click().catch(() => {}); }
-    else if (nBtns >= 1) { await rowBtns.nth(0).click().catch(() => {}); }
+    const acts = dataRow.locator('app-button button, button, a');
+    const nA = await acts.count().catch(() => 0);
+    console.log(`acciones en la fila de datos: ${nA}`);
+    // Clic en "Ver Detalle" (primer app-button de la fila de datos). Acepta el confirm.
+    if (nA >= 1) { await acts.nth(0).click({ timeout: 8000 }).catch((e) => console.log('click detalle:', (e as Error).message)); }
     await wait(6500);
     console.log('confirm del botón:', lastDialog || '(ninguno)');
 
@@ -150,6 +151,6 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
     console.log(`(BZI234 esperado en la boleta → N° Versión "A 200 PROGRESSIVE")`);
     console.log(`dumps: sprl2-ficha-${plate}.{txt,html,png}  · texto: ${text.length} chars`);
   } catch (e) { console.log('ERR', (e as Error).message); }
-  finally { if (browser) await browser.close().catch(() => {}); proc.kill(); }
+  finally { if (browser) await browser.close().catch(() => {}); if (process.env.KILL_CHROME === "1") proc?.kill(); }
   process.exit(0);
 })();
