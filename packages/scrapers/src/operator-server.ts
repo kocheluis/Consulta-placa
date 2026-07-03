@@ -840,21 +840,28 @@ function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');
     renderCards(results, pl, 'hcards', true, 'h');
   }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
+// Render NATIVO local por defecto: lee el reporte.json del propio VPS (/api/pedido-webreport)
+// con TODOS los payloads, sin candado ni token ni Vercel → nunca se rompe. El iframe con la web
+// REAL del cliente queda como opción bajo demanda (botón "Ver como lo ve el cliente"), útil para
+// QA visual pero dependiente de que el OPERATOR_PREVIEW_TOKEN del VPS coincida con el de Vercel.
 function loadWebReport(){var pl=SELECTED,d=document.getElementById('pdetail');
-  // Si hay WEB_REPORT_URL: incrusta el reporte REAL del cliente (mismo formato) en iframe,
-  // con ?preview=TOKEN (modo operador, ve todo sin candado).
-  if(WEB_BASE){
-    var url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(WEB_TOKEN?'?preview='+encodeURIComponent(WEB_TOKEN):'');
-    d.innerHTML=hHeader(pl)+detailTabs()+
-      '<div class="meta" style="margin-bottom:8px">Reporte tal como lo ve el cliente · <a href="'+url+'" target="_blank" style="color:#0C6F64">abrir en pestaña ↗</a></div>'+
-      '<iframe src="'+url+'" style="width:100%;height:1600px;border:1px solid var(--bd);border-radius:12px;background:#fff"></iframe>';
-    return;
-  }
-  // Fallback (sin WEB_REPORT_URL): render nativo compacto.
   d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando reporte…</div>';
   fetch('/api/pedido-webreport?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
-    d.innerHTML=hHeader(pl)+detailTabs()+((rep&&!rep.missing)?renderWebReport(rep):'<div class="pmeta">Aún sin reporte consolidado (el pedido no ha terminado).</div>');
+    var webBtn=WEB_BASE?'<button class="sec" onclick="toggleClientWeb()">Ver como lo ve el cliente (web) ↗</button>':'';
+    d.innerHTML=hHeader(pl)+detailTabs()+
+      '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px">'+
+        '<span class="meta">Vista nativa · datos del VPS, sin candado (no depende de Vercel ni del token).</span>'+webBtn+'</div>'+
+      ((rep&&!rep.missing)?renderWebReport(rep):'<div class="pmeta">Aún sin reporte consolidado (el pedido no ha terminado).</div>')+
+      '<div id="clientWebBox"></div>';
   }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
+// Muestra/oculta el iframe con la web REAL del cliente (?preview=TOKEN). Si falta el token, avisa
+// (se vería con candado, que fue justo el bug: token del VPS ≠ token de Vercel → secciones vacías).
+function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!box)return;
+  if(box.innerHTML){box.innerHTML='';return;}
+  var pl=SELECTED,url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(WEB_TOKEN?'?preview='+encodeURIComponent(WEB_TOKEN):'');
+  box.innerHTML='<div class="meta" style="margin:14px 0 8px">Reporte tal como lo ve el cliente · <a href="'+url+'" target="_blank" style="color:#0C6F64">abrir en pestaña ↗</a>'+
+    (WEB_TOKEN?'':' · <b style="color:#B45309">⚠ sin token de preview: se verá con candado</b>')+'</div>'+
+    '<iframe src="'+url+'" style="width:100%;height:1600px;border:1px solid var(--bd);border-radius:12px;background:#fff"></iframe>';}
 function showLiveLogs(pl){var d=document.getElementById('pdetail');
   fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
     var proc=s.current&&s.current.placa===pl;var srcs=s.autoSources||[];
@@ -864,7 +871,10 @@ function showLiveLogs(pl){var d=document.getElementById('pdetail');
       '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
   }).catch(function(){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
 // Render compacto del reporte normalizado (lo que recibe el cliente).
-var KIND_LABEL={REGISTRAL:'Identidad',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales'};
+var KIND_LABEL={REGISTRAL:'Identidad',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
+// Badge de estado por sección: verde=AVAILABLE, rojo=UNAVAILABLE/ERROR (fuente falló → re-generar), gris=el resto.
+function secBadge(st){var c=st==='AVAILABLE'?'b-ENCONTRADO':((st==='UNAVAILABLE'||st==='ERROR')?'b-ERROR':'b-SIN_REGISTRO');
+  return '<span class="badge '+c+'" style="float:right">'+esc(st||'')+'</span>';}
 function defRows(items){var rows=items.filter(function(x){return x[1]!=null&&x[1]!==''});if(!rows.length)return'';
   return '<div style="font-size:13px;line-height:1.7">'+rows.map(function(x){return '<div><span style="color:#64748B">'+x[0]+':</span> '+esc(x[1])+'</div>'}).join('')+'</div>';}
 function sectionSummary(s){var p=s.payload;if(s.status!=='AVAILABLE')return '('+String(s.status||'').toLowerCase()+')';if(!p)return '—';
@@ -877,6 +887,7 @@ function sectionSummary(s){var p=s.payload;if(s.status!=='AVAILABLE')return '('+
     case 'TRANSPORTE':return p.isPublicTransport?('Taxi/transporte: '+esc(p.modality||'sí')+(p.detail?' · '+esc(p.detail):'')):'No figura como taxi';
     case 'GRAVAMENES':return (p.hasLiens?'Registra gravamen/carga':'Sin gravámenes')+(p.items&&p.items.length?' ('+p.items.length+')':'');
     case 'HISTORIAL':return (p.transfers||0)+' transferencia(s) · '+(p.totalAsientos||0)+' asientos'+(p.flags&&(p.flags.aseguradora||p.flags.remate)?' · ⚠ banderas':'');
+    case 'IA':return 'Veredicto: '+esc(p.verdict||'—')+((p.redFlags&&p.redFlags.length)?' · '+p.redFlags.length+' bandera(s)':'')+(p.summary?' · '+esc(String(p.summary).slice(0,80)):'');
     default:return '—';
   }
 }
@@ -886,7 +897,7 @@ function renderWebReport(rep){var v=rep.vehicle,html='';
     defRows([['Placa',v.plateDisplay],['Marca',v.brand],['Modelo',v.model],['Año',v.year],['Color',v.color],['Serie',v.serie],['VIN',v.vin],['Motor',v.engineNumber],['Placa anterior',v.platePrevious],['Estado',v.registralStatus],['Sede',v.sede]])+
     (v.owner?'<div style="margin-top:8px;font-size:13px"><span style="color:#64748B">Propietario(s):</span> '+esc(v.owner.name)+'</div>':'')+'</div>';}
   var secs=(rep.sections||[]).filter(function(s){return s.kind!=='REGISTRAL'&&s.status!=='COMING_SOON'});
-  html+='<div class="cards">'+secs.map(function(s){return '<div class="card"><h3>'+esc(KIND_LABEL[s.kind]||s.kind)+'</h3><div class="sum">'+sectionSummary(s)+'</div></div>';}).join('')+'</div>';
+  html+='<div class="cards">'+secs.map(function(s){return '<div class="card"><h3>'+esc(KIND_LABEL[s.kind]||s.kind)+secBadge(s.status)+'</h3><div class="sum">'+sectionSummary(s)+'</div></div>';}).join('')+'</div>';
   return '<div class="meta" style="margin-bottom:10px">Vista de lo que recibe el cliente. (BASIC: identidad/propietarios/SOAT · PRO/ULTRA: el resto.)</div>'+html;
 }
 function requeuePedido(){if(!SELECTED_ID){alert('Selecciona un pedido');return;}

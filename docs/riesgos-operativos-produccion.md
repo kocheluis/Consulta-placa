@@ -402,10 +402,18 @@ Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los ries
 - **Estado:** ABIERTO.
 
 #### SEC-03 · Fuga de `OPERATOR_PREVIEW_TOKEN` ⚪
-- **Causa:** ese token salta el candado de pago (`/api/reporte/[placa]?preview=`).
-- **Mitigación:** mantenerlo secreto (server-only en Vercel + VPS), rotarlo periódicamente;
-  alcance solo lectura del reporte.
-- **Estado:** MITIGADO.
+- **Causa:** ese token salta el candado de pago Y el enmascarado de PII (`/api/reporte/[placa]?preview=`).
+  Riesgo real = **fuga por logs** (viaja en la URL → queda en access-logs de Vercel/CDN, historial del
+  navegador, header `Referer`), no fuerza bruta. Es un secreto **estático y compartido** sin expiración.
+- **Hallazgo 3-jul-2026:** el valor desplegado era `op_123456789` (placeholder trivial, adivinable) →
+  la "mitigación" no estaba realmente aplicada. Rotado a un aleatorio fuerte (192 bits).
+- **Mitigación (reforzada):** (1) la consola del operador ya **NO usa el preview por defecto** — renderiza
+  el reporte de forma **nativa desde el `reporte.json` del VPS** (loopback + SSH, sin token ni Vercel); el
+  iframe web quedó **opt-in**, así que en uso normal el token no se ejercita. (2) Token fuerte, server-only
+  (Vercel + `/root/placape.env`), rotable. **Mejora futura opcional:** reemplazar el token estático por
+  **enlaces firmados con expiración** (HMAC de placa+vencimiento) o por **auth de operador** (sesión admin),
+  para eliminar el secreto de bearer estático de la URL.
+- **Estado:** MITIGADO (reforzado; el preview salió del camino crítico).
 
 #### SEC-04 · Acceso al panel /admin/pagos 🟡
 - **Causa:** confirma pagos y ve PII; gateado por `ADMIN_EMAILS` + Supabase Auth.
