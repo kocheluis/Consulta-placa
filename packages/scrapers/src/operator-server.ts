@@ -46,9 +46,9 @@ const N8N_WEBHOOK = process.env.N8N_WEBHOOK_URL ?? '';
 const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_placa/validacion-fuentes/operador';
 // Fuentes que corre el motor automático por pedido (reporte completo; SPRL incluido).
 const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
-  // 'atu' FUERA del auto: su reCAPTCHA v3 exige score alto (perfil con reputación de Google);
-  // ni headless+CapSolver ni Chrome-CDP de perfil nuevo lo pasan. Sigue disponible on-demand.
-  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat'];
+  // 'atu' entra por CDP nativo (Chrome real + reCAPTCHA v3 nativo): pasa el score desde la IP
+  // del VPS (validado en vivo jul-2026, ENCONTRADO y SIN_REGISTRO). Ver operator/atu-cdp.ts.
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
 // Fuentes del reporte GRATUITO (pedido tier=BASIC): identidad + SOAT + revisión técnica.
 // Sin SPRL/Síguelo ni el resto → ~30s y casi sin costo. El paywall (stripByTier) hace lo demás.
 const BASIC_SOURCES = process.env.BASIC_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)

@@ -120,7 +120,6 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     concept: ScoreConcept.USAGE,
     dataKind: SectionKind.TRANSPORTE,
     blurb: 'Si el vehículo está o estuvo registrado para taxi/transporte (uso intensivo).',
-    comingSoon: true, // ATU usa reCAPTCHA v3 por score; pendiente de resolver (no se cobra hasta entonces).
   },
   {
     key: 'gravamenes',

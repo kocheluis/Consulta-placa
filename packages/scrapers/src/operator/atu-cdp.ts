@@ -147,15 +147,18 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       const fieldVals = String((await page.evaluate(
         `Array.from(document.querySelectorAll('input')).map(function(i){return i.value}).filter(function(v){return v&&v.trim()}).join(' | ')`,
       ).catch(() => '')) || '');
+      // El value del textarea g-recaptcha-response se cuela como un campo larguísimo sin espacios:
+      // lo quitamos del detalle para no guardar ese token basura en el reporte del operador.
+      const detalle = fieldVals.split(' | ').filter((v) => !(v.length > 80 && /^[A-Za-z0-9_-]+$/.test(v))).join(' | ');
       if (opts.shotPath) await page.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
-      const blob = `${body} | ${fieldVals}`;
+      const blob = `${body} | ${detalle}`;
       if (/no\s*registrad/i.test(blob)) {
-        return { ok: true, status: 'SIN_REGISTRO', data: { isPublicTransport: false, detalleCampos: fieldVals } };
+        return { ok: true, status: 'SIN_REGISTRO', data: { isPublicTransport: false, detalleCampos: detalle } };
       }
-      const atu = parseAtuFields(fieldVals);
+      const atu = parseAtuFields(detalle);
       return {
         ok: true, status: 'ENCONTRADO',
-        data: { isPublicTransport: true, modalidad: atu.modalidad, estado: atu.estado, titular: atu.titular, detalleCampos: fieldVals },
+        data: { isPublicTransport: true, modalidad: atu.modalidad, estado: atu.estado, titular: atu.titular, detalleCampos: detalle },
       };
     }
     if (opts.shotPath) await page.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
