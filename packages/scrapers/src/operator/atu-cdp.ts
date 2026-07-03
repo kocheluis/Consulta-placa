@@ -32,6 +32,9 @@ export interface CdpAtuOptions {
    *  El reCAPTCHA v3 puntúa el tiempo en página + interacción: entrar y consultar de
    *  inmediato baja el score → sube el 1er intento fallido. Dejarlo respirar lo mejora. */
   warmupMs?: number;
+  /** Recarga previa para madurar el score del v3 antes de la 1ª consulta (default true).
+   *  Evita el cold-start del primer execute() (que suele fallar). */
+  primeReload?: boolean;
   /** Ruta para guardar screenshot del resultado. */
   shotPath?: string;
   log?: (msg: string) => void;
@@ -91,12 +94,6 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
 
-    // Reposo inicial: deja que el reCAPTCHA v3 cargue y "observe" la sesión antes de tocar nada.
-    // Entrar y consultar de inmediato baja el score (el 1er intento solía fallar). Validado en vivo.
-    const warmupMs = Math.max(0, opts.warmupMs ?? 4500);
-    log(`reposo inicial ${warmupMs}ms (calienta el score del reCAPTCHA v3)…`);
-    await wait(warmupMs);
-
     // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
     const acceptCookies = async (): Promise<void> => {
       await page.locator('button:has-text("Acepto cookies"), button:has-text("Aceptar"), button:has-text("Acepto"), a:has-text("Acepto cookies")')
@@ -110,6 +107,24 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       await page.mouse.move(460, 380).catch(() => {});
       await wait(220);
     };
+
+    // Reposo inicial + gestos: el v3 puntúa tiempo-en-página e interacción antes del execute().
+    const warmupMs = Math.max(0, opts.warmupMs ?? 4500);
+    await acceptCookies();
+    await humanize();
+    log(`reposo inicial ${warmupMs}ms + gestos (calienta el score del v3)…`);
+    await wait(warmupMs);
+
+    // PRIME del reCAPTCHA v3: el PRIMER execute() de una sesión nueva puntúa bajo (cold start) →
+    // por eso "falla el 1er intento y pasa al recargar". Una recarga previa (mismo cookie de
+    // sesión, 2º pageview) madura el score, así la 1ª consulta REAL ya es el "segundo challenge".
+    if (opts.primeReload ?? true) {
+      log('prime: recarga previa para madurar el score del v3…');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await acceptCookies();
+      await humanize();
+      await wait(Math.min(warmupMs, 3000));
+    }
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       if (attempt > 0) {
