@@ -121,10 +121,16 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
     const acts = dataRow.locator('app-button button, button, a');
     const nA = await acts.count().catch(() => 0);
     console.log(`acciones en la fila de datos: ${nA}`);
-    // Clic en "Ver Detalle" (primer app-button de la fila de datos). Acepta el confirm.
+    // Clic en "Ver Detalle" (primer app-button de la fila de datos).
     if (nA >= 1) { await acts.nth(0).click({ timeout: 8000 }).catch((e) => console.log('click detalle:', (e as Error).message)); }
+    await wait(2000);
+    // El "¿Desea Continuar?" es un MODAL de ant (no un confirm nativo) → clic en Sí/Continuar/Aceptar.
+    const modalTxt = (await page.locator('.ant-modal, nz-modal-container').first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+    if (modalTxt) console.log('modal:', modalTxt.slice(0, 100));
+    const modalOk = page.locator('.ant-modal button, nz-modal-container button').filter({ hasText: /^\s*(s[ií]|continuar|aceptar|ok|confirmar)\s*$/i }).first();
+    if (await modalOk.isVisible().catch(() => false)) { console.log('→ clic en el botón de confirmar del modal'); await modalOk.click().catch(() => {}); }
     await wait(6500);
-    console.log('confirm del botón:', lastDialog || '(ninguno)');
+    console.log('confirm nativo (si hubo):', lastDialog || '(ninguno)');
 
     // "Ver Detalle" puede abrir en la MISMA página o en una pestaña nueva → toma la más reciente.
     const pages = ctx.pages();
