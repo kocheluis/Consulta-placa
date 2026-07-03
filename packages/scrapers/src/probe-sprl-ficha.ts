@@ -42,13 +42,17 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
   try {
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
+    // "Ver Detalle" dispara un confirm ("detalle de la placa. ¿Desea Continuar?") → aceptarlo.
+    let lastDialog = '';
+    page.on('dialog', (d) => { lastDialog = d.message(); d.accept().catch(() => { d.dismiss().catch(() => {}); }); });
     const bodyUpper = async () => (await page.locator('body').innerText().catch(() => '')).toUpperCase();
     const isLogged = async () => /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/.test(await bodyUpper());
     const isLocked = async () => /SUPER[OÓ].{0,15}N[UÚ]MERO DE INTENTOS|VUELVA M[AÁ]S TARDE|DEMASIADOS INTENTOS|CUENTA.{0,25}BLOQUEADA/i.test(await bodyUpper());
 
-    // Espera el re-auth OAuth (la sesión del perfil puede tardar ~20s en renderizar).
+    // Espera el re-auth OAuth (reusa la sesión del perfil; darle margen evita re-logins que
+    // arriesgan bloqueo de la cuenta 2).
     let logged = false;
-    for (let i = 0; i < 20 && !logged; i++) { await wait(1000); logged = await isLogged(); }
+    for (let i = 0; i < 35 && !logged; i++) { await wait(1000); logged = await isLogged(); }
 
     if (!logged) {
       console.log('sin sesión → login (1 intento; aborta si bloqueada)…');
@@ -107,18 +111,25 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
       const t = ((await b.getAttribute('title').catch(() => '')) || (await b.getAttribute('aria-label').catch(() => '')) || (await b.innerText().catch(() => ''))).replace(/\s+/g, ' ').trim();
       console.log(`  acción[${i}]: "${t.slice(0, 45)}"`);
     }
-    // Clic en "Ver Detalle": por texto/title si el botón lo trae; si no, el 1er botón de la fila.
+    // Clic en "Ver Detalle" (col 0). Acepta el confirm (handler global) y espera la carga.
     const detalle = page.locator('a[title*="detalle" i], button[title*="detalle" i], a:has-text("Ver Detalle"), button:has-text("Ver Detalle")').first();
     if (await detalle.count().catch(() => 0)) { await detalle.click().catch(() => {}); }
     else if (nBtns >= 1) { await rowBtns.nth(0).click().catch(() => {}); }
-    await wait(5000);
+    await wait(6500);
+    console.log('confirm del botón:', lastDialog || '(ninguno)');
+
+    // "Ver Detalle" puede abrir en la MISMA página o en una pestaña nueva → toma la más reciente.
+    const pages = ctx.pages();
+    const target = pages[pages.length - 1] ?? page;
+    await target.bringToFront().catch(() => {});
+    await wait(1500);
 
     // VUELCA todo para inspección.
-    const text = await page.locator('body').innerText().catch(() => '');
-    const html = await page.content().catch(() => '');
+    const text = await target.locator('body').innerText().catch(() => '');
+    const html = await target.content().catch(() => '');
     writeFileSync(`sprl2-ficha-${plate}.txt`, text);
     writeFileSync(`sprl2-ficha-${plate}.html`, html);
-    await page.screenshot({ path: `sprl2-ficha-${plate}.png`, fullPage: true }).catch(() => {});
+    await target.screenshot({ path: `sprl2-ficha-${plate}.png`, fullPage: true }).catch(() => {});
 
     // Pistas de versión/características (lo que trae la boleta de pago).
     const KEYS = ['versi', 'carrocer', 'combustible', 'cilindrad', 'progressive', 'n° motor', 'categor'];
