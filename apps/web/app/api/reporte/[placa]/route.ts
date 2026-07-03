@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
 import { getPaidTier } from '@/lib/payments';
+import { verifyPreviewToken } from '@/lib/preview-token';
 import {
   SECTION_CATALOG, TIER_RANK, ReportTier, ReportStatus, DISCLAIMER_TEXT,
   type Report, type SectionResult,
@@ -42,11 +43,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
   if (!placa) return NextResponse.json({ generating: false, report: null });
   if (!isAdminConfigured) return NextResponse.json({ generating: false, report: stub(placa) });
 
-  // Modo operador: ?preview=TOKEN (= OPERATOR_PREVIEW_TOKEN) devuelve el reporte COMPLETO
-  // sin recortar por tier, para previsualizarlo en la consola del operador.
+  // Modo operador: ?preview=TOKEN devuelve el reporte COMPLETO sin recortar por tier, para
+  // previsualizarlo en la consola. Preferido: token FIRMADO con expiración (verifyPreviewToken,
+  // ligado a la placa → un enlace filtrado muere al expirar). Fallback legacy: match exacto del
+  // secreto crudo (compat; nuestro código ya no lo pone en URLs, así que no se filtra por logs).
   const preview = new URL(req.url).searchParams.get('preview');
   const opToken = process.env.OPERATOR_PREVIEW_TOKEN;
-  const operatorPreview = !!opToken && preview === opToken;
+  const operatorPreview = !!opToken && !!preview &&
+    (verifyPreviewToken(placa, preview, opToken) || preview === opToken);
 
   let tier: 'BASIC' | 'PRO' | 'ULTRA' = 'BASIC';
   try { tier = await getPaidTier(placa); } catch { /* anónimo → BASIC */ }

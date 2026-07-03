@@ -2,6 +2,7 @@
 import { createServer } from 'node:http';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
+import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './operator/index.js';
 import { killEngineChrome } from './operator/chrome-path.js';
@@ -58,7 +59,24 @@ const BASIC_SOURCES = process.env.BASIC_SOURCES?.split(',').map((s) => s.trim())
 // coincidir con OPERATOR_PREVIEW_TOKEN configurado en la web (Vercel).
 const WEB_REPORT_URL = (process.env.WEB_REPORT_URL ?? '').replace(/\/+$/, '');
 const OPERATOR_PREVIEW_TOKEN = process.env.OPERATOR_PREVIEW_TOKEN ?? '';
+// Vida del enlace de preview firmado (opción B). Corto a propósito: es solo para que el operador
+// vea el reporte del cliente en la consola; un enlace filtrado muere pronto. Default 10 min.
+const PREVIEW_TTL_SEC = Math.max(60, Number(process.env.OPERATOR_PREVIEW_TTL_SEC ?? 600));
 if (!KEY) { console.error('Falta CAPTCHA_API_KEY (CapSolver) en el entorno.'); process.exit(1); }
+
+/**
+ * Firma un token de preview EFÍMERO para una placa (opción B). El secreto compartido
+ * (OPERATOR_PREVIEW_TOKEN) NUNCA sale al navegador ni a la URL — solo esta firma HMAC con
+ * expiración, ligada a la placa. La web lo verifica (ver apps/web/lib/preview-token.ts).
+ * Formato: `${exp}.${sigBase64url}`, exp en segundos UNIX. Devuelve null si no hay secreto.
+ */
+function signPreviewToken(placa: string): string | null {
+  if (!OPERATOR_PREVIEW_TOKEN) return null;
+  const p = placa.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const exp = Math.floor(Date.now() / 1000) + PREVIEW_TTL_SEC;
+  const sig = createHmac('sha256', OPERATOR_PREVIEW_TOKEN).update(`${p}:${exp}`).digest('base64url');
+  return `${exp}.${sig}`;
+}
 
 const queue = getQueue();
 let autoEngine = metaGet<boolean>('auto_engine_enabled') ?? false; // persistido: sobrevive reinicios
@@ -376,7 +394,9 @@ const server = createServer(async (req, res) => {
       const current = cj
         ? { jobId: cj.id, placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done }
         : null;
-      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current, web: { base: WEB_REPORT_URL, token: OPERATOR_PREVIEW_TOKEN } });
+      // Ya NO se envía el token crudo al navegador (opción B): solo si hay secreto configurado.
+      // El preview se firma por placa y bajo demanda en /api/preview-token.
+      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
     }
     if (path === '/api/engine/toggle' && req.method === 'POST') {
       autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
@@ -405,6 +425,13 @@ const server = createServer(async (req, res) => {
         const report = toWebReport(placa, raw.results ?? [], raw.generatedAt ?? new Date().toISOString(), placa);
         return sendJson(res, 200, report);
       } catch { return sendJson(res, 200, { missing: true }); }
+    }
+    // Token de preview FIRMADO y efímero (opción B) para incrustar el reporte del cliente en la
+    // consola. El secreto no sale al navegador; solo esta firma con expiración, ligada a la placa.
+    if (path === '/api/preview-token' && req.method === 'GET') {
+      const placa = (url.searchParams.get('placa') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      if (!placa) return sendJson(res, 400, { error: 'falta placa' });
+      return sendJson(res, 200, { token: signPreviewToken(placa), ttl: PREVIEW_TTL_SEC, base: WEB_REPORT_URL });
     }
     if (path === '/api/pedido' && req.method === 'POST') {
       const body = await readBody(req);
@@ -696,7 +723,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   <div id="log"></div>
 </main>
 <script>
-var SOURCES=[], LAST=null, ES=null, JOB=null, WEB_BASE='', WEB_TOKEN='';
+var SOURCES=[], LAST=null, ES=null, JOB=null, WEB_BASE='', WEB_HASTOKEN=false;
 function log(m){var l=document.getElementById('log');l.textContent+= (new Date().toLocaleTimeString())+'  '+m+'\\n';l.scrollTop=l.scrollHeight;}
 function plate(){return document.getElementById('placa').value.toUpperCase().replace(/[^A-Z0-9]/g,'');}
 fetch('/api/sources').then(function(r){return r.json()}).then(function(s){SOURCES=s;var b=document.getElementById('srcbox');
@@ -767,7 +794,7 @@ document.getElementById('placa').addEventListener('keydown',function(e){if(e.key
 
 // ── Motor automático + progreso + historial ──────────────────────────────────
 function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
-  if(s.web){WEB_BASE=s.web.base||'';WEB_TOKEN=s.web.token||'';}
+  if(s.web){WEB_BASE=s.web.base||'';WEB_HASTOKEN=!!s.web.hasToken;}
   var b=document.getElementById('engBtn');
   b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='sw '+(s.enabled?'on':'off');
   document.getElementById('engInfo').textContent=(s.busy?'· atendiendo un pedido ':'· libre ')+'· cola: '+esc(s.queue);
@@ -858,10 +885,17 @@ function loadWebReport(){var pl=SELECTED,d=document.getElementById('pdetail');
 // (se vería con candado, que fue justo el bug: token del VPS ≠ token de Vercel → secciones vacías).
 function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!box)return;
   if(box.innerHTML){box.innerHTML='';return;}
-  var pl=SELECTED,url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(WEB_TOKEN?'?preview='+encodeURIComponent(WEB_TOKEN):'');
-  box.innerHTML='<div class="meta" style="margin:14px 0 8px">Reporte tal como lo ve el cliente · <a href="'+url+'" target="_blank" style="color:#0C6F64">abrir en pestaña ↗</a>'+
-    (WEB_TOKEN?'':' · <b style="color:#B45309">⚠ sin token de preview: se verá con candado</b>')+'</div>'+
-    '<iframe src="'+url+'" style="width:100%;height:1600px;border:1px solid var(--bd);border-radius:12px;background:#fff"></iframe>';}
+  var pl=SELECTED;
+  box.innerHTML='<div class="meta" style="margin:14px 0 8px">Generando enlace firmado…</div>';
+  // Pide un token de preview FIRMADO y efímero (opción B): el secreto no viaja en la URL, solo la
+  // firma con expiración. Un enlace filtrado muere pronto y solo abre esta placa.
+  fetch('/api/preview-token?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(o){
+    var tok=o&&o.token, mins=Math.round(((o&&o.ttl)||600)/60);
+    var url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(tok?'?preview='+encodeURIComponent(tok):'');
+    box.innerHTML='<div class="meta" style="margin:14px 0 8px">Reporte tal como lo ve el cliente · <a href="'+url+'" target="_blank" style="color:#0C6F64">abrir en pestaña ↗</a>'+
+      (tok?(' · enlace firmado, expira en '+mins+' min'):' · <b style="color:#B45309">⚠ sin OPERATOR_PREVIEW_TOKEN: se verá con candado</b>')+'</div>'+
+      '<iframe src="'+url+'" style="width:100%;height:1600px;border:1px solid var(--bd);border-radius:12px;background:#fff"></iframe>';
+  }).catch(function(e){box.innerHTML='<div class="meta">✖ '+esc(e)+'</div>';});}
 function showLiveLogs(pl){var d=document.getElementById('pdetail');
   fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
     var proc=s.current&&s.current.placa===pl;var srcs=s.autoSources||[];
