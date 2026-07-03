@@ -113,15 +113,56 @@ export async function runCallao(
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
       if (ERR.test(body) || /captcha|seguridad/i.test(dialog)) continue;
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-      const total = body.match(/TOTAL:\s*S\/\.?\s*([0-9.,]+)/i)?.[1] ?? null;
-      if (NODATA.test(body)) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Callao', data: { total: total ?? '0.00', captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
-      return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Callao (TOTAL S/ ${total ?? '?'})`, data: { total, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      if (NODATA.test(body)) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Callao', data: { total: '0.00', count: 0, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      // Extracción robusta (antes: un solo regex de "TOTAL:" → fallaba y el reporte decía "sin papeletas").
+      const money = (s: string): number => { const n = parseFloat(String(s).replace(/[^\d.,]/g, '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
+      const parsed = await parseCallaoResults(page).catch(() => null);
+      // "Total" declarado en la página: puede haber varios ("TOTAL: S/. 0.00" del carrito de pago +
+      // el total real al pie) → tomamos el MAYOR. No exigimos "S/" (algunos totales salen sin símbolo).
+      const declared = [...body.matchAll(/tota?l\s*:?\s*(?:S\/\.?)?\s*([\d][\d.,]*\.\d{2})/gi)].map((m) => money(m[1] ?? ''));
+      const rowsTotal = parsed ? parsed.rows.reduce((a, r) => a + r, 0) : 0;
+      const total = Math.max(0, ...declared, rowsTotal);
+      const count = parsed && parsed.count ? parsed.count : (total > 0 ? 1 : 0);
+      // Beneficio de pronto pago (monto con descuento + fecha límite), best-effort.
+      const benM = body.match(/benefici[\s\S]{0,140}?S\/\.?\s*([\d][\d.,]*\.\d{2})/i);
+      const untilM = body.match(/(?:hasta|antes del|vence|pago hasta)[^\d]{0,15}(\d{2}\/\d{2}\/\d{4})/i);
+      const benefit = benM ? money(benM[1] ?? '') : 0;
+      const benefitUntil = untilM ? (untilM[1] ?? null) : null;
+      return { ...base, status: 'ENCONTRADO',
+        summary: `Papeletas en Callao: ${count || '?'} · S/ ${total.toFixed(2)}${benefit > 0 ? ` · beneficio S/ ${benefit.toFixed(2)}${benefitUntil ? ` hasta ${benefitUntil}` : ''}` : ''}`,
+        data: { total: total > 0 ? total.toFixed(2) : null, count, benefit: benefit > 0 ? benefit : null, benefitUntil, captcha: cap },
+        screenshot: shot, ms: Date.now() - t0 };
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
+}
+
+/**
+ * Lee la tabla de resultados de Callao (la que MÁS filas con monto tiene) para contar las
+ * papeletas y quedarnos con el importe de cada fila (el mayor de la fila ≈ "Total Infracción"),
+ * sin depender del formato exacto del "TOTAL". Salta la fila de "Total" al pie. Best-effort:
+ * si algo falla, quien llama cae al total declarado en el texto.
+ */
+async function parseCallaoResults(page: Page): Promise<{ count: number; rows: number[] }> {
+  return await page.evaluate(() => {
+    const money = (s: string): number => { const n = parseFloat(String(s).replace(/[^\d.,]/g, '').replace(/,/g, '')); return Number.isFinite(n) ? n : 0; };
+    let best: { count: number; rows: number[] } = { count: 0, rows: [] };
+    for (const t of Array.from(document.querySelectorAll('table'))) {
+      const rows: number[] = [];
+      for (const tr of Array.from(t.querySelectorAll('tr'))) {
+        const tds = Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent || '').trim());
+        if (tds.length < 3) continue;
+        if (/total/i.test(tds.join(' '))) continue; // salta la fila de "Total" al pie
+        const nums = tds.map(money).filter((n) => n > 0);
+        if (nums.length) rows.push(Math.max(...nums)); // "Total Infracción" ≈ el mayor de la fila
+      }
+      if (rows.length > best.count) best = { count: rows.length, rows };
+    }
+    return best;
+  });
 }
 
 /* ───────────────── MTC · CITV (captcha imagen, responde por alert) ───────────────── */

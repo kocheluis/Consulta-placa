@@ -919,7 +919,7 @@ function sectionSummary(s){var p=s.payload;if(s.status!=='AVAILABLE')return '('+
   switch(s.kind){
     case 'SEGUROS':return (p.hasActiveSoat?'SOAT vigente':'Sin SOAT vigente')+(p.insurer?' · '+esc(p.insurer):'');
     case 'SINIESTRALIDAD':return (p.hasSiniestro?'Registra siniestralidad':'Sin siniestros')+(p.auction?' · subasta: '+esc(p.auction.subasta||p.auction.fuente||''):'');
-    case 'PAPELETAS':return (p.total||0)+' concepto(s)'+(p.pendingAmount?' · S/ '+Number(p.pendingAmount).toFixed(2):'');
+    case 'PAPELETAS':return (p.total||0)+' concepto(s)'+(p.pendingAmount?' · S/ '+Number(p.pendingAmount).toFixed(2):'')+(p.benefitAmount?' · beneficio S/ '+Number(p.benefitAmount).toFixed(2)+(p.benefitUntil?' hasta '+esc(p.benefitUntil):''):'');
     case 'CAPTURA':return p.hasCapture?'CON orden de captura':'Sin orden de captura';
     case 'REVISION_TECNICA':return (p.hasValid?'Vigente':'Vencida/sin registro')+(p.validUntil?' hasta '+esc(p.validUntil):'');
     case 'TRANSPORTE':return p.isPublicTransport?('Taxi/transporte: '+esc(p.modality||'sí')+(p.detail?' · '+esc(p.detail):'')):'No figura como taxi';

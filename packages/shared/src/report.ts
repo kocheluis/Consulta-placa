@@ -88,6 +88,10 @@ export interface PapeletasPayload {
   items: PapeletaItem[];
   /** Jurisdicciones efectivamente consultadas (p. ej. ["Lima (SAT)", "Callao"]). */
   checkedScopes?: string[];
+  /** Monto con beneficio de pronto pago (descuento) si el portal lo ofrece. */
+  benefitAmount?: number;
+  /** Fecha límite del beneficio de pronto pago, tal como la muestra el portal (dd/mm/aaaa). */
+  benefitUntil?: string | null;
 }
 
 /** Payload de la sección CAPTURA (orden de captura SAT). */

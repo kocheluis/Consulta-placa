@@ -1035,6 +1035,11 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
       <StatusLine tone="warning" icon="receipt_long">
         {`${p.total} concepto(s) con papeletas${p.pendingAmount > 0 ? ` · S/ ${p.pendingAmount.toFixed(2)} pendiente` : ''}`}
       </StatusLine>
+      {p.benefitAmount && p.benefitAmount > 0 ? (
+        <StatusLine tone="success" icon="savings">
+          {`Beneficio de pronto pago: S/ ${p.benefitAmount.toFixed(2)}${p.benefitUntil ? ` si cancelas antes del ${p.benefitUntil}` : ''}`}
+        </StatusLine>
+      ) : null}
       <DefGrid items={p.items.map((it) => [it.entity, it.amount > 0 ? `S/ ${it.amount.toFixed(2)}` : 'Pendiente (revisar en el portal)'] as [string, string])} />
     </div>
   );

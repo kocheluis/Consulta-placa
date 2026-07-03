@@ -162,12 +162,24 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
     if (satP?.status === 'ENCONTRADO') items.push({ type: 'Infracciones Lima', entity: 'SAT Lima', date: null, amount: limaAmt, status: 'PENDIENTE' });
     const callaoAmt = callao?.status === 'ENCONTRADO' ? num(data(callao).total) : 0;
-    if (callaoAmt > 0) items.push({ type: 'Papeletas Callao', entity: 'SAT Callao', date: null, amount: callaoAmt, status: 'PENDIENTE' });
+    const callaoCount = callao?.status === 'ENCONTRADO' ? num(data(callao).count) : 0;
+    // Callao ENCONTRADO = SÍ hay papeletas (aunque no se haya leído el monto): registra el concepto.
+    // Antes solo se agregaba si el monto era > 0 → cuando el parser fallaba, el reporte mentía "sin papeletas".
+    if (callao?.status === 'ENCONTRADO') {
+      items.push({ type: `Papeletas Callao${callaoCount ? ` (${callaoCount})` : ''}`, entity: 'SAT Callao', date: null, amount: callaoAmt, status: 'PENDIENTE' });
+    }
     const anyOk = [satP, callao].some((r) => r && r.status !== 'ERROR');
     const checkedScopes: string[] = [];
     if (satP && satP.status !== 'ERROR') checkedScopes.push('Lima (SAT)');
     if (callao && callao.status !== 'ERROR') checkedScopes.push('Callao');
-    const pay: PapeletasPayload = { total: items.length, pendingAmount: Math.round((limaAmt + callaoAmt) * 100) / 100, items, checkedScopes };
+    const benefitAmount = callao?.status === 'ENCONTRADO' ? num(data(callao).benefit) : 0;
+    const benefitUntil = callao?.status === 'ENCONTRADO' ? ((data(callao).benefitUntil as string | null | undefined) ?? null) : null;
+    const pay: PapeletasPayload = {
+      total: items.length,
+      pendingAmount: Math.round((limaAmt + callaoAmt) * 100) / 100,
+      items, checkedScopes,
+      ...(benefitAmount > 0 ? { benefitAmount, benefitUntil } : {}),
+    };
     src.push({ kind: SectionKind.PAPELETAS, source: SourceId.SAT, status: anyOk ? SectionStatus.AVAILABLE : SectionStatus.UNAVAILABLE, fetchedAt: at, payload: pay });
   }
 
