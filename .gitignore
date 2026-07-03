@@ -67,3 +67,6 @@ boletas/
 *.db-shm
 *.db-wal
 *.sqlite
+
+# Screenshots del probe de ATU (no versionar)
+atu-*.png
