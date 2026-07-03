@@ -24,10 +24,10 @@
 <rect x="1010" y="470" width="450" height="250" rx="12" fill="#E3F6F2" stroke="#0E9E8E" stroke-width="2.5"/>
 <text x="1235.0" y="496" font-size="15" fill="#0E9E8E" text-anchor="middle" font-weight="bold">2b · VPS Lima — Motor (operador)</text>
 <rect x="1030" y="514" width="410" height="88" rx="6" fill="#0f2733"/>
-<text x="1042" y="536" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">cd /root/app</text>
-<text x="1042" y="554" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">git pull origin main</text>
-<text x="1042" y="572" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">npm run build -w @app/shared   # si cambió shared</text>
-<text x="1042" y="590" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">pm2 restart operador</text>
+<text x="1042" y="536" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">cd /root/app &amp;&amp; git pull origin main</text>
+<text x="1042" y="554" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">npm run build -w @app/shared   # solo si cambió shared</text>
+<text x="1042" y="572" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">pm2 restart operador</text>
+<text x="1042" y="590" font-size="11.5" fill="#8ee6d8" text-anchor="start" font-weight="normal" font-family="Courier New, monospace">pm2 logs operador --lines 30   # confirma que arrancó</text>
 <text x="1235.0" y="626" font-size="11.5" fill="#5b6b76" text-anchor="middle" font-weight="normal">Manual (SSH). Aquí corre el motor: fuentes,</text>
 <text x="1235.0" y="643" font-size="11.5" fill="#5b6b76" text-anchor="middle" font-weight="normal">índice Superbid, DB local. Lee/escribe en Supabase.</text>
 <rect x="540" y="540" width="370" height="175" rx="12" fill="#EAFBF5" stroke="#1E9E6A" stroke-width="2.5"/>
