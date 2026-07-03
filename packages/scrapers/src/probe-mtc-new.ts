@@ -25,37 +25,45 @@ const KEY = process.env.CAPTCHA_API_KEY ?? '';
     await wait(1500);
     console.log('cargó:', await page.title());
 
-    // Filtro = Placa.
     const sel = page.locator('#selBUS_Filtro');
     console.log('opciones del filtro:', (await sel.locator('option').allTextContents()).join(' | '));
-    await sel.selectOption({ label: 'Placa' }).catch(async () => { await sel.selectOption({ index: 1 }).catch(() => {}); });
-    await wait(600);
-    await page.locator('#texFiltro').fill(plate);
 
-    // Captcha imagen. #btnCaptcha suele (re)generar la imagen → clic y espera a que deje "Cargando..".
-    const img = page.locator('#imgCaptcha');
-    await page.locator('#btnCaptcha').click().catch(() => {});
-    await wait(1500);
-    await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
-    await wait(500);
-    const cap = (await solver.solveImage((await img.screenshot()).toString('base64'))).trim();
-    console.log('captcha OCR:', cap);
-    await page.locator('#texCaptcha').fill(cap);
-    await page.locator('#btnBuscar').click();
-    await wait(7000);
-
-    const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-    const modal = (await page.locator('#divModalCenter').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
-    console.log('--- DIALOG:', dialog || '(ninguno)');
-    console.log('--- MODAL:', modal.slice(0, 250) || '(vacío)');
-    const tables = (await page.locator('table.table').allInnerTexts().catch(() => [])) as string[];
-    console.log(`--- TABLAS (${tables.length}) ---`);
-    tables.forEach((t, i) => { const s = t.replace(/\s+/g, ' ').trim(); if (s) console.log(`[tabla ${i}] ${s.slice(0, 400)}`); });
-    const idx = body.search(new RegExp(`${plate}|certificad|vigente|vencido|resultado|no se`, 'i'));
-    console.log('--- BODY (contexto) ---');
-    console.log(body.slice(Math.max(0, idx - 20), idx + 500).replace(/\n{2,}/g, '\n'));
-    await page.screenshot({ path: `mtc-new-${plate}.png`, fullPage: true }).catch(() => {});
-    console.log(`screenshot: mtc-new-${plate}.png`);
+    const OK = /VIGENTE|VENCIDO|APROBADO|C-\d/i;                 // el resultado trae certificados
+    const NODATA = /no se encontr|no existe|sin registro|no cuenta/i;
+    const CAPERR = /(captcha|c[oó]digo)[^]{0,30}(incorrect|inv[aá]lid|err)|ingrese.*captcha/i;
+    let done = false;
+    for (let i = 1; i <= 4 && !done; i++) {
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(1500); }
+      await sel.selectOption({ label: 'Placa' }).catch(async () => { await sel.selectOption({ index: 1 }).catch(() => {}); });
+      await wait(500);
+      await page.locator('#texFiltro').fill(plate);
+      // Captcha imagen (NO refrescar: leer la que ya cargó). Espera a que deje de estar "Cargando..".
+      const img = page.locator('#imgCaptcha');
+      await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+      await wait(1200);
+      const cap = (await solver.solveImage((await img.screenshot()).toString('base64'))).trim();
+      await page.locator('#texCaptcha').fill(cap);
+      const filled = await page.locator('#texCaptcha').inputValue().catch(() => '');
+      dialog = '';
+      await page.locator('#btnBuscar').click().catch(() => {});
+      await wait(6000);
+      const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+      const modal = (await page.locator('#divModalCenter').innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+      const blob = `${dialog} ${modal} ${body}`;
+      console.log(`intento ${i}: captcha OCR="${cap}" filled="${filled}" · dialog="${dialog.slice(0, 60)}" · modal="${modal.slice(0, 80)}"`);
+      if (CAPERR.test(dialog) || CAPERR.test(modal)) { console.log('  → captcha incorrecto, reintento'); continue; }
+      if (NODATA.test(blob)) { console.log('  → SIN REGISTRO CITV'); done = true; }
+      if (OK.test(body)) {
+        console.log('  → RESULTADO ENCONTRADO. Tablas con datos:');
+        const tables = (await page.locator('table.table').allInnerTexts().catch(() => [])) as string[];
+        tables.forEach((t, k) => { const s = t.replace(/\s+/g, ' ').trim(); if (s && OK.test(s)) console.log(`  [tabla ${k}] ${s.slice(0, 500)}`); });
+        const idx = body.search(OK);
+        console.log('  BODY:', body.slice(Math.max(0, idx - 60), idx + 400).replace(/\n{2,}/g, ' '));
+        done = true;
+      }
+      if (!done && i === 4) console.log('  → sin resultado ni error claro tras 4 intentos');
+      await page.screenshot({ path: `mtc-new-${plate}.png`, fullPage: true }).catch(() => {});
+    }
   } catch (e) { console.log('ERR', (e as Error).message); }
   finally { await browser.close().catch(() => {}); }
   process.exit(0);
