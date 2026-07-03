@@ -136,7 +136,10 @@ export async function runMtcCitv(
   try {
     let dialog = '';
     page.on('dialog', (d) => { dialog = d.message(); d.accept().catch(() => {}); });
-    await page.goto('https://portal.mtc.gob.pe/reportedgtt/form/frmConsultaCITV.aspx', { waitUntil: 'networkidle', timeout: 60000 });
+    // 'domcontentloaded' (no 'networkidle'): el portal ASP.NET del MTC mantiene conexiones
+    // abiertas y NUNCA llega a networkidle → el goto expiraba a los 60s. Los waits explícitos
+    // del captcha/inputs de abajo garantizan que la página esté lista.
+    await page.goto('https://portal.mtc.gob.pe/reportedgtt/form/frmConsultaCITV.aspx', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(1200);
     const sel = page.locator('#selBUS_Filtro');
     const selectPlaca = async () => { if (await sel.count()) await sel.selectOption({ label: 'Placa' }).catch(() => {}); await wait(500); };
@@ -148,7 +151,7 @@ export async function runMtcCitv(
     let cap = '';
 
     for (let i = 1; i <= 4; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1000); }
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1000); }
       await selectPlaca();
       await plateInput.fill(plate);
       dialog = '';

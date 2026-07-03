@@ -28,6 +28,10 @@ export interface CdpAtuOptions {
   profileDir?: string;
   /** Cuántos reintentos si el reCAPTCHA rechaza por score (default 2 → 3 intentos). */
   retries?: number;
+  /** Segundos de "reposo" tras cargar la página antes de la 1ª consulta (default 4500ms).
+   *  El reCAPTCHA v3 puntúa el tiempo en página + interacción: entrar y consultar de
+   *  inmediato baja el score → sube el 1er intento fallido. Dejarlo respirar lo mejora. */
+  warmupMs?: number;
   /** Ruta para guardar screenshot del resultado. */
   shotPath?: string;
   log?: (msg: string) => void;
@@ -87,12 +91,25 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
 
+    // Reposo inicial: deja que el reCAPTCHA v3 cargue y "observe" la sesión antes de tocar nada.
+    // Entrar y consultar de inmediato baja el score (el 1er intento solía fallar). Validado en vivo.
+    const warmupMs = Math.max(0, opts.warmupMs ?? 4500);
+    log(`reposo inicial ${warmupMs}ms (calienta el score del reCAPTCHA v3)…`);
+    await wait(warmupMs);
+
     // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
     const acceptCookies = async (): Promise<void> => {
       await page.locator('button:has-text("Acepto cookies"), button:has-text("Aceptar"), button:has-text("Acepto"), a:has-text("Acepto cookies")')
         .first().click({ timeout: 5000 }).catch(() => {});
     };
     const plateInput = page.locator('input#placa, input[name*="laca" i], input[placeholder*="laca" i], input[formcontrolname*="laca" i]').first();
+    // Gestos de mouse "humanos": el v3 sube el score con señales de interacción reales.
+    const humanize = async (): Promise<void> => {
+      await page.mouse.move(200, 220).catch(() => {});
+      await wait(280);
+      await page.mouse.move(460, 380).catch(() => {});
+      await wait(220);
+    };
 
     for (let attempt = 0; attempt <= retries; attempt++) {
       if (attempt > 0) {
@@ -103,8 +120,10 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       await acceptCookies();
       await wait(500);
       await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+      await humanize();
       await plateInput.fill(plate).catch((e) => log(`fill: ${(e as Error).message}`));
-      await wait(700);
+      await wait(900);
+      await humanize();
       // Clic en Buscar → dejamos que el reCAPTCHA v3 NATIVO se ejecute (sin inyectar token).
       await page.locator('button:has-text("Buscar"), button[type="submit"]').first().click().catch(() => {});
       await wait(7000);
