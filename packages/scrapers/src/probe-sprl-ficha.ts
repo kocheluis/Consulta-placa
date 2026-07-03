@@ -111,6 +111,13 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
       const t = ((await b.getAttribute('title').catch(() => '')) || (await b.getAttribute('aria-label').catch(() => '')) || (await b.innerText().catch(() => ''))).replace(/\s+/g, ' ').trim();
       console.log(`  acción[${i}]: "${t.slice(0, 45)}"`);
     }
+    // Vuelca el HTML de la fila de resultado para identificar el botón "Ver Detalle" (onclick/ícono)
+    // sin gastar más logins. Se imprime inline para leerlo directo en la salida.
+    const rowHtml = await page.locator('.ant-table-tbody tr, table tbody tr').first().evaluate((el) => (el as HTMLElement).outerHTML).catch(() => '');
+    writeFileSync(`sprl2-result-${plate}.html`, rowHtml);
+    console.log('--- FILA HTML (900) ---');
+    console.log(rowHtml.replace(/\s+/g, ' ').slice(0, 900));
+    console.log('--- fin fila ---');
     // Clic en "Ver Detalle" (col 0). Acepta el confirm (handler global) y espera la carga.
     const detalle = page.locator('a[title*="detalle" i], button[title*="detalle" i], a:has-text("Ver Detalle"), button:has-text("Ver Detalle")').first();
     if (await detalle.count().catch(() => 0)) { await detalle.click().catch(() => {}); }
