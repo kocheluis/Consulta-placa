@@ -1258,7 +1258,7 @@ function SegurosBody({ section, onRetry }: { section: SectionResult; onRetry: ()
       {p.hasActiveSoat ? (
         <StatusLine tone="success" icon="verified">SOAT vigente</StatusLine>
       ) : (
-        <StatusLine tone="warning" icon="warning">Sin SOAT vigente registrado</StatusLine>
+        <StatusLine tone="warning" icon="warning">No se encontró SOAT vigente a nombre de esta placa</StatusLine>
       )}
       <DefGrid
         items={[
@@ -1271,6 +1271,13 @@ function SegurosBody({ section, onRetry }: { section: SectionResult; onRetry: ()
           ['N° de póliza', p.policyNumber],
         ]}
       />
+      <p className="font-body text-xs text-muted">
+        El <strong className="text-foreground">SOAT</strong> es obligatorio solo para vehículos particulares. Los de{' '}
+        transporte público o taxi usan <strong className="text-foreground">CAT</strong> (Certificado contra Accidentes de
+        Tránsito), que reemplaza al SOAT — para ellos, no tener SOAT no es una falta. El{' '}
+        <strong className="text-foreground">seguro vehicular</strong> es una cobertura opcional; ningún vehículo está
+        obligado a tenerlo.
+      </p>
     </div>
   );
 }

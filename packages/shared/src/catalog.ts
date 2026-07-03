@@ -62,13 +62,13 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
   },
   {
     key: 'soat',
-    label: 'SOAT',
+    label: 'Seguros (SOAT / CAT)',
     icon: 'health_and_safety',
     tier: ReportTier.BASIC,
     sources: ['SBS'],
     concept: ScoreConcept.INSURANCE,
     dataKind: SectionKind.SEGUROS,
-    blurb: 'Compañía aseguradora, clase y uso del vehículo, N° de póliza y de certificado, e inicio/fin de vigencia. (La siniestralidad queda en PRO.)',
+    blurb: 'Seguro obligatorio contra accidentes: SOAT (vehículos particulares) o CAT (transporte público/taxi, reemplaza al SOAT). El seguro vehicular es una cobertura opcional. Muestra compañía, vigencia, certificado y uso. (La siniestralidad queda en PRO.)',
   },
   // ── PRO: el resto de fuentes ────────────────────────────────────────
   {
