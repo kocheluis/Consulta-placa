@@ -158,7 +158,10 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       const atu = parseAtuFields(detalle);
       return {
         ok: true, status: 'ENCONTRADO',
-        data: { isPublicTransport: true, modalidad: atu.modalidad, estado: atu.estado, titular: atu.titular, detalleCampos: detalle },
+        data: {
+          isPublicTransport: true, modalidad: atu.modalidad, estado: atu.estado,
+          titular: atu.titular, documento: atu.documento, vigencia: atu.vigencia, detalleCampos: detalle,
+        },
       };
     }
     if (opts.shotPath) await page.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});

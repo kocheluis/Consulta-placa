@@ -1154,7 +1154,15 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
       ) : (
         <StatusLine tone="success" icon="verified">No figura como taxi/transporte</StatusLine>
       )}
-      <DefGrid items={[['Modalidad', t.modality], ['Detalle', t.detail]]} />
+      <DefGrid
+        items={[
+          ['Modalidad', t.modality],
+          ['Vigencia', t.validUntil],
+          ['Titular', t.holder],
+          ['Documento', t.holderDoc],
+          ['Detalle', t.detail],
+        ]}
+      />
     </div>
   );
 }

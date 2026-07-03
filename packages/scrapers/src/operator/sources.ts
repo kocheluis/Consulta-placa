@@ -454,13 +454,31 @@ export async function runAtu(
 
 // Los campos del resultado ATU son inputs readonly; parseamos sus VALORES (unidos por ' | ').
 // Ej. real: "SERVICIO DE TAXI EJECUTIVO", "Habilitado hasta 29/09/2026", "GESTIONES Y SERVICIOS … EIRL".
-export function parseAtuFields(vals: string): { modalidad: string | null; estado: string | null; titular: string | null } {
+export function parseAtuFields(vals: string): {
+  modalidad: string | null; estado: string | null; titular: string | null;
+  documento: string | null; vigencia: string | null;
+} {
   const arr = vals.split(' | ').map((s) => s.trim()).filter(Boolean);
   const find = (re: RegExp): string | null => arr.find((v) => re.test(v)) ?? null;
   const modalidad = find(/taxi|servicio de|transporte|colectivo|escolar|cuna|mercanc/i);
-  const estado = find(/habilitad|no registrad|vencid|suspend|inhabilit/i);
-  const titular = arr.find((v) => /(E\.?I\.?R\.?L|S\.?A\.?C|S\.?R\.?L|SOCIEDAD|SERVICIOS|TRANSPORTES|GESTIONES|S\.?A\b)/i.test(v) && v !== modalidad) ?? null;
-  return { modalidad, estado, titular };
+  // Estado = la frase del resultado ("El vehículo está habilitado…"); NO la vigencia (que también
+  // dice "Habilitado …"). Por eso se busca la oración, no solo la palabra "habilitado".
+  const estado = find(/veh[ií]culo est[aá]|no registrad|no figura|vencid|suspend|inhabilit/i)
+    ?? find(/habilitado para prestar/i);
+  const vigencia = find(/habilitado hasta|vigencia|vence/i);
+  // Documento del titular: "DNI - 08701061", "RUC 20…".
+  const docField = find(/\b(DNI|RUC|C\.?E\.?|CARN|PASAPORTE|PAS)\b\s*[-:]?\s*[0-9A-Z]/i);
+  const docMatch = docField?.match(/\b(DNI|RUC|C\.?E\.?|CARN\w*|PASAPORTE|PAS)\b\s*[-:]?\s*([0-9A-Z]{6,})/i);
+  const documento = docMatch ? `${docMatch[1]!.toUpperCase().replace(/[^A-Z]/g, '')} ${docMatch[2]}` : null;
+  // Titular: empresa (patrón societario) o persona (nombre en MAYÚSCULAS, normalmente tras el doc).
+  const empresa = arr.find((v) => /(E\.?I\.?R\.?L|S\.?A\.?C|S\.?R\.?L|SOCIEDAD|SERVICIOS|TRANSPORTES|GESTIONES|S\.?A\b)/i.test(v) && v !== modalidad) ?? null;
+  let persona: string | null = null;
+  if (docField) {
+    const next = arr[arr.indexOf(docField) + 1];
+    if (next && /^[A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ .'-]{4,}$/.test(next) && !/(veh[ií]culo|habilitad|servicio|consulta)/i.test(next)) persona = next;
+  }
+  const titular = empresa ?? persona;
+  return { modalidad, estado, titular, documento, vigencia };
 }
 
 /**

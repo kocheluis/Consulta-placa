@@ -116,6 +116,13 @@ export interface TransporteInfo {
   isPublicTransport: boolean;
   modality: string | null;
   detail: string | null;
+  /** Titular de la habilitación (empresa o persona). PII de tercero: enmascarar antes de
+   *  producción según se decida (retirar, o dejar nombre + 3 letras del apellido + ***). */
+  holder?: string | null;
+  /** Documento del titular (p. ej. "DNI 08701061" / "RUC 20..."). PII: ver `holder`. */
+  holderDoc?: string | null;
+  /** Vigencia de la habilitación (p. ej. "Habilitado hasta 31/12/2029"). */
+  validUntil?: string | null;
 }
 
 /** Payload de la sección MULTAS_ELECTORALES (ONPE, por DNI del titular). */
