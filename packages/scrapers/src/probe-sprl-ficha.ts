@@ -97,12 +97,21 @@ async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promi
     for (let i = 0; i < (await buscarBtns.count().catch(() => 0)); i++) { const b = buscarBtns.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); break; } }
     await respP;
     await wait(2500);
-    // Abrir la partida (2º botón de la fila = "gráfica registral", como en historial.ts).
-    const rowBtns = page.locator('.ant-table-tbody tr button, table tbody tr button');
+    // La fila trae 3 acciones: [0] Ver Detalle · [1] Ver Asientos · [2] Boleta Informativa (pago).
+    // Las CARACTERÍSTICAS (versión, carrocería…) deben estar en "Ver Detalle" (col 0), gratis.
+    const rowBtns = page.locator('.ant-table-tbody tr button, table tbody tr button, .ant-table-tbody tr a, table tbody tr a');
     const nBtns = await rowBtns.count().catch(() => 0);
-    console.log(`filas/botones de resultado: ${nBtns}`);
-    if (nBtns >= 2) { await rowBtns.nth(1).click().catch(() => {}); await wait(4500); }
-    else if (nBtns === 1) { await rowBtns.nth(0).click().catch(() => {}); await wait(4500); }
+    console.log(`acciones en la fila: ${nBtns}`);
+    for (let i = 0; i < Math.min(nBtns, 6); i++) {
+      const b = rowBtns.nth(i);
+      const t = ((await b.getAttribute('title').catch(() => '')) || (await b.getAttribute('aria-label').catch(() => '')) || (await b.innerText().catch(() => ''))).replace(/\s+/g, ' ').trim();
+      console.log(`  acción[${i}]: "${t.slice(0, 45)}"`);
+    }
+    // Clic en "Ver Detalle": por texto/title si el botón lo trae; si no, el 1er botón de la fila.
+    const detalle = page.locator('a[title*="detalle" i], button[title*="detalle" i], a:has-text("Ver Detalle"), button:has-text("Ver Detalle")').first();
+    if (await detalle.count().catch(() => 0)) { await detalle.click().catch(() => {}); }
+    else if (nBtns >= 1) { await rowBtns.nth(0).click().catch(() => {}); }
+    await wait(5000);
 
     // VUELCA todo para inspección.
     const text = await page.locator('body').innerText().catch(() => '');
