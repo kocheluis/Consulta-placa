@@ -326,8 +326,9 @@ export async function runSbs(
       if (NODATA.test(body)) break; // respondió pero SIN datos para este tipo → pasa al siguiente (CAT)
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       const accidentes = body.match(/[uú]ltimos 5 a[nñ]os:\s*(\d+)/i)?.[1] ?? null;
-      // Tabla "Listado de pólizas SOAT contratadas": extrae cada póliza mapeando por
-      // encabezado (robusto al orden de columnas). String-eval (no función flecha) por
+      // Tabla de pólizas: "Listado de pólizas SOAT contratadas" (SOAT: Compañía/Póliza/Certificado…)
+      // o "Listado de certificados CAT" (CAT: AFOCAT/Certificado/Vigencia…). Mapea por encabezado
+      // (robusto al orden y al tipo). String-eval (no función flecha) por
       // el bug __name de esbuild/tsx al serializar funciones a page.evaluate.
       const polizas = (await page.evaluate(`(function(){
         var norm=function(s){return (s||'').replace(/\\s+/g,' ').trim();};
@@ -335,11 +336,11 @@ export async function runSbs(
         for(var ti=0;ti<tables.length;ti++){
           var trs=Array.prototype.slice.call(tables[ti].querySelectorAll('tr'));
           var head=null;
-          for(var hi=0;hi<trs.length;hi++){var tx=trs[hi].innerText||'';if(/p[oó]liza/i.test(tx)&&/certificado/i.test(tx)){head=trs[hi];break;}}
+          for(var hi=0;hi<trs.length;hi++){var tx=trs[hi].innerText||'';if(/certificado/i.test(tx)&&/(p[oó]liza|afocat|vigencia)/i.test(tx)){head=trs[hi];break;}}
           if(!head)continue;
           var hc=Array.prototype.slice.call(head.querySelectorAll('th,td')).map(function(c){return norm(c.textContent).toLowerCase();});
           var ix=function(re){for(var i=0;i<hc.length;i++){if(re.test(hc[i]))return i;}return -1;};
-          var ci={compania:ix(/compa/),clase:ix(/clase/),uso:ix(/uso/),poliza:ix(/p[oó]liza/),certificado:ix(/certificado/),inicio:ix(/inicio/),fin:ix(/fin/)};
+          var ci={compania:ix(/compa|afocat/),clase:ix(/clase/),uso:ix(/uso/),poliza:ix(/p[oó]liza/),certificado:ix(/certificado/),inicio:ix(/inicio/),fin:ix(/fin/)};
           var out=[];
           for(var ri=0;ri<trs.length;ri++){
             if(trs[ri]===head)continue;
@@ -347,7 +348,7 @@ export async function runSbs(
             if(cells.length<4)continue;
             var g=function(i){return (i>=0&&i<cells.length)?cells[i]:'';};
             var row={compania:g(ci.compania),clase:g(ci.clase),uso:g(ci.uso),poliza:g(ci.poliza),certificado:g(ci.certificado),inicio:g(ci.inicio),fin:g(ci.fin)};
-            if(row.compania||row.poliza)out.push(row);
+            if(row.compania||row.poliza||row.certificado)out.push(row);
           }
           return out;
         }
