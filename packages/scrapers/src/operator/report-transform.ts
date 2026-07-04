@@ -160,7 +160,8 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   if (satP || callao) {
     const items: PapeletaItem[] = [];
     const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
-    if (satP?.status === 'ENCONTRADO') items.push({ type: 'Infracciones Lima', entity: 'SAT Lima', date: null, amount: limaAmt, status: 'PENDIENTE' });
+    const limaCount = satP?.status === 'ENCONTRADO' ? num(data(satP).count) : 0;
+    if (satP?.status === 'ENCONTRADO') items.push({ type: `Infracciones Lima${limaCount ? ` (${limaCount})` : ''}`, entity: 'SAT Lima', date: null, amount: limaAmt, status: 'PENDIENTE' });
     const callaoAmt = callao?.status === 'ENCONTRADO' ? num(data(callao).total) : 0;
     const callaoCount = callao?.status === 'ENCONTRADO' ? num(data(callao).count) : 0;
     // Callao ENCONTRADO = SÍ hay papeletas (aunque no se haya leído el monto): registra el concepto.
@@ -174,8 +175,10 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     if (callao && callao.status !== 'ERROR') checkedScopes.push('Callao');
     const benefitAmount = callao?.status === 'ENCONTRADO' ? num(data(callao).benefit) : 0;
     const benefitUntil = callao?.status === 'ENCONTRADO' ? ((data(callao).benefitUntil as string | null | undefined) ?? null) : null;
+    const papeletaCount = limaCount + callaoCount;
     const pay: PapeletasPayload = {
       total: items.length,
+      ...(papeletaCount > 0 ? { count: papeletaCount } : {}),
       pendingAmount: Math.round((limaAmt + callaoAmt) * 100) / 100,
       items, checkedScopes,
       ...(benefitAmount > 0 ? { benefitAmount, benefitUntil } : {}),

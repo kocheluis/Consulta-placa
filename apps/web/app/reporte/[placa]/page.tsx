@@ -1030,10 +1030,11 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
   if (p.total === 0) {
     return <StatusLine tone="success" icon="verified">{`Sin papeletas pendientes en ${dondeTxt}`}</StatusLine>;
   }
+  const nPapeletas = p.count ?? p.total;
   return (
     <div className="flex flex-col gap-3">
       <StatusLine tone="warning" icon="receipt_long">
-        {`${p.total} concepto(s) con papeletas${p.pendingAmount > 0 ? ` · S/ ${p.pendingAmount.toFixed(2)} pendiente` : ''}`}
+        {`${nPapeletas} papeleta${nPapeletas === 1 ? '' : 's'}${p.pendingAmount > 0 ? ` · S/ ${p.pendingAmount.toFixed(2)} pendiente` : ''}`}
       </StatusLine>
       {p.benefitAmount && p.benefitAmount > 0 ? (
         <StatusLine tone="success" icon="savings">

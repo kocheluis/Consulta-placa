@@ -83,7 +83,10 @@ export interface PapeletaItem {
 
 /** Payload de la sección PAPELETAS (SAT municipal + SUTRAN cinemómetro). */
 export interface PapeletasPayload {
+  /** N° de "conceptos" (una entrada por jurisdicción con papeletas). Gate de "sin papeletas". */
   total: number;
+  /** N° total de papeletas individuales (Lima + Callao), si se pudo contar. */
+  count?: number;
   pendingAmount: number;
   items: PapeletaItem[];
   /** Jurisdicciones efectivamente consultadas (p. ej. ["Lima (SAT)", "Callao"]). */
