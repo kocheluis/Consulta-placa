@@ -43,33 +43,40 @@ try {
 
   let attemptNo = 0;
   for (const tipo of TIPOS) {
-    for (let i = 1; i <= 2; i++) {
-      if (attemptNo > 0) { await p.reload({ waitUntil: 'networkidle' }); await wait(1000); }
-      attemptNo++;
-      await p.locator(tipo.radio).check().catch(() => {});
-      await p.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
-      const token = await solver.solveRecaptchaV3(SBS_SITEKEY, URL, 'homepage');
-      await p.evaluate(`(function(tok){function set(s){document.querySelectorAll(s).forEach(function(e){e.value=tok;});}set('#ctl00_MainBodyContent_hdnReCaptchaV3');set('[name="g-recaptcha-response"]');set('#g-recaptcha-response');})(${JSON.stringify(token)})`);
-      await p.locator('#ctl00_MainBodyContent_btnIngresarPla').click();
-      await wait(5000);
-      await p.waitForLoadState('networkidle').catch(() => {});
-      const body = (await p.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-      if (!OK.test(body)) { console.log(`  ${tipo.key} intento ${i}: reCAPTCHA rechazado, reintento…`); continue; }
+    let done = false;
+    for (let i = 1; i <= 2 && !done; i++) {
+      try {
+        // goto (no reload): tras una búsqueda la página queda en la vista de resultados; hay que
+        // volver al formulario fresco para consultar el siguiente tipo o reintentar.
+        if (attemptNo > 0) { await p.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
+        attemptNo++;
+        await p.locator(tipo.radio).check().catch(() => {});
+        await p.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
+        const token = await solver.solveRecaptchaV3(SBS_SITEKEY, URL, 'homepage');
+        await p.evaluate(`(function(tok){function set(s){document.querySelectorAll(s).forEach(function(e){e.value=tok;});}set('#ctl00_MainBodyContent_hdnReCaptchaV3');set('[name="g-recaptcha-response"]');set('#g-recaptcha-response');})(${JSON.stringify(token)})`);
+        await p.locator('#ctl00_MainBodyContent_btnIngresarPla').click();
+        await wait(5000);
+        await p.waitForLoadState('networkidle').catch(() => {});
+        const body = (await p.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+        if (!OK.test(body)) { console.log(`  ${tipo.key} intento ${i}: reCAPTCHA rechazado, reintento…`); continue; }
 
-      console.log(`\n##################### ${tipo.key} ${NODATA.test(body) ? '(SIN DATOS)' : '(CON DATOS)'} #####################`);
-      console.log('\n===== BODY innerText (primeros 6000) =====\n' + body.slice(0, 6000));
-      const tables = await p.$$eval('table', (ts) => ts.map((t, i) => {
-        const rows = Array.from(t.querySelectorAll('tr')).map((tr) =>
-          Array.from(tr.querySelectorAll('th,td')).map((c) => (c.textContent || '').trim()));
-        return { i, rowCount: rows.length, firstRows: rows.slice(0, 8), htmlHead: t.outerHTML.slice(0, 1400) };
-      }));
-      console.log(`\n===== ${tables.length} TABLE(S) =====`);
-      for (const t of tables) {
-        console.log(`\n-- table #${t.i} · ${t.rowCount} filas --`);
-        console.log('  filas:', JSON.stringify(t.firstRows));
-        console.log('  HTML(head):', t.htmlHead.replace(/\s+/g, ' '));
+        console.log(`\n##################### ${tipo.key} ${NODATA.test(body) ? '(SIN DATOS)' : '(CON DATOS)'} #####################`);
+        console.log('\n===== BODY innerText (primeros 6000) =====\n' + body.slice(0, 6000));
+        const tables = await p.$$eval('table', (ts) => ts.map((t, i) => {
+          const rows = Array.from(t.querySelectorAll('tr')).map((tr) =>
+            Array.from(tr.querySelectorAll('th,td')).map((c) => (c.textContent || '').trim()));
+          return { i, rowCount: rows.length, firstRows: rows.slice(0, 8), htmlHead: t.outerHTML.slice(0, 1400) };
+        }));
+        console.log(`\n===== ${tables.length} TABLE(S) =====`);
+        for (const t of tables) {
+          console.log(`\n-- table #${t.i} · ${t.rowCount} filas --`);
+          console.log('  filas:', JSON.stringify(t.firstRows));
+          console.log('  HTML(head):', t.htmlHead.replace(/\s+/g, ' '));
+        }
+        done = true; // este tipo resuelto (con o sin datos) → siguiente tipo
+      } catch (e) {
+        console.log(`  ${tipo.key} intento ${i}: error ${(e as Error).message}`);
       }
-      break; // este tipo resuelto (con o sin datos) → siguiente tipo
     }
   }
 } finally {

@@ -298,7 +298,9 @@ export async function runSbs(
     let attemptNo = 0;
     for (const tipo of TIPOS) {
     for (let i = 1; i <= 2; i++) {
-      if (attemptNo > 0) { await page.reload({ waitUntil: 'networkidle' }); await wait(1000); }
+      // goto (no reload): tras una búsqueda la página queda en la vista de resultados; hay que
+      // volver al formulario fresco para consultar el siguiente tipo (SOAT→CAT) o reintentar.
+      if (attemptNo > 0) { await page.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
       attemptNo++;
       await page.locator(tipo.radio).check().catch(() => {});
       await page.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
