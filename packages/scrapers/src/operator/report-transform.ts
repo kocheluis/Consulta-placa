@@ -89,9 +89,15 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   } else if (sbs?.status === 'ENCONTRADO') {
     const sd = data(sbs);
     const so = (sd.soat ?? {}) as Record<string, string>;
+    // Marco SOAT vs CAT: el tipo que trajo datos; si no hubo (sd.tipo null) se infiere por el USO del
+    // vehículo — taxi/transporte → CAT, particular → SOAT. Señal NACIONAL = tipo de servicio del CITV
+    // (observaciones); respaldo = TRANSPORTE (ATU, solo Lima). Así un particular sin SOAT dice "No SOAT
+    // vigente" y un taxi sin CAT dice "No CAT vigente" (en vez de un genérico confuso).
+    const isTaxi = /taxi|transporte\s+(p[uú]blico|especial de personas)|servicio\s+p[uú]blico/i
+      .test(String(data(by('MTC_CITV')).observaciones ?? '')) || Boolean(data(by('ATU')).isPublicTransport);
     const pol: InsurancePolicy = {
       hasActiveSoat: Boolean(sd.vigente),
-      insuranceType: (sd.tipo as string) ?? 'SOAT',
+      insuranceType: (sd.tipo as string) || (isTaxi ? 'CAT' : 'SOAT'),
       insurer: so.compania ?? (sd.compania as string) ?? null,
       policyNumber: so.poliza ?? null,
       validFrom: so.inicio ?? null,

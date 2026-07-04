@@ -296,6 +296,7 @@ export async function runSbs(
     const OK = /resultado de (la )?b[uú]squeda|listado de p[oó]lizas|n[uú]mero de accidentes|no se encontr|no registra|no tiene informaci/i;
     const NODATA = /no tiene informaci[oó]n reportada/i;
     let attemptNo = 0;
+    let respondedAny = false;
     for (const tipo of TIPOS) {
     for (let i = 1; i <= 2; i++) {
       // goto (no reload): tras una búsqueda la página queda en la vista de resultados; hay que
@@ -313,6 +314,7 @@ export async function runSbs(
       await page.waitForLoadState('networkidle').catch(() => {});
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
       if (!OK.test(body)) continue; // reCAPTCHA rechazado / sin respuesta → reintenta este tipo
+      respondedAny = true; // el portal respondió (con o sin datos)
       if (NODATA.test(body)) break; // respondió pero SIN datos para este tipo → pasa al siguiente (CAT)
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       const accidentes = body.match(/[uú]ltimos 5 a[nñ]os:\s*(\d+)/i)?.[1] ?? null;
@@ -359,7 +361,12 @@ export async function runSbs(
     }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado o sin datos (SOAT ni CAT)', screenshot: shot, ms: Date.now() - t0 };
+    // El portal RESPONDIÓ (SOAT/CAT sin registro) → "no tiene seguro" es un dato definitivo: sección
+    // disponible con hasActiveSoat=false (NO error). Solo es ERROR si el reCAPTCHA nunca pasó.
+    if (respondedAny) {
+      return { ...base, status: 'ENCONTRADO', summary: 'Sin SOAT ni CAT vigente', data: { tipo: null, accidentes: null, compania: null, soat: null, vigente: false, polizas: [] }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado (sin respuesta)', screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
