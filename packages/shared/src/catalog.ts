@@ -72,6 +72,16 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
   },
   // ── PRO: el resto de fuentes ────────────────────────────────────────
   {
+    key: 'identidad_especifica',
+    label: 'Identidad específica del vehículo',
+    icon: 'tune',
+    tier: ReportTier.PRO,
+    sources: ['SUNARP'],
+    concept: null,
+    dataKind: SectionKind.IDENTIDAD_ESPECIFICA,
+    blurb: 'Ficha técnica que la consulta gratuita no da: N° de versión, tipo de carrocería, combustible, cilindrada, potencia, dimensiones y pesos — tomada del asiento registral (refleja el estado actual del vehículo).',
+  },
+  {
     key: 'siniestralidad',
     label: 'Siniestralidad',
     icon: 'car_crash',

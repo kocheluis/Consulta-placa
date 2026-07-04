@@ -24,6 +24,8 @@ export const SectionKind = {
   MULTAS_ELECTORALES: 'MULTAS_ELECTORALES',
   GRAVAMENES: 'GRAVAMENES',
   HISTORIAL: 'HISTORIAL',
+  /** Identidad específica: versión, carrocería, combustible, cilindrada, dimensiones… (asiento SUNARP). */
+  IDENTIDAD_ESPECIFICA: 'IDENTIDAD_ESPECIFICA',
   GNV: 'GNV',
   DEUDA_BANCARIA: 'DEUDA_BANCARIA',
   PNP: 'PNP',

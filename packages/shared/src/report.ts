@@ -137,6 +137,57 @@ export interface TransporteInfo {
   validUntil?: string | null;
 }
 
+/**
+ * Payload de la sección IDENTIDAD_ESPECIFICA (asiento registral SUNARP vía Síguelo).
+ * Ficha técnica que la Consulta Vehicular GRATUITA no entrega: N° de versión, carrocería,
+ * combustible, cilindrada, potencia, dimensiones y pesos. Se toma del asiento más reciente
+ * que contenga la ficha (Primera Inscripción / Cambio de Características), de modo que refleja
+ * el estado ACTUAL del vehículo (p. ej. tras conversión a GNV o cambio de color). Todos los
+ * campos son texto tal como los declara el registro (conservan unidades: "1.488 L", "4.533 mt").
+ */
+export interface VehicleSpecs {
+  /** N° de Versión — el dato estrella (p. ej. "GL-I GNV"). Diferencia trim/equipamiento. */
+  version: string | null;
+  /** Categoría vehicular (p. ej. "M1"). */
+  category: string | null;
+  /** Tipo de uso declarado (p. ej. "Taxis y Colectivos (Categoría M1)"). */
+  usage: string | null;
+  /** Tipo de carrocería (p. ej. "SEDAN"). */
+  bodywork: string | null;
+  /** Tipo de combustible (p. ej. "BI-COMBUSTIBLE GNV"). */
+  fuel: string | null;
+  /** Cilindrada con unidad (p. ej. "1.488 L"). */
+  displacement: string | null;
+  /** N° de cilindros (p. ej. "4"). */
+  cylinders: string | null;
+  /** Potencia del motor (p. ej. "78@6000"). */
+  power: string | null;
+  /** N° de ejes (p. ej. "2"). */
+  axles: string | null;
+  /** N° de ruedas (p. ej. "4"). */
+  wheels: string | null;
+  /** Fórmula rodante (p. ej. "4X2"). */
+  driveFormula: string | null;
+  /** N° de asientos (p. ej. "5"). */
+  seats: string | null;
+  /** N° de pasajeros (p. ej. "4"). */
+  passengers: string | null;
+  /** Longitud con unidad (p. ej. "4.533 mt"). */
+  length: string | null;
+  /** Ancho con unidad (p. ej. "1.705 mt"). */
+  width: string | null;
+  /** Altura con unidad (p. ej. "1.49 mt"). */
+  height: string | null;
+  /** Peso bruto con unidad (p. ej. "2.075 tn"). */
+  grossWeight: string | null;
+  /** Peso neto/seco con unidad (p. ej. "1.200 tn"). */
+  netWeight: string | null;
+  /** Carga útil con unidad (p. ej. "0.875 tn"). */
+  payload: string | null;
+  /** Título del asiento del que se tomó la ficha (trazabilidad, p. ej. "2025-3325177"). */
+  sourceTitle?: string | null;
+}
+
 /** Payload de la sección MULTAS_ELECTORALES (ONPE, por DNI del titular). */
 export interface MultasElectorales {
   hasFine: boolean;

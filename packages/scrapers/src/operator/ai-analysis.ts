@@ -52,9 +52,10 @@ orden de captura, muchas transferencias en poco tiempo, papeletas altas o revisi
 Reglas:
 - Veredicto: "comprar" (sin señales relevantes), "precaucion" (señales que exigen verificación) o "evitar" \
 (señales graves: siniestro/pérdida total, gravamen vigente, orden de captura).
-- priceComment: comentario CUALITATIVO sobre el precio basado SOLO en los precios declarados del historial y \
-la antigüedad. NO inventes una tasación de mercado; aclara que no es un avalúo y que se recomienda comparar \
-con avisos del mercado.
+- priceComment: comentario CUALITATIVO sobre el precio basado SOLO en los precios declarados del historial, \
+la antigüedad y la ficha técnica (versión exacta, combustible, cilindrada — una versión tope/GNV o con más \
+equipamiento no vale igual que la base). NO inventes una tasación de mercado; aclara que no es un avalúo y que \
+se recomienda comparar con avisos del mercado.
 - No inventes datos que no estén en la entrada. Si un dato falta o la fuente falló, dilo. Escribe en español, \
 claro y conciso.`;
 
@@ -71,6 +72,7 @@ function buildSummary(report: Report): Record<string, unknown> {
   const rev = p('REVISION_TECNICA');
   const grav = p('GRAVAMENES');
   const hist = p('HISTORIAL');
+  const especs = p('IDENTIDAD_ESPECIFICA');
 
   const auction = (sin.auction ?? null) as Record<string, unknown> | null;
   const gravItems = ((grav.items ?? []) as Array<Record<string, unknown>>).map((it) => ({
@@ -83,6 +85,11 @@ function buildSummary(report: Report): Record<string, unknown> {
 
   return {
     vehiculo: v ? { marca: v.brand, modelo: v.model, anio: v.year, color: v.color, placa: v.plateDisplay, alertaRobo: v.stolenAlert } : null,
+    // Ficha técnica del asiento registral (sin PII): versión exacta + características → afina el
+    // comentario de precio (una versión GNV/tope de gama no vale igual que la base) y el uso.
+    identidadEspecifica: byKind('IDENTIDAD_ESPECIFICA')
+      ? { version: especs.version, categoria: especs.category, uso: especs.usage, carroceria: especs.bodywork, combustible: especs.fuel, cilindrada: especs.displacement, potencia: especs.power, asientos: especs.seats, pesoBruto: especs.grossWeight }
+      : 'fuente no disponible',
     soat: byKind('SEGUROS') ? { vigente: seg.hasActiveSoat, compania: seg.insurer } : 'fuente no disponible',
     siniestralidad: byKind('SINIESTRALIDAD')
       ? { registraSiniestro: sin.hasSiniestro, accidentesSoat: sin.accidentes, periodoAnios: sin.periodYears, subasta: auction ? { tipo: auction.tipo, fuente: auction.fuente, estado: auction.estado } : null }

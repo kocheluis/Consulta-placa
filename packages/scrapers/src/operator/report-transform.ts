@@ -17,6 +17,7 @@ import {
   type HistorialEvent,
   type AuctionInfo,
   type TransporteInfo,
+  type VehicleSpecs,
 } from '@app/shared';
 import type { OperatorSourceResult } from './index.js';
 
@@ -299,6 +300,15 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       events,
     };
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
+
+    // ── IDENTIDAD ESPECÍFICA (ficha técnica del asiento: versión, carrocería, combustible…) ──
+    // Solo se emite si el asiento trajo la ficha (la mayoría la tiene en su Primera Inscripción /
+    // Cambio de Características). Si ningún asiento la trae, se omite → la web la muestra en su
+    // fallback de catálogo, sin prometer un dato que esta placa no expone en el asiento gratis.
+    const especs = (hd.caracteristicas ?? null) as VehicleSpecs | null;
+    if (especs && especs.version) {
+      src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: especs });
+    }
   } else if (hist) {
     // El historial (SPRL) corrió pero FALLÓ (bloqueo por IP, Turnstile, etc.). Antes se
     // omitían estas secciones → la web las pintaba como "Próximamente" (engañoso: sí las
@@ -306,6 +316,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // muestre "no disponible / reintentar" en su lugar. Ver riesgo de UX de fuente fallida.
     src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   }
 
   const report = buildReport({ id, plateDisplay: plate, plateNormalized: plate, generatedAt: at, sources: src });

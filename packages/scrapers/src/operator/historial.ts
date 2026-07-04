@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser } from 'playwright';
 import { parseAsiento, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
+import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
 
@@ -46,6 +47,8 @@ export interface HistorialResult {
   vehiculo: Record<string, unknown> | null;
   titulos: string[];
   timeline: AsientoRecord[];
+  /** Ficha técnica del asiento MÁS RECIENTE que la contenga (refleja el estado actual del vehículo); null si ninguno la trae. */
+  caracteristicas?: VehicleSpecs | null;
   flags: { aseguradora: boolean; remate: boolean; financiera: boolean; gravamen: boolean; embargo: boolean };
   error?: string;
   /** true = SUNARP bloqueó la cuenta por IP (exceso de intentos) → el caller puede hacer failover a otra cuenta. */
@@ -282,9 +285,10 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     const records: AsientoRecord[] = [];
     const procesar = (text: string | null, tit: string) => {
       if (!text) return;
-      // Depuración (SIGUELO_DEBUG=1): vuelca el texto crudo del asiento para afinar la extracción de
-      // características (N° de Versión, carrocería, cilindrada…) de la sección "Identidad específica".
-      if (process.env.SIGUELO_DEBUG) log(`  [DEBUG asiento ${tit}] ${text.slice(0, 3000)} [/DEBUG]`);
+      // Depuración (SIGUELO_DEBUG=1): vuelca el texto crudo COMPLETO del asiento para afinar la
+      // extracción de características (N° de Versión, carrocería, cilindrada…) de "Identidad específica".
+      // Sin recorte: las características de la Primera Inscripción pueden ir más allá de los 3000 chars.
+      if (process.env.SIGUELO_DEBUG) log(`  [DEBUG asiento ${tit}] ${text} [/DEBUG]`);
       const rec = parseAsiento(text);
       records.push(rec);
       log(`  ${tit}: ${rec.acto || rec.tipo} · ${rec.precio || 's/precio'} · ${rec.fechaPresentacion}`);
@@ -313,6 +317,14 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     }
 
     const timeline = construirTimeline(records);
+    // Ficha técnica: del asiento MÁS RECIENTE que la traiga (así refleja el estado actual —
+    // p. ej. tras conversión a GNV o cambio de color— y no la ficha original de 2015). El
+    // timeline va de más antiguo a más reciente, por eso se recorre de atrás hacia adelante.
+    let caracteristicas: VehicleSpecs | null = null;
+    for (let i = timeline.length - 1; i >= 0; i--) {
+      const c = timeline[i]?.caracteristicas;
+      if (c) { caracteristicas = { ...c, sourceTitle: timeline[i]?.titulo ?? null }; break; }
+    }
     const flags = {
       aseguradora: records.some((r) => r.flags.aseguradora),
       remate: records.some((r) => r.flags.remate),
@@ -320,7 +332,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       gravamen: records.some((r) => r.flags.gravamen),
       embargo: records.some((r) => r.flags.embargo),
     };
-    return { ok: records.length > 0, sede: oficina, vehiculo, titulos, timeline, flags };
+    return { ok: records.length > 0, sede: oficina, vehiculo, titulos, timeline, caracteristicas, flags };
   } catch (e) {
     return { ...empty, sede: oficina, vehiculo, error: (e as Error).message };
   } finally {

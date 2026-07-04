@@ -16,6 +16,7 @@ import type {
   GravamenesPayload,
   HistorialPayload,
   TransporteInfo,
+  VehicleSpecs,
   IaAnalysis,
 } from '@app/shared';
 import {
@@ -931,6 +932,10 @@ function SectionBody({
     return vehicle?.owner ? <PropietariosBody owner={vehicle.owner} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
+  if (entry.key === 'identidad_especifica') {
+    return section ? <IdentidadEspecificaBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
   if (entry.key === 'soat') {
     return section ? <SegurosBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
@@ -1144,6 +1149,46 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
       {list.length > MAX && (
         <p className="font-body text-xs text-muted">+{list.length - MAX} gravamen(es) más en el historial registral.</p>
       )}
+    </div>
+  );
+}
+
+function IdentidadEspecificaBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const s = section.payload as VehicleSpecs | undefined;
+  if (!s) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  return (
+    <div className="flex flex-col gap-3">
+      {s.version && (
+        <StatusLine tone="neutral" icon="tune">
+          Versión: <strong>{s.version}</strong>
+        </StatusLine>
+      )}
+      <DefGrid
+        items={[
+          ['Categoría', s.category],
+          ['Tipo de uso', s.usage],
+          ['Carrocería', s.bodywork],
+          ['Combustible', s.fuel],
+          ['Cilindrada', s.displacement],
+          ['Cilindros', s.cylinders],
+          ['Potencia', s.power],
+          ['Fórmula rodante', s.driveFormula],
+          ['Ejes', s.axles],
+          ['Ruedas', s.wheels],
+          ['Asientos', s.seats],
+          ['Pasajeros', s.passengers],
+          ['Longitud', s.length],
+          ['Ancho', s.width],
+          ['Altura', s.height],
+          ['Peso bruto', s.grossWeight],
+          ['Peso neto', s.netWeight],
+          ['Carga útil', s.payload],
+        ]}
+      />
+      <p className="font-body text-[12px] text-muted">
+        Ficha técnica del asiento registral{s.sourceTitle ? ` ${s.sourceTitle}` : ''} (SUNARP). Refleja el estado actual del vehículo (incluye cambios como conversión a GNV o color).
+      </p>
     </div>
   );
 }

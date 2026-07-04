@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 import zlib from 'node:zlib';
+import type { VehicleSpecs } from '@app/shared';
 
 /**
  * Parser del ASIENTO de Síguelo Plus (SUNARP).
@@ -28,6 +29,8 @@ export interface AsientoRecord {
   participantes: string;
   documentos: AsientoDoc[];
   flags: AsientoFlags;
+  /** Ficha técnica del vehículo si el asiento la trae (Primera Inscripción / Cambio de Características); null si no. */
+  caracteristicas: VehicleSpecs | null;
 }
 
 // Señales de due-diligence (regex sobre participantes + tipo + acto + funcionarios).
@@ -50,6 +53,66 @@ export function pdfBytesToText(bytes: number[] | Buffer): string {
   let t: RegExpExecArray | null;
   while ((t = tj.exec(text))) out.push(t[0].slice(1, -1).replace(/\\(.)/g, '$1'));
   return out.join(' ').replace(/\s+/g, ' ').trim();
+}
+
+/**
+ * Extrae la FICHA TÉCNICA del texto de un asiento, si la contiene. Los asientos de "Primera
+ * Inscripción de Dominio" y "Cambio de Características/Color" traen esta tabla (label→valor, fila
+ * por fila, mismo layout que el resto del asiento); los de gravamen/cancelación/constitutivo no.
+ *
+ * El orden de la ficha es FIJO (formulario SUNARP), así que cada valor se acota anclando con la
+ * etiqueta del campo SIGUIENTE — robusto ante valores con espacios ("GL-I GNV", "4.533 mt"). El
+ * par Tipo de Uso/Categoría se trata aparte porque el uso puede contener "(Categoría M1)".
+ *
+ * Devuelve `null` si el asiento no tiene ficha (no hay "Nro. VIN" ni "Nro. Versión").
+ */
+export function parseCaracteristicas(textRaw: string): VehicleSpecs | null {
+  const text = textRaw
+    .replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/i, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!/Nro\.?\s*VIN/i.test(text) || !/Nro\.?\s*Versi[oó]n/i.test(text)) return null;
+
+  // Valor entre `label` y la etiqueta del campo siguiente (`next`). `.match` toma la 1ª aparición;
+  // cada etiqueta de la ficha aparece una sola vez, así que es determinista.
+  const between = (label: string, next: string): string | null => {
+    const m = text.match(new RegExp(`${label}\\s+(.+?)\\s+${next}`, 'i'));
+    const v = m?.[1]?.trim();
+    return v && v !== '-' ? v : null;
+  };
+
+  // Tipo de Uso + Categoría: se captura todo hasta "Nro. VIN" y se separa la Categoría (el
+  // último "Categoría X" del blob, porque el uso puede incluir "(Categoría M1)" entre paréntesis).
+  let usage: string | null = null;
+  let category: string | null = null;
+  const usoBlob = between('Tipo de Uso', 'Nro\\.?\\s*VIN');
+  if (usoBlob) {
+    const cm = usoBlob.match(/^(.*?)\s+Categor[ií]a\s+([A-Za-z0-9-]+)\s*$/i);
+    if (cm) { usage = cm[1]!.trim(); category = cm[2]!.trim(); }
+    else usage = usoBlob;
+  }
+
+  return {
+    version: between('Nro\\.?\\s*Versi[oó]n', 'Color'),
+    category,
+    usage,
+    bodywork: between('Tipo\\s+Carrocer[ií]a', 'Nro\\.?\\s*Ruedas'),
+    fuel: between('Tipo\\s+Combustible', 'Nro\\.?\\s*Cilindros'),
+    displacement: between('Cilindrada', 'Longitud'),
+    cylinders: between('Nro\\.?\\s*Cilindros', 'Cilindrada'),
+    power: between('Potencia\\s+Motor', 'Tipo\\s+Combustible'),
+    axles: between('Nro\\.?\\s*Ejes', 'F[oó]rmula\\s+Rodante'),
+    wheels: between('Nro\\.?\\s*Ruedas', 'Nro\\.?\\s*Ejes'),
+    driveFormula: between('F[oó]rmula\\s+Rodante', 'Potencia\\s+Motor'),
+    seats: between('Nro\\.?\\s*Asientos', 'Nro\\.?\\s*Pasajeros'),
+    passengers: between('Nro\\.?\\s*Pasajeros', 'Peso\\s+Bruto'),
+    length: between('Longitud', 'Ancho'),
+    width: between('Ancho', 'Altura'),
+    height: between('Altura', 'Nro\\.?\\s*Asientos'),
+    grossWeight: between('Peso\\s+Bruto', 'Peso\\s+Neto'),
+    netWeight: between('Peso\\s+Neto', 'Carga\\s+[UÚ]til'),
+    payload: between('Carga\\s+[UÚ]til', '(?:Documento|Funcionario|T[ií]tulo)'),
+  };
 }
 
 export function parseAsiento(textRaw: string): AsientoRecord {
@@ -83,7 +146,7 @@ export function parseAsiento(textRaw: string): AsientoRecord {
     embargo: RX_EMBARGO.test(blob),
   };
 
-  return { tipo, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes, documentos, flags };
+  return { tipo, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes, documentos, flags, caracteristicas: parseCaracteristicas(textRaw) };
 }
 
 /** dd/mm/aaaa[ hh:mm:ss] → epoch ms (para ordenar). */

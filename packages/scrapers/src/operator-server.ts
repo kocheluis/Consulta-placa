@@ -909,7 +909,7 @@ function showLiveLogs(pl){var d=document.getElementById('pdetail');
       '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
   }).catch(function(){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
 // Render compacto del reporte normalizado (lo que recibe el cliente).
-var KIND_LABEL={REGISTRAL:'Identidad',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
+var KIND_LABEL={REGISTRAL:'Identidad',IDENTIDAD_ESPECIFICA:'Identidad específica',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
 // Badge de estado por sección: verde=AVAILABLE, rojo=UNAVAILABLE/ERROR (fuente falló → re-generar), gris=el resto.
 function secBadge(st){var c=st==='AVAILABLE'?'b-ENCONTRADO':((st==='UNAVAILABLE'||st==='ERROR')?'b-ERROR':'b-SIN_REGISTRO');
   return '<span class="badge '+c+'" style="float:right">'+esc(st||'')+'</span>';}
@@ -924,6 +924,7 @@ function sectionSummary(s){var p=s.payload;if(s.status!=='AVAILABLE')return '('+
     case 'REVISION_TECNICA':return (p.hasValid?'Vigente':'Vencida/sin registro')+(p.validUntil?' hasta '+esc(p.validUntil):'');
     case 'TRANSPORTE':return p.isPublicTransport?('Taxi/transporte: '+esc(p.modality||'sí')+(p.detail?' · '+esc(p.detail):'')):'No figura como taxi';
     case 'GRAVAMENES':return (p.hasLiens?'Registra gravamen/carga':'Sin gravámenes')+(p.items&&p.items.length?' ('+p.items.length+')':'');
+    case 'IDENTIDAD_ESPECIFICA':return 'Versión: '+esc(p.version||'—')+(p.bodywork?' · '+esc(p.bodywork):'')+(p.fuel?' · '+esc(p.fuel):'')+(p.displacement?' · '+esc(p.displacement):'');
     case 'HISTORIAL':return (p.transfers||0)+' transferencia(s) · '+(p.totalAsientos||0)+' asientos'+(p.flags&&(p.flags.aseguradora||p.flags.remate)?' · ⚠ banderas':'');
     case 'IA':return 'Veredicto: '+esc(p.verdict||'—')+((p.redFlags&&p.redFlags.length)?' · '+p.redFlags.length+' bandera(s)':'')+(p.summary?' · '+esc(String(p.summary).slice(0,80)):'');
     default:return '—';
