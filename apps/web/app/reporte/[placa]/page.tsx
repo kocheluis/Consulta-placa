@@ -1088,6 +1088,7 @@ function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; v
           ['Vence', r.validUntil],
           ['Resultado', r.result],
           ['Certificado', r.certificate],
+          ['Tipo de servicio', r.serviceType],
           ['Observaciones', r.observaciones],
         ]}
       />

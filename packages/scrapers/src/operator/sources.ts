@@ -194,11 +194,26 @@ export async function runMtcCitv(
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         const certs = parseMtcCerts(body, plate);
         const vig = certs.find((c) => /VIGENTE/i.test(c.estado ?? ''));
-        const observaciones = body.match(/OBSERVACIONES\s+([^\n]{0,80})/i)?.[1]?.trim() ?? null;
+        // "OBSERVACIONES" del CITV viene con el TIPO DE SERVICIO pegado adelante (ej. "PROVINCIAL
+        // TRANSPORTE ESPECIAL DE PERSONAS - TAXI D.1.2-Frenos…"). La observación REAL arranca con un
+        // código de defecto (X.N[.N]-). Separamos: tipoServicio (para detectar taxi) + observaciones limpias.
+        const rawObs = body.match(/OBSERVACIONES\s+([^\n]{0,160})/i)?.[1]?.trim() ?? null;
+        let tipoServicio: string | null = null;
+        let observaciones: string | null = rawObs;
+        if (rawObs) {
+          const codeIdx = rawObs.search(/[A-Z]\.\d/);
+          if (codeIdx > 0) {
+            tipoServicio = rawObs.slice(0, codeIdx).replace(/[\s\-–]+$/, '').trim() || null;
+            observaciones = rawObs.slice(codeIdx).trim() || null;
+          } else if (codeIdx === -1 && /^(PARTICULAR|PROVINCIAL|NACIONAL|REGIONAL|DISTRITAL|TRANSPORTE|SERVICIO)/i.test(rawObs)) {
+            tipoServicio = rawObs; // solo tipo de servicio, sin defecto observado
+            observaciones = null;
+          }
+        }
         // Lunas polarizadas: el dato legítimo aparece (si aplica) en el CITV; no hay
         // consulta oficial por placa aparte (los sitios "PNP" son terceros no oficiales).
         const lunas = /lunas|polariza|oscurec/i.test(body) ? 'mención en CITV (revisar)' : 'sin mención en CITV';
-        return { ...base, status: 'ENCONTRADO', summary: vig ? `CITV ${vig.estado} hasta ${vig.vigenteHasta}` : `${certs.length} certificado(s) CITV`, data: { certificados: certs, observaciones, lunasPolarizadas: lunas, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+        return { ...base, status: 'ENCONTRADO', summary: vig ? `CITV ${vig.estado} hasta ${vig.vigenteHasta}` : `${certs.length} certificado(s) CITV`, data: { certificados: certs, tipoServicio, observaciones, lunasPolarizadas: lunas, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       }
       // Captcha ACEPTADO (no hubo alert de captcha) pero SIN certificado → el vehículo no tiene CITV
       // (auto nuevo / aún no obligatorio). Es SIN_REGISTRO, no un error → no reintentes.

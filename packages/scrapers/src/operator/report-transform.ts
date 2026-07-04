@@ -94,7 +94,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // (observaciones); respaldo = TRANSPORTE (ATU, solo Lima). Así un particular sin SOAT dice "No SOAT
     // vigente" y un taxi sin CAT dice "No CAT vigente" (en vez de un genérico confuso).
     const isTaxi = /taxi|transporte\s+(p[uú]blico|especial de personas)|servicio\s+p[uú]blico/i
-      .test(String(data(by('MTC_CITV')).observaciones ?? '')) || Boolean(data(by('ATU')).isPublicTransport);
+      .test(String(data(by('MTC_CITV')).tipoServicio ?? '')) || Boolean(data(by('ATU')).isPublicTransport);
     const pol: InsurancePolicy = {
       hasActiveSoat: Boolean(sd.vigente),
       insuranceType: (sd.tipo as string) || (isTaxi ? 'CAT' : 'SOAT'),
@@ -205,6 +205,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         hasValid: vigente, status: vigente ? 'Vigente' : certs.length ? 'Vencida' : null,
         lastInspection: latest?.vigenteDesde ?? null, validUntil: latest?.vigenteHasta ?? null, result: latest?.resultado ?? null,
         certificate: latest?.nroCertificado ?? null,
+        serviceType: (md.tipoServicio as string) ?? null,
         observaciones: (md.observaciones as string) ?? null,
         lunasPolarizadas: (md.lunasPolarizadas as string) ?? null,
       };

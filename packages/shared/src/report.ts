@@ -115,7 +115,9 @@ export interface RevisionTecnica {
   result: string | null;
   /** N° del último certificado CITV. */
   certificate?: string | null;
-  /** Observaciones del CITV (si las hay). */
+  /** Tipo de servicio/ámbito del CITV (p. ej. "PROVINCIAL TRANSPORTE ESPECIAL DE PERSONAS - TAXI"). */
+  serviceType?: string | null;
+  /** Observaciones REALES del CITV (defectos), ya sin el tipo de servicio mezclado. */
   observaciones?: string | null;
   /** Mención a lunas polarizadas/oscurecidas en el CITV. */
   lunasPolarizadas?: string | null;
