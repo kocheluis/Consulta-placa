@@ -8,7 +8,7 @@ import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
-import { publishReport, fetchReport } from './operator/report-store.js';
+import { publishReport, fetchReport, fetchReportsMeta } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { analyzeReportWithAI, attachIaSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
@@ -405,8 +405,24 @@ const server = createServer(async (req, res) => {
     }
     // Cola: tablero (marquesina) + encolar pedido (lo usa la web/Supabase; aquí también para QA).
     if (path === '/api/pedidos' && req.method === 'GET') return sendJson(res, 200, await queue.board());
-    // Historial completo de pedidos (todos los estados) para la tabla de la consola.
-    if (path === '/api/pedidos/history' && req.method === 'GET') return sendJson(res, 200, await queue.history(100));
+    // Historial de pedidos (todos los estados) para la tabla de la consola, enriquecido con el
+    // "índice" del reporte VIVO de cada placa (id + fecha de generación + si ESTE pedido lo produjo).
+    // Así el operador ve qué versión del reporte está publicada aunque regenerar sobrescriba la fila.
+    if (path === '/api/pedidos/history' && req.method === 'GET') {
+      const list = await queue.history(300);
+      const meta = await fetchReportsMeta(list.map((p) => p.placa));
+      const enriched = list.map((p) => {
+        const m = meta.get(String(p.placa).toUpperCase().replace(/[^A-Z0-9]/g, ''));
+        return {
+          ...p,
+          reportId: m?.reportId ?? null,
+          reportGeneratedAt: m?.generatedAt ?? null,
+          // ¿El reporte publicado para esta placa lo generó ESTE pedido? (marca la fila "viva").
+          isLiveReport: !!m?.pedidoId && String(m.pedidoId) === String(p.id),
+        };
+      });
+      return sendJson(res, 200, enriched);
+    }
     // Resultados crudos de un pedido (reporte.json de su placa) para ver fuentes + logs.
     if (path === '/api/pedido-report' && req.method === 'GET') {
       const placa = (url.searchParams.get('placa') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -437,8 +453,10 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const placa = String(body.placa ?? '').trim();
       if (!placa) return sendJson(res, 400, { error: 'falta placa' });
-      const p = await queue.enqueue({ placa, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined });
-      console.log(`[cola] pedido encolado ${p.id} · ${p.placa}`);
+      // Marca de origen: los pedidos creados en la consola son del OPERADOR (los de la web quedan
+      // en 'servicio' por el DEFAULT de la columna). Permite distinguirlos en el historial.
+      const p = await queue.enqueue({ placa, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined, origin: 'operador' });
+      console.log(`[cola] pedido encolado ${p.id} · ${p.placa} · origen=operador`);
       return sendJson(res, 200, p);
     }
     // Re-generar un pedido existente: lo vuelve a 'pendiente' (el runner lo retoma si el motor está ON).
@@ -639,6 +657,13 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   table.ped td{padding:9px 12px;border-top:1px solid var(--bd)}
   table.ped tbody tr{cursor:pointer} table.ped tbody tr:hover td{background:#F1F5F9}
   table.ped tr.sel td{background:#EFF6FF;box-shadow:inset 3px 0 0 var(--azul)}
+  .tg{font:700 10.5px ui-monospace,monospace;padding:2px 7px;border-radius:999px;white-space:nowrap}
+  .tg-BASIC{background:#E2E8F0;color:#475569} .tg-PRO{background:#DBEAFE;color:#1D4ED8} .tg-ULTRA{background:#EDE9FE;color:#6D28D9}
+  .og-operador{background:#FEF3C7;color:#92400E} .og-servicio{background:#DCFCE7;color:#15803D}
+  .ridx{font:600 12px ui-monospace,monospace;color:#334155} .ridx .liv{color:var(--teal);font-weight:800} .ridx .dead{color:#CBD5E1}
+  .pager{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-top:10px;font-size:13px;color:var(--mut)}
+  .pager button{padding:6px 12px;font-size:13px;background:#fff;color:var(--azul);border:1px solid var(--bd)}
+  .pager button:disabled{opacity:.4} .pager select{padding:6px 8px;border:1px solid var(--bd);border-radius:8px;background:#fff;font:inherit}
   .pill{font:700 11px ui-monospace,monospace;padding:2px 8px;border-radius:999px;white-space:nowrap}
   .p-listo,.p-entregado{background:#DCFCE7;color:var(--ok)} .p-procesando{background:#FEF9C3;color:var(--warn)}
   .p-pendiente{background:#E0F2FE;color:#0369A1} .p-error{background:#FEE2E2;color:var(--err)}
@@ -683,7 +708,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   </div>
 
   <section id="tab-hist">
-    <table class="ped"><thead><tr><th>Placa</th><th>Estado</th><th>Creado</th><th>Terminado</th><th>Duración</th><th>Fuentes</th><th></th></tr></thead><tbody id="histbody"><tr><td colspan="7" style="color:#64748B">Cargando…</td></tr></tbody></table>
+    <table class="ped"><thead><tr><th>Placa</th><th>Origen</th><th>Nivel</th><th>Reporte</th><th>Estado</th><th>Creado</th><th>Terminado</th><th>Duración</th><th></th></tr></thead><tbody id="histbody"><tr><td colspan="9" style="color:#64748B">Cargando…</td></tr></tbody></table>
+    <div class="pager" id="histpager"></div>
     <div class="pdetail" id="pdetail"></div>
   </section>
 
@@ -829,23 +855,61 @@ function showTab(t){
   document.getElementById('tab-b-manual').className='tab'+(t==='manual'?' active':'');
 }
 var SELECTED=null, SELECTED_ID=null, DTAB='fuentes', HISTSEEN=false;
+var HISTLIST=[], HISTPAGE=0, HISTPER=25;
 function pestado(e){return '<span class="pill p-'+esc(e)+'">'+esc(e)+'</span>';}
+// Badge de nivel (BASIC/PRO/ULTRA) y de origen (operador/servicio).
+function otier(t){var v=String(t||'PRO').toUpperCase();return '<span class="tg tg-'+esc(v)+'">'+esc(v)+'</span>';}
+function oorigen(o){var v=(String(o||'servicio').toLowerCase()==='operador')?'operador':'servicio';return '<span class="tg og-'+esc(v)+'">'+esc(v)+'</span>';}
+// Índice del reporte VIVO de la placa: id (= pedido que lo generó) + hora de generación + si ESTE
+// pedido es el que produjo el reporte publicado (● vivo · ○ lo generó otro pedido de la placa). La
+// hora cambia en cada regeneración → así se distingue una versión nueva aunque se sobrescriba la fila.
+function oreporte(p){
+  if(!p.reportId)return '<span class="meta">—</span>';
+  var dot=p.isLiveReport
+    ?'<span class="liv" title="Este pedido generó el reporte publicado">●</span>'
+    :'<span class="dead" title="El reporte publicado lo generó otro pedido de esta placa">○</span>';
+  var t=p.reportGeneratedAt?fmtTime(p.reportGeneratedAt):'';
+  return '<span class="ridx">'+dot+' #'+esc(String(p.reportId).slice(0,8))+(t?' · '+esc(t):'')+'</span>';
+}
 function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.json()}).then(function(list){
-  var tb=document.getElementById('histbody');
-  if(!list||!list.length){tb.innerHTML='<tr><td colspan="7" style="color:#64748B">Sin pedidos todavía</td></tr>';return;}
-  tb.innerHTML=list.map(function(p){
+  HISTLIST=list||[];
+  renderHistory();
+  if(!HISTSEEN&&HISTLIST[0]){HISTSEEN=true; selectPedido(HISTLIST[0].placa,HISTLIST[0].id);}  // por defecto: el último pedido
+}).catch(function(){});}
+function renderHistory(){
+  var tb=document.getElementById('histbody'), total=HISTLIST.length;
+  if(!total){tb.innerHTML='<tr><td colspan="9" style="color:#64748B">Sin pedidos todavía</td></tr>';renderPager(0,1,0);return;}
+  var pages=Math.max(1,Math.ceil(total/HISTPER));
+  if(HISTPAGE>=pages)HISTPAGE=pages-1; if(HISTPAGE<0)HISTPAGE=0;
+  var start=HISTPAGE*HISTPER, slice=HISTLIST.slice(start,start+HISTPER);
+  tb.innerHTML=slice.map(function(p){
     return '<tr data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\',\\''+esc(p.id)+'\\')">'+
       '<td style="font:700 13px ui-monospace,monospace">'+esc(p.placa)+'</td>'+
-      '<td>'+pestado(p.estado)+'</td>'+
+      '<td>'+oorigen(p.origin)+'</td>'+
+      '<td>'+otier(p.tier)+'</td>'+
+      '<td>'+oreporte(p)+'</td>'+
+      '<td>'+pestado(p.estado)+(p.error?'<div style="color:#B91C1C;font-size:11px;margin-top:2px">'+esc((p.error||'').slice(0,42))+'</div>':'')+'</td>'+
       '<td>'+esc(fmtTime(p.createdAt))+'</td>'+
       '<td>'+esc(fmtTime(p.finishedAt))+'</td>'+
       '<td style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+fmtDur(p.startedAt||p.createdAt,p.finishedAt)+'</td>'+
-      '<td>'+(p.error?'<span style="color:#B91C1C">'+esc((p.error||'').slice(0,46))+'</span>':'<span class="meta">ver detalle ›</span>')+'</td>'+
       '<td style="color:#1E3A8A">›</td></tr>';
   }).join('');
-  if(!HISTSEEN){HISTSEEN=true; if(list[0]) selectPedido(list[0].placa,list[0].id);}  // por defecto: el último pedido
+  renderPager(total,pages,start+slice.length);
   markSel();
-}).catch(function(){});}
+}
+function renderPager(total,pages,shownEnd){
+  var el=document.getElementById('histpager'); if(!el)return;
+  if(!total){el.innerHTML='';return;}
+  var opts=[10,25,50,100].map(function(n){return '<option value="'+n+'"'+(n===HISTPER?' selected':'')+'>'+n+'</option>';}).join('');
+  el.innerHTML='<span>Filas por página:</span>'+
+    '<select onchange="setPerPage(this.value)">'+opts+'</select>'+
+    '<button onclick="histPage(-1)"'+(HISTPAGE<=0?' disabled':'')+'>‹ Anterior</button>'+
+    '<span>Página '+(HISTPAGE+1)+' de '+pages+'</span>'+
+    '<button onclick="histPage(1)"'+(HISTPAGE>=pages-1?' disabled':'')+'>Siguiente ›</button>'+
+    '<span style="margin-left:auto">'+(HISTPAGE*HISTPER+1)+'–'+shownEnd+' de '+total+'</span>';
+}
+function setPerPage(v){HISTPER=parseInt(v,10)||25;HISTPAGE=0;renderHistory();}
+function histPage(d){HISTPAGE+=d;renderHistory();}
 function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=0;i<rows.length;i++){rows[i].className=(rows[i].getAttribute('data-placa')===SELECTED)?'sel':'';}}
 function hHeader(pl){return '<h2>'+esc(pl)+' <button class="sec" style="font-size:13px;padding:6px 12px" onclick="requeuePedido()">↻ Re-generar reporte</button></h2>';}
 function detailTabs(){return '<div class="tabs" style="margin:10px 0 12px">'+

@@ -34,6 +34,48 @@ export async function fetchReport(placa: string): Promise<{ report: Report; upda
   }
 }
 
+export interface ReportMeta {
+  /** id del Report vivo (cambia en cada regeneración) → "índice" del reporte. */
+  reportId: string | null;
+  /** Fecha de generación del reporte vivo (ISO). */
+  generatedAt: string | null;
+  /** id del pedido cuya generación produjo el reporte vivo (para marcar la fila "viva"). */
+  pedidoId: string | null;
+}
+
+/**
+ * Trae el "índice" del reporte vivo de varias placas en UNA consulta (para la tabla del historial):
+ * qué pedido lo produjo (`pedido_id`, idéntico a `report.id`) + cuándo se publicó (`updated_at`,
+ * cambia en cada regeneración). Se usan columnas PLANAS (no `report->>...`) para no depender del
+ * parseo de claves JSON en PostgREST. Devuelve un mapa placa→meta. Best-effort: si Supabase no está
+ * o la consulta falla, devuelve un mapa vacío (la tabla simplemente no muestra el índice, sin romperse).
+ */
+export async function fetchReportsMeta(placas: string[]): Promise<Map<string, ReportMeta>> {
+  const out = new Map<string, ReportMeta>();
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const unique = [...new Set(placas.map(norm).filter(Boolean))];
+  if (!url || !key || !unique.length) return out;
+  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  try {
+    const inList = unique.map((p) => `"${p}"`).join(',');
+    const r = await fetch(
+      `${url.replace(/\/$/, '')}/rest/v1/reportes?placa=in.(${encodeURIComponent(inList)})&select=placa,pedido_id,updated_at`,
+      { headers },
+    );
+    if (!r.ok) return out;
+    const rows = (await r.json()) as Array<{ placa?: string; pedido_id?: string | number; updated_at?: string }>;
+    for (const row of rows) {
+      if (!row.placa) continue;
+      const pid = row.pedido_id != null ? String(row.pedido_id) : null;
+      out.set(norm(row.placa), { reportId: pid, generatedAt: row.updated_at ?? null, pedidoId: pid });
+    }
+  } catch (e) {
+    console.warn('[reportes] fetchReportsMeta falló:', (e as Error).message);
+  }
+  return out;
+}
+
 export async function publishReport(
   placa: string,
   report: Report,

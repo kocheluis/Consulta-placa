@@ -29,11 +29,13 @@ export interface Pedido {
   userId?: string | null;
   /** 'BASIC' = consulta gratuita (fuentes reducidas); 'PRO'/'ULTRA' = reporte de pago (todas). */
   tier?: string | null;
+  /** 'operador' = creado por el operador en la consola del VPS; 'servicio' = solicitud desde la web. */
+  origin?: string | null;
 }
 
 export interface PedidoQueue {
   kind: 'sqlite' | 'supabase';
-  enqueue(p: { placa: string; whatsapp?: string; email?: string; tier?: string }): Promise<Pedido>;
+  enqueue(p: { placa: string; whatsapp?: string; email?: string; tier?: string; origin?: string }): Promise<Pedido>;
   next(): Promise<Pedido | null>;
   board(): Promise<Pedido[]>;
   /** Historial completo (todos los estados), más recientes primero. */
@@ -78,6 +80,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     finishedAt: (r.finished_at as string) ?? null,
     reportPath: r.report_path as string, error: r.error as string, userId: (r.user_id as string) ?? null,
     tier: (r.tier as string) ?? null,
+    origin: (r.origin as string) ?? 'servicio',
   });
   const patch = async (id: Pedido['id'], body: Record<string, unknown>) => {
     const r = await fetch(`${base}?id=eq.${id}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
@@ -87,7 +90,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     kind: 'supabase',
     async enqueue(p) {
       const r = await fetch(base, { method: 'POST', headers: { ...headers, Prefer: 'return=representation' },
-        body: JSON.stringify({ placa: p.placa, whatsapp: p.whatsapp ?? null, email: p.email ?? null, tier: p.tier ?? 'PRO', estado: 'pendiente' }) });
+        body: JSON.stringify({ placa: p.placa, whatsapp: p.whatsapp ?? null, email: p.email ?? null, tier: p.tier ?? 'PRO', origin: p.origin ?? 'servicio', estado: 'pendiente' }) });
       if (!r.ok) throw new Error(`supabase POST ${r.status}: ${await r.text()}`);
       return map((await r.json())[0]);
     },
