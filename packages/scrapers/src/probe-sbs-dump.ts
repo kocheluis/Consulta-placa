@@ -46,9 +46,14 @@ try {
     let done = false;
     for (let i = 1; i <= 2 && !done; i++) {
       try {
-        // goto (no reload): tras una búsqueda la página queda en la vista de resultados; hay que
-        // volver al formulario fresco para consultar el siguiente tipo o reintentar.
-        if (attemptNo > 0) { await p.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
+        // Usa el enlace "Nueva consulta" del portal para resetear el form SIN recargar (reCAPTCHA
+        // ya listo, botón habilitado, sin overlay); un goto re-inicializa reCAPTCHA y bloquea el
+        // botón. Fallback: goto.
+        if (attemptNo > 0) {
+          const nueva = p.locator('a:has-text("Nueva consulta")').first();
+          if (await nueva.count()) { await nueva.click().catch(() => {}); await p.waitForLoadState('networkidle').catch(() => {}); await wait(800); }
+          else { await p.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
+        }
         attemptNo++;
         await p.locator(tipo.radio).check().catch(() => {});
         await p.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);

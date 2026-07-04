@@ -299,9 +299,14 @@ export async function runSbs(
     let respondedAny = false;
     for (const tipo of TIPOS) {
     for (let i = 1; i <= 2; i++) {
-      // goto (no reload): tras una búsqueda la página queda en la vista de resultados; hay que
-      // volver al formulario fresco para consultar el siguiente tipo (SOAT→CAT) o reintentar.
-      if (attemptNo > 0) { await page.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
+      // Para la siguiente consulta (SOAT→CAT o reintento) usamos el enlace "Nueva consulta" del
+      // portal: resetea el form SIN recargar → reCAPTCHA ya inicializado, botón habilitado y sin
+      // overlay (un goto re-inicializa reCAPTCHA y deja el botón disabled/tapado). Fallback: goto.
+      if (attemptNo > 0) {
+        const nueva = page.locator('a:has-text("Nueva consulta")').first();
+        if (await nueva.count()) { await nueva.click().catch(() => {}); await page.waitForLoadState('networkidle').catch(() => {}); await wait(800); }
+        else { await page.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
+      }
       attemptNo++;
       await page.locator(tipo.radio).check().catch(() => {});
       await page.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
