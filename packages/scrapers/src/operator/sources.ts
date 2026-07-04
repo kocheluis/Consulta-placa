@@ -309,7 +309,10 @@ export async function runSbs(
       await page.evaluate(
         `(function(tok){function set(s){document.querySelectorAll(s).forEach(function(e){e.value=tok;});}set('#ctl00_MainBodyContent_hdnReCaptchaV3');set('[name="g-recaptcha-response"]');set('#g-recaptcha-response');})(${JSON.stringify(token)})`,
       );
-      await page.locator('#ctl00_MainBodyContent_btnIngresarPla').click();
+      // El botón "Consultar" arranca con clase "disabled" y, tras un goto (2º tipo = CAT), un overlay
+      // (.align-center) intercepta el clic. Lo habilitamos y disparamos su onclick por JS (string-eval
+      // por el bug __name de esbuild/tsx con funciones flecha en page.evaluate).
+      await page.evaluate("(function(){var b=document.querySelector('#ctl00_MainBodyContent_btnIngresarPla');if(b){b.classList.remove('disabled');b.click();}})()");
       await wait(5000);
       await page.waitForLoadState('networkidle').catch(() => {});
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
