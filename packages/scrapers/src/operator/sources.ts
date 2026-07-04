@@ -286,14 +286,21 @@ export async function runSbs(
   shot: string,
 ): Promise<OperatorSourceResult> {
   const t0 = Date.now();
-  const base = { source: 'SBS_SOAT', label: 'SBS · SOAT y siniestralidad', category: 'SEGUROS' };
+  const base = { source: 'SBS_SOAT', label: 'SBS · SOAT/CAT y siniestralidad', category: 'SEGUROS' };
   const URL = 'https://servicios.sbs.gob.pe/reportesoat/';
   try {
     await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
-    const OK = /resultado de (la )?b[uú]squeda|listado de p[oó]lizas|n[uú]mero de accidentes|no se encontr|no registra/i;
+    // El portal SBS tiene 3 tipos (radios): SOAT (_0), Vehicular (_1), CAT (_2). Los taxis NO tienen
+    // SOAT (usan CAT) → si SOAT sale VACÍO, consultamos CAT. Cada consulta cuesta 1 reCAPTCHA v3.
+    const TIPOS = [{ key: 'SOAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_0' }, { key: 'CAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_2' }];
+    const OK = /resultado de (la )?b[uú]squeda|listado de p[oó]lizas|n[uú]mero de accidentes|no se encontr|no registra|no tiene informaci/i;
+    const NODATA = /no tiene informaci[oó]n reportada/i;
+    let attemptNo = 0;
+    for (const tipo of TIPOS) {
     for (let i = 1; i <= 2; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1000); }
-      await page.locator('#ctl00_MainBodyContent_rblOpcionesSeguros_0').check().catch(() => {});
+      if (attemptNo > 0) { await page.reload({ waitUntil: 'networkidle' }); await wait(1000); }
+      attemptNo++;
+      await page.locator(tipo.radio).check().catch(() => {});
       await page.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
       const token = await solver.solveRecaptchaV3(SBS_SITEKEY, URL, 'homepage');
       await page.evaluate(
@@ -303,7 +310,8 @@ export async function runSbs(
       await wait(5000);
       await page.waitForLoadState('networkidle').catch(() => {});
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-      if (!OK.test(body)) continue;
+      if (!OK.test(body)) continue; // reCAPTCHA rechazado / sin respuesta → reintenta este tipo
+      if (NODATA.test(body)) break; // respondió pero SIN datos para este tipo → pasa al siguiente (CAT)
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       const accidentes = body.match(/[uú]ltimos 5 a[nñ]os:\s*(\d+)/i)?.[1] ?? null;
       // Tabla "Listado de pólizas SOAT contratadas": extrae cada póliza mapeando por
@@ -341,14 +349,15 @@ export async function runSbs(
       return {
         ...base,
         status: 'ENCONTRADO',
-        summary: `SOAT ${compania ?? 's/d'}${soat?.fin ? ` vig. ${soat.fin}` : ''} · ${accidentes ?? '?'} accid. 5añ`,
-        data: { accidentes, compania, soat, vigente, polizas, detalle: body.slice(body.search(/resultado de (la )?b[uú]squeda/i), body.search(/resultado de (la )?b[uú]squeda/i) + 600) },
+        summary: `${tipo.key} ${compania ?? 's/d'}${soat?.fin ? ` vig. ${soat.fin}` : ''} · ${accidentes ?? '?'} accid. 5añ`,
+        data: { tipo: tipo.key, accidentes, compania, soat, vigente, polizas, detalle: body.slice(body.search(/resultado de (la )?b[uú]squeda/i), body.search(/resultado de (la )?b[uú]squeda/i) + 600) },
         screenshot: shot,
         ms: Date.now() - t0,
       };
     }
+    }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado o sin datos', screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado o sin datos (SOAT ni CAT)', screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }

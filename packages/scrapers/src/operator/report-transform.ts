@@ -91,6 +91,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const so = (sd.soat ?? {}) as Record<string, string>;
     const pol: InsurancePolicy = {
       hasActiveSoat: Boolean(sd.vigente),
+      insuranceType: (sd.tipo as string) ?? 'SOAT',
       insurer: so.compania ?? (sd.compania as string) ?? null,
       policyNumber: so.poliza ?? null,
       validFrom: so.inicio ?? null,

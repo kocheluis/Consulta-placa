@@ -1254,12 +1254,13 @@ function SegurosBody({ section, onRetry }: { section: SectionResult; onRetry: ()
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const p = section.payload as InsurancePolicy | undefined;
   if (!p) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  const tipo = p.insuranceType ?? 'SOAT';
   return (
     <div className="flex flex-col gap-3">
       {p.hasActiveSoat ? (
-        <StatusLine tone="success" icon="verified">SOAT vigente</StatusLine>
+        <StatusLine tone="success" icon="verified">{tipo} vigente</StatusLine>
       ) : (
-        <StatusLine tone="warning" icon="warning">No se encontró SOAT vigente a nombre de esta placa</StatusLine>
+        <StatusLine tone="warning" icon="warning">{`No se encontró ${tipo} vigente a nombre de esta placa`}</StatusLine>
       )}
       <DefGrid
         items={[

@@ -33,7 +33,10 @@ export interface OwnerInfo {
 
 /** Payload de la sección SEGUROS / SOAT (APESEG). */
 export interface InsurancePolicy {
+  /** ¿Tiene el seguro obligatorio vigente (SOAT o, en taxis, CAT)? */
   hasActiveSoat: boolean;
+  /** Tipo que arrojó datos: "SOAT" | "CAT" | "Vehicular". Los taxis usan CAT en vez de SOAT. */
+  insuranceType?: string;
   insurer: string | null;
   policyNumber: string | null;
   validFrom: string | null;
