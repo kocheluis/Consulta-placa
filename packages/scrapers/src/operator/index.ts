@@ -292,7 +292,7 @@ async function runHistorialSource(
       const flagTxt = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.financiera && 'FINANCIERA', r.flags.gravamen && 'GRAVAMEN', r.flags.embargo && 'EMBARGO'].filter(Boolean).join('/');
       const summary = `${r.timeline.length} asientos · ${r.titulos.length} títulos${flagTxt ? ` · ⚠ ${flagTxt}` : ' · sin banderas'}`;
       logLine(outDir, 'historial', `RESULTADO ${summary} · ${Date.now() - t0}ms`);
-      return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo }, screenshot: shotPath, ms: Date.now() - t0 };
+      return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas }, screenshot: shotPath, ms: Date.now() - t0 };
     }
     logLine(outDir, 'historial', `ERROR ${r.error ?? 'sin asientos'}`);
     return { ...base, status: 'ERROR', summary: r.error ?? 'No se obtuvo historial', ms: Date.now() - t0 };

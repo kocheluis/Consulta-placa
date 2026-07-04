@@ -69,6 +69,9 @@ export function pdfBytesToText(bytes: number[] | Buffer): string {
 export function parseCaracteristicas(textRaw: string): VehicleSpecs | null {
   const text = textRaw
     .replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/i, '')
+    // Las filas de guiones bajos separan bloques en el PDF; colapsarlas a un espacio evita que
+    // se cuelen en el último campo (Carga Util … ____ Documento) al acotar por el vecino.
+    .replace(/_{2,}/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!/Nro\.?\s*VIN/i.test(text) || !/Nro\.?\s*Versi[oó]n/i.test(text)) return null;
