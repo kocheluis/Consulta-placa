@@ -302,13 +302,15 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
 
     // ── IDENTIDAD ESPECÍFICA (ficha técnica del asiento: versión, carrocería, combustible…) ──
-    // Solo se emite si el asiento trajo la ficha (la mayoría la tiene en su Primera Inscripción /
-    // Cambio de Características). Si ningún asiento la trae, se omite → la web la muestra en su
-    // fallback de catálogo, sin prometer un dato que esta placa no expone en el asiento gratis.
+    // Como el historial SÍ corrió, la sección siempre se emite (así el cliente la ve): AVAILABLE con
+    // la ficha si algún asiento la trajo (la mayoría la tiene en su Primera Inscripción / Cambio de
+    // Características), o UNAVAILABLE si ningún asiento la expuso. No se exige `version`: si se
+    // extrajo carrocería/combustible pero no la versión, la sección igual aporta valor.
     const especs = (hd.caracteristicas ?? null) as VehicleSpecs | null;
-    if (especs && especs.version) {
-      src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: especs });
-    }
+    const hasSpecs = !!especs && Object.entries(especs).some(([k, v]) => k !== 'sourceTitle' && v != null);
+    src.push(hasSpecs
+      ? { kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: especs! }
+      : { kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   } else if (hist) {
     // El historial (SPRL) corrió pero FALLÓ (bloqueo por IP, Turnstile, etc.). Antes se
     // omitían estas secciones → la web las pintaba como "Próximamente" (engañoso: sí las
