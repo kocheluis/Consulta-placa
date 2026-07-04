@@ -24,17 +24,13 @@ async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string>
 }
 
 /**
- * Callao usa un captcha de OPERACIÓN ("6 - 4 = ?"): CapSolver devuelve el texto de la operación,
- * no el resultado. Si el texto es una operación con "=" explícito, la evalúa y devuelve el número;
- * si no (captcha alfanumérico normal), lo deja igual. El "=" evita corromper captchas numéricos
- * donde el OCR mete un "-" espurio (p. ej. "8738").
+ * El "código de seguridad" de Callao son 3 DÍGITOS sobre un fondo con ruido. CapSolver a veces
+ * mete separadores/símbolos espurios ("9-8-3", "9 8 3", incluso "6-4=?"). Nos quedamos SOLO con
+ * los dígitos: si el OCR leyó "9-8-3" recupera "983"; si leyó basura (2 o 4+ dígitos) el portal
+ * la rechaza y el bucle reintenta con un captcha nuevo.
  */
-export function evalCaptchaMath(s: string): string {
-  const m = s.replace(/\s+/g, '').match(/^(\d{1,3})([-+xX*×])(\d{1,3})=/);
-  if (!m) return s;
-  const a = Number(m[1]), b = Number(m[3]);
-  const r = m[2] === '+' ? a + b : m[2] === '-' ? a - b : a * b;
-  return String(r);
+export function cleanCallaoCaptcha(s: string): string {
+  return s.replace(/\D/g, '');
 }
 
 async function findFrameWith(page: Page, selector: string): Promise<Frame | null> {
@@ -121,7 +117,7 @@ export async function runCallao(
       dialog = '';
       await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
       await wait(400);
-      cap = evalCaptchaMath(await readCaptcha(solver, capImg)); // captcha de operación → resultado
+      cap = cleanCallaoCaptcha(await readCaptcha(solver, capImg)); // 3 dígitos: solo dígitos
       await capInput.fill(cap);
       await page.locator('button:has-text("Buscar"), input[value*="Buscar" i]').first().click().catch(() => {});
       await wait(4500);

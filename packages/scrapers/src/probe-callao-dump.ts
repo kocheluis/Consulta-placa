@@ -6,7 +6,7 @@
 import { readFileSync } from 'node:fs';
 import { chromium } from 'playwright';
 import { createCaptchaSolver } from './captcha/index.js';
-import { evalCaptchaMath } from './operator/sources.js';
+import { cleanCallaoCaptcha } from './operator/sources.js';
 
 (function loadEnvFile() {
   const f = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
@@ -55,8 +55,8 @@ try {
     await valor.fill(plate);
     await capImg.waitFor({ state: 'visible', timeout: 12000 }).catch(() => {});
     const raw = (await solver.solveImage((await capImg.screenshot()).toString('base64'))).trim();
-    const sol = evalCaptchaMath(raw);
-    console.log(`intento ${i}: captcha="${raw}"${sol !== raw ? ` → ${sol}` : ''}`);
+    const sol = cleanCallaoCaptcha(raw);
+    console.log(`intento ${i}: captcha="${raw}"${sol !== raw ? ` → ${sol}` : ''}${sol.length !== 3 ? ' (¡no son 3 dígitos! probable mal-OCR)' : ''}`);
     await capInput.fill(sol);
     dialog = '';
     await p.locator('button:has-text("Buscar"), input[value*="Buscar" i]').first().click().catch(() => {});
