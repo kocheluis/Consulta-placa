@@ -931,7 +931,7 @@ function sectionSummary(s){var p=s.payload;if(s.status!=='AVAILABLE')return '('+
 }
 function renderWebReport(rep){var v=rep.vehicle,html='';
   if(v&&v.stolenAlert)html+='<div class="flag-banner">🚩 ALERTA DE ROBO — verificar con SUNARP/PNP</div>';
-  if(v){html+='<div class="card wide"><h3>Identidad del vehículo</h3>'+
+  if(v){html+='<div class="card wide"><h3>Identidad básica del vehículo</h3>'+
     defRows([['Placa',v.plateDisplay],['Marca',v.brand],['Modelo',v.model],['Año',v.year],['Color',v.color],['Serie',v.serie],['VIN',v.vin],['Motor',v.engineNumber],['Placa anterior',v.platePrevious],['Estado',v.registralStatus],['Sede',v.sede]])+
     (v.owner?'<div style="margin-top:8px;font-size:13px"><span style="color:#64748B">Propietario(s):</span> '+esc(v.owner.name)+'</div>':'')+'</div>';}
   var secs=(rep.sections||[]).filter(function(s){return s.kind!=='REGISTRAL'&&s.status!=='COMING_SOON'});

@@ -42,7 +42,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
   // ── BASIC: SUNARP + APESEG ──────────────────────────────────────────
   {
     key: 'identidad',
-    label: 'Identidad del vehículo',
+    label: 'Identidad básica del vehículo',
     icon: 'directions_car',
     tier: ReportTier.BASIC,
     sources: ['SUNARP'],

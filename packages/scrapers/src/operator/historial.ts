@@ -280,7 +280,15 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
 
     const valid = titulos.map((t) => t.split('-')).filter((p) => p[0] && p[1]) as Array<[string, string]>;
     const records: AsientoRecord[] = [];
-    const procesar = (text: string | null, tit: string) => { if (text) { const rec = parseAsiento(text); records.push(rec); log(`  ${tit}: ${rec.acto || rec.tipo} · ${rec.precio || 's/precio'} · ${rec.fechaPresentacion}`); } };
+    const procesar = (text: string | null, tit: string) => {
+      if (!text) return;
+      // Depuración (SIGUELO_DEBUG=1): vuelca el texto crudo del asiento para afinar la extracción de
+      // características (N° de Versión, carrocería, cilindrada…) de la sección "Identidad específica".
+      if (process.env.SIGUELO_DEBUG) log(`  [DEBUG asiento ${tit}] ${text.slice(0, 3000)} [/DEBUG]`);
+      const rec = parseAsiento(text);
+      records.push(rec);
+      log(`  ${tit}: ${rec.acto || rec.tipo} · ${rec.precio || 's/precio'} · ${rec.fechaPresentacion}`);
+    };
 
     if (opts.parallel && valid.length > 1) {
       // PARALELO (opt-in): una pestaña por título, concurrencia 2, con stagger para
