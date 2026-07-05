@@ -237,7 +237,17 @@ function parseMtcCerts(body: string, plate: string): Array<Record<string, string
   return out;
 }
 
-/* ───────────────── APESEG · SOAT (iframe, captcha imagen) ───────────────── */
+/* ───────────────── APESEG · SOAT en TIEMPO REAL (SPA + API JSON, captcha imagen) ───────────────── */
+// El registro de la SBS está CONGELADO ("Información actualizada a: MAYO 2024") → no ve SOAT
+// renovados después y los reporta como vencidos. APESEG (soat.com.pe) está al día. Su consulta
+// carga un SPA (iframe webapp.apeseg.org.pe/consulta-soat) que llama una API JSON:
+//   GET  /captcha-api/api/captcha            → { img (base64), key }
+//   POST /captcha-api/api/captcha/verify     { captcha, key } → { valid } (marca la sesión por cookie)
+//   POST /consulta-soat/api/login            (creds públicas del SPA) → { access_token }
+//   GET  /consulta-soat/api/certificados/placa/{PLACA}  [Bearer]     → [ pólizas con Estado ]
+// El captcha se valida por SESIÓN (cookies) y hay protección anti-bot (curl recibe 403), así que
+// dejamos que el NAVEGADOR conduzca todo y solo CAPTURAMOS el JSON de la respuesta de `certificados`
+// (sin scrapear el DOM). APESEG ya calcula `Estado` (VIGENTE/VENCIDO) por póliza.
 export async function runApeseg(
   page: Page,
   plate: string,
@@ -245,51 +255,52 @@ export async function runApeseg(
   shot: string,
 ): Promise<OperatorSourceResult> {
   const t0 = Date.now();
-  const base = { source: 'APESEG_SOAT', label: 'APESEG · SOAT', category: 'SEGUROS' };
+  const base = { source: 'APESEG_SOAT', label: 'APESEG · SOAT (tiempo real)', category: 'SEGUROS' };
+  const toTs = (d?: string): number => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d ?? ''); return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0; };
   try {
-    await page.goto('https://www.apeseg.org.pe/consultas-soat/', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto('https://www.soat.com.pe/servicios-soat/', { waitUntil: 'networkidle', timeout: 60000 });
     await wait(2500);
-    // frameLocator re-resuelve el iframe en cada uso (resiliente a que se desprenda).
-    const fl = page.frameLocator('iframe[src*="webapp.apeseg"]');
-    const plateInput = fl.locator('#placa, input[id*="laca" i]').first();
-    const capInput = fl.locator('#captcha, input[id*="aptcha" i]').first();
+    // frameLocator re-resuelve el iframe en cada uso (resiliente a recargas para pedir un captcha nuevo).
+    const fl = page.frameLocator('iframe[src*="consulta-soat"], iframe[src*="webapp.apeseg"]');
+    const placaInput = fl.locator('#placa, input[placeholder*="laca" i]').first();
+    const capInput = fl.locator('#captcha, input[placeholder*="aptcha" i]').first();
     const img = fl.locator('img.captcha-img, img[class*="aptcha" i]').first();
-    let cap = '';
 
-    for (let i = 1; i <= 5; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(2500); }
-      await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+    let certs: Array<Record<string, unknown>> | null = null;
+    for (let i = 1; i <= 4 && !certs; i++) {
+      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }).catch(() => {}); await wait(2000); } // captcha nuevo
+      await placaInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
-      await wait(400);
-      await plateInput.fill(plate);
-      cap = await readCaptcha(solver, img);
-      await capInput.fill(cap);
+      await wait(500);
+      await placaInput.fill(plate).catch(() => {});
+      const cap = await readCaptcha(solver, img);
+      await capInput.fill(cap).catch(() => {});
+      // Si el captcha es válido, el SPA encadena verify→login→certificados. Capturamos ESA respuesta
+      // (el JSON que queremos). Si el captcha falla, no se dispara y el waitForResponse expira → reintenta.
+      const respP = page.waitForResponse((r) => /\/certificados\/placa\//i.test(r.url()), { timeout: 15000 }).catch(() => null);
       await fl.locator('button:has-text("Consultar"), button[type="submit"]').first().click().catch(() => {});
-      await wait(5000);
-      const body = (await fl.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-      const err = /(c[oó]digo|captcha)[^]{0,40}(incorrect|inv[aá]lid)/i.test(body);
-      if (err) continue;
-      const soat = parseApesegSoat(body);
-      const noData = /no\s+(se\s+)?(encontr|registr|existe|cuenta)/i.test(body);
-      if (Object.keys(soat).length >= 2 || noData) {
-        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        if (noData && Object.keys(soat).length < 2) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin SOAT registrado', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
-        return { ...base, status: 'ENCONTRADO', summary: `SOAT ${soat.estado ?? ''} · ${soat.compania ?? ''}`.trim(), data: { ...soat, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      const resp = await respP;
+      if (resp && resp.status() === 200) {
+        const j: unknown = await resp.json().catch(() => null);
+        if (Array.isArray(j)) certs = j as Array<Record<string, unknown>>;
       }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado o sin datos tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+    if (!certs) return { ...base, status: 'ERROR', summary: 'captcha/API sin respuesta (4 intentos)', screenshot: shot, ms: Date.now() - t0 };
+    if (certs.length === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin SOAT en APESEG', data: {}, screenshot: shot, ms: Date.now() - t0 };
+
+    // APESEG ya marca `Estado`: preferimos la póliza VIGENTE; si no hay, la de fin de vigencia más reciente.
+    const g = (c: Record<string, unknown>, k: string): string | null => (c[k] == null ? null : String(c[k]));
+    const vig = certs.find((c) => /VIGENTE/i.test(String(c.Estado ?? ''))) ?? certs.slice().sort((a, b) => toTs(String(b.FechaFin)) - toTs(String(a.FechaFin)))[0]!;
+    const data = {
+      estado: g(vig, 'Estado'), compania: g(vig, 'NombreCompania'), inicio: g(vig, 'FechaInicio'), fin: g(vig, 'FechaFin'),
+      certificado: g(vig, 'NumeroPoliza'), uso: g(vig, 'NombreUsoVehiculo'), clase: g(vig, 'NombreClaseVehiculo'), tipo: g(vig, 'TipoCertificado'),
+      marca: g(vig, 'Marca'), modelo: g(vig, 'ModeloVehiculo'), asientos: g(vig, 'NumeroAsientos'), total: certs.length,
+    };
+    return { ...base, status: 'ENCONTRADO', summary: `SOAT ${data.estado ?? ''} · ${data.compania ?? ''} · vig. ${data.fin ?? ''}`.trim(), data, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
-}
-
-function parseApesegSoat(body: string): Record<string, string> {
-  const grab = (label: string) => body.match(new RegExp(`${label}\\s*[:\\-]?\\s*([^\\n]+?)(?=\\s{2,}|Estado|Inicio|Fin|Placa|Certificado|Uso|Clase|Tipo|Compañía|Compania|$)`, 'i'))?.[1]?.trim();
-  const out: Record<string, string> = {};
-  const fields: Array<[string, string]> = [['compania', 'Compañía|Compania'], ['estado', 'Estado'], ['inicio', 'Inicio'], ['fin', 'Fin'], ['certificado', 'Certificado'], ['uso', 'Uso'], ['clase', 'Clase'], ['tipo', 'Tipo']];
-  for (const [k, lbl] of fields) { const v = grab(lbl); if (v) out[k] = v; }
-  return out;
 }
 
 /* ───────────────── SBS · SOAT + siniestralidad (reCAPTCHA v3) ───────────────── */

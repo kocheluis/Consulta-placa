@@ -49,11 +49,14 @@ const OUT_BASE = process.env.OPERATOR_OUT_BASE ?? 'd:/Jose/Proyecto_Consulta_pla
 const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
   // 'atu' entra por CDP nativo (Chrome real + reCAPTCHA v3 nativo): pasa el score desde la IP
   // del VPS (validado en vivo jul-2026, ENCONTRADO y SIN_REGISTRO). Ver operator/atu-cdp.ts.
-  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'sbs-soat', 'atu'];
+  // 'apeseg-soat' = SOAT en TIEMPO REAL (la SBS está congelada en may-2024). El transform prefiere
+  // APESEG; SBS queda para la siniestralidad (accidentes) y para el CAT de taxis (APESEG solo trae SOAT).
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu'];
 // Fuentes del reporte GRATUITO (pedido tier=BASIC): identidad + SOAT + revisión técnica.
-// Sin SPRL/Síguelo ni el resto → ~30s y casi sin costo. El paywall (stripByTier) hace lo demás.
+// APESEG da el SOAT vigente REAL; SBS se mantiene para el CAT de taxis (APESEG solo trae SOAT de
+// particulares). El paywall (stripByTier) hace lo demás.
 const BASIC_SOURCES = process.env.BASIC_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
-  ?? ['sunarp', 'sbs-soat', 'mtc-citv'];
+  ?? ['sunarp', 'apeseg-soat', 'sbs-soat', 'mtc-citv'];
 // Para incrustar el reporte del cliente en la consola (pestaña "Reporte al usuario").
 // WEB_REPORT_URL = base de la web (p. ej. https://placape.vercel.app); el token debe
 // coincidir con OPERATOR_PREVIEW_TOKEN configurado en la web (Vercel).

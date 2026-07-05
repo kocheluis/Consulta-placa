@@ -80,9 +80,11 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const apeseg = by('APESEG_SOAT');
   const sbs = by('SBS_SOAT');
   if (apeseg?.status === 'ENCONTRADO') {
+    // APESEG (tiempo real) es AUTORITATIVO para la vigencia del SOAT — la SBS está congelada en
+    // may-2024. Solo trae SOAT (particulares); los taxis (CAT/AFOCAT) caen a SBS más abajo.
     const d = data(apeseg) as Record<string, string>;
     const pol: InsurancePolicy = {
-      hasActiveSoat: /VIGENTE/i.test(d.estado ?? ''), insurer: d.compania ?? null, policyNumber: null,
+      hasActiveSoat: /VIGENTE/i.test(d.estado ?? ''), insuranceType: 'SOAT', insurer: d.compania ?? null, policyNumber: null,
       validFrom: d.inicio ?? null, validTo: d.fin ?? null, certificate: d.certificado ?? null,
       use: d.uso ?? null, vehicleClass: d.clase ?? null, policyType: d.tipo ?? null,
     };

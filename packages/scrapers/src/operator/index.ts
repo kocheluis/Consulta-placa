@@ -31,7 +31,7 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'callao-papeletas': runCallao,
   'mtc-citv': runMtcCitv,
   'sbs-soat': runSbs,
-  'apeseg-soat': runApeseg, // extra/opcional (flaky, redundante con SBS)
+  'apeseg-soat': runApeseg, // SOAT en TIEMPO REAL (API JSON de APESEG); la SBS está congelada en may-2024
   // 'atu' NO va aquí: corre por CDP (Chrome real + reCAPTCHA v3 nativo) vía runAtuSource.
 };
 
@@ -45,8 +45,8 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'sat-papeletas', label: 'SAT Lima · Papeletas', default: true },
   { id: 'callao-papeletas', label: 'Callao · Papeletas', default: true },
   { id: 'mtc-citv', label: 'MTC · Revisión técnica (CITV)', default: true },
-  { id: 'sbs-soat', label: 'SBS · SOAT y siniestralidad', default: true },
-  { id: 'apeseg-soat', label: 'APESEG · SOAT (extra)', default: false },
+  { id: 'sbs-soat', label: 'SBS · siniestralidad + CAT taxis (SOAT congelado may-2024)', default: true },
+  { id: 'apeseg-soat', label: 'APESEG · SOAT vigente (tiempo real)', default: true },
   { id: 'atu', label: 'ATU · Taxi/transporte (Lima/Callao)', default: true },
   { id: 'sunarp', label: 'SUNARP · Identidad y titular (CDP · Chrome)', default: false },
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
