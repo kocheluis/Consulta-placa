@@ -53,10 +53,10 @@ const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).f
   // APESEG; SBS queda para la siniestralidad (accidentes) y para el CAT de taxis (APESEG solo trae SOAT).
   ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu'];
 // Fuentes del reporte GRATUITO (pedido tier=BASIC): identidad + SOAT + revisión técnica.
-// APESEG da el SOAT vigente REAL; SBS se mantiene para el CAT de taxis (APESEG solo trae SOAT de
-// particulares). El paywall (stripByTier) hace lo demás.
+// SOAT vía APESEG (tiempo real, 1 captcha, rápido). NO se corre SBS en BASIC: su escaneo de
+// siniestralidad son 3 tipos = 3 reCAPTCHA (lento) y es un concepto PRO. El paywall hace lo demás.
 const BASIC_SOURCES = process.env.BASIC_SOURCES?.split(',').map((s) => s.trim()).filter(Boolean)
-  ?? ['sunarp', 'apeseg-soat', 'sbs-soat', 'mtc-citv'];
+  ?? ['sunarp', 'apeseg-soat', 'mtc-citv'];
 // Para incrustar el reporte del cliente en la consola (pestaña "Reporte al usuario").
 // WEB_REPORT_URL = base de la web (p. ej. https://placape.vercel.app); el token debe
 // coincidir con OPERATOR_PREVIEW_TOKEN configurado en la web (Vercel).

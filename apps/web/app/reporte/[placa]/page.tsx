@@ -1347,7 +1347,30 @@ function SiniestroBody({ section, onRetry }: { section: SectionResult; onRetry: 
         );
       })()}
       {s.accidentes != null && s.accidentes > 0 && (
-        <p className="font-body text-sm text-muted">{s.accidentes} accidente(s) reportado(s) al SOAT (SBS).</p>
+        <>
+          <p className="font-body text-sm text-foreground">
+            <strong>{s.accidentes}</strong> siniestro(s) reportado(s) a la SBS (SOAT · Seguro Vehicular · CAT).
+          </p>
+          {s.siniestros && s.siniestros.length > 0 && (
+            <ol className="flex flex-col gap-2">
+              {s.siniestros.map((sin, i) => (
+                <li key={i} className="rounded-lg border border-border bg-surface p-3">
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="font-body text-[14px] font-semibold text-foreground">
+                      {sin.cantidad} siniestro(s) · {sin.tipo === 'VEHICULAR' ? 'Seguro Vehicular' : sin.tipo}
+                    </span>
+                    {(sin.desde || sin.hasta) && (
+                      <span className="font-mono text-[12px] text-muted">
+                        {sin.desde ?? '—'} – {sin.hasta ?? '—'}
+                      </span>
+                    )}
+                  </div>
+                  {sin.aseguradora && <p className="mt-0.5 font-body text-[13px] text-muted">{sin.aseguradora}</p>}
+                </li>
+              ))}
+            </ol>
+          )}
+        </>
       )}
       {s.auction && (
         <div className="rounded-lg border border-warning/40 bg-warning-bg p-3">

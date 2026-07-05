@@ -65,12 +65,28 @@ export interface AuctionInfo {
   boletaUrl: string | null;
 }
 
+/** Un siniestro reportado a la SBS, agrupado por la póliza (periodo) bajo la que se cubrió. */
+export interface Siniestro {
+  /** Tipo de seguro bajo el que se reportó: "SOAT" | "VEHICULAR" | "CAT". */
+  tipo: string;
+  /** Aseguradora / AFOCAT de la póliza. */
+  aseguradora: string | null;
+  /** Inicio de vigencia de la póliza (dd/mm/aaaa). */
+  desde: string | null;
+  /** Fin de vigencia de la póliza (dd/mm/aaaa). */
+  hasta: string | null;
+  /** N° de accidentes reportados bajo esa póliza. */
+  cantidad: number;
+}
+
 /** Payload de la sección SINIESTRALIDAD. */
 export interface SiniestroIndicator {
   hasSiniestro: boolean;
   periodYears: number;
-  /** N° de accidentes reportados al SOAT (SBS), si se conoce. */
+  /** N° TOTAL de accidentes reportados a la SBS (suma de todas las pólizas: SOAT/Vehicular/CAT). */
   accidentes?: number | null;
+  /** Detalle por periodo: en qué pólizas/vigencias se reportaron siniestros (SBS, 3 tipos). */
+  siniestros?: Siniestro[];
   /** Detalle de la subasta si la placa apareció en un remate de siniestro. */
   auction?: AuctionInfo | null;
 }

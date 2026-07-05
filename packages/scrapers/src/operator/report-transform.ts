@@ -76,12 +76,19 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     });
   }
 
-  // ── SEGUROS / SOAT (SBS = tabla de pólizas con los 7 campos; APESEG si estuviera) ──
+  // ── SEGUROS (SOAT de APESEG en tiempo real; CAT de taxis vía SBS) ──
+  // La SBS está congelada en may-2024 → NO se usa su SOAT para la vigencia. El SOAT lo da APESEG;
+  // si no hay SOAT (taxi), se muestra el CAT que trae la SBS. Orden: APESEG SOAT → SBS CAT →
+  // "sin SOAT" (APESEG respondió sin registro) → SOAT SBS (último recurso si APESEG falló).
   const apeseg = by('APESEG_SOAT');
   const sbs = by('SBS_SOAT');
+  const sd = data(sbs);
+  const sbsCat = (sd.cat ?? null) as Record<string, string> | null;
+  const sbsSoat = (sd.soat ?? null) as Record<string, string> | null;
+  // ¿Es taxi/transporte? Señal nacional = tipo de servicio del CITV; respaldo = ATU (Lima).
+  const isTaxi = /taxi|transporte\s+(p[uú]blico|especial de personas)|servicio\s+p[uú]blico/i
+    .test(String(data(by('MTC_CITV')).tipoServicio ?? '')) || Boolean(data(by('ATU')).isPublicTransport);
   if (apeseg?.status === 'ENCONTRADO') {
-    // APESEG (tiempo real) es AUTORITATIVO para la vigencia del SOAT — la SBS está congelada en
-    // may-2024. Solo trae SOAT (particulares); los taxis (CAT/AFOCAT) caen a SBS más abajo.
     const d = data(apeseg) as Record<string, string>;
     const pol: InsurancePolicy = {
       hasActiveSoat: /VIGENTE/i.test(d.estado ?? ''), insuranceType: 'SOAT', insurer: d.compania ?? null, policyNumber: null,
@@ -89,25 +96,26 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       use: d.uso ?? null, vehicleClass: d.clase ?? null, policyType: d.tipo ?? null,
     };
     src.push({ kind: SectionKind.SEGUROS, source: SourceId.APESEG, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pol });
-  } else if (sbs?.status === 'ENCONTRADO') {
-    const sd = data(sbs);
-    const so = (sd.soat ?? {}) as Record<string, string>;
-    // Marco SOAT vs CAT: el tipo que trajo datos; si no hubo (sd.tipo null) se infiere por el USO del
-    // vehículo — taxi/transporte → CAT, particular → SOAT. Señal NACIONAL = tipo de servicio del CITV
-    // (observaciones); respaldo = TRANSPORTE (ATU, solo Lima). Así un particular sin SOAT dice "No SOAT
-    // vigente" y un taxi sin CAT dice "No CAT vigente" (en vez de un genérico confuso).
-    const isTaxi = /taxi|transporte\s+(p[uú]blico|especial de personas)|servicio\s+p[uú]blico/i
-      .test(String(data(by('MTC_CITV')).tipoServicio ?? '')) || Boolean(data(by('ATU')).isPublicTransport);
+  } else if (sbs?.status === 'ENCONTRADO' && sbsCat) {
+    // Taxi: APESEG no cubre CAT/AFOCAT → lo trae la SBS.
     const pol: InsurancePolicy = {
-      hasActiveSoat: Boolean(sd.vigente),
-      insuranceType: (sd.tipo as string) || (isTaxi ? 'CAT' : 'SOAT'),
-      insurer: so.compania ?? (sd.compania as string) ?? null,
-      policyNumber: so.poliza ?? null,
-      validFrom: so.inicio ?? null,
-      validTo: so.fin ?? null,
-      certificate: so.certificado ?? null,
-      use: so.uso ?? null,
-      vehicleClass: so.clase ?? null,
+      hasActiveSoat: Boolean(sd.catVigente), insuranceType: 'CAT',
+      insurer: sbsCat.compania ?? null, policyNumber: sbsCat.poliza ?? null,
+      validFrom: sbsCat.inicio ?? null, validTo: sbsCat.fin ?? null, certificate: sbsCat.certificado ?? null,
+      use: sbsCat.uso ?? null, vehicleClass: sbsCat.clase ?? null,
+    };
+    src.push({ kind: SectionKind.SEGUROS, source: SourceId.SBS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pol });
+  } else if (apeseg?.status === 'SIN_REGISTRO') {
+    // APESEG respondió: sin SOAT vigente (particular sin SOAT). Sección disponible, no es error.
+    const pol: InsurancePolicy = { hasActiveSoat: false, insuranceType: isTaxi ? 'CAT' : 'SOAT', insurer: null, policyNumber: null, validFrom: null, validTo: null };
+    src.push({ kind: SectionKind.SEGUROS, source: SourceId.APESEG, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pol });
+  } else if (sbs?.status === 'ENCONTRADO' && sbsSoat) {
+    // Último recurso (APESEG ausente/erró): SOAT de la SBS (puede estar desactualizado).
+    const pol: InsurancePolicy = {
+      hasActiveSoat: Boolean(sd.soatVigente), insuranceType: 'SOAT',
+      insurer: sbsSoat.compania ?? null, policyNumber: sbsSoat.poliza ?? null,
+      validFrom: sbsSoat.inicio ?? null, validTo: sbsSoat.fin ?? null, certificate: sbsSoat.certificado ?? null,
+      use: sbsSoat.uso ?? null, vehicleClass: sbsSoat.clase ?? null,
     };
     src.push({ kind: SectionKind.SEGUROS, source: SourceId.SBS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pol });
   } else if (sbs || apeseg) {
@@ -118,7 +126,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const superbid = by('SUPERBID');
   const hist = by('HISTORIAL');
   const histFlags = (data(hist).flags ?? {}) as Record<string, boolean>;
-  const sbsAccidentes = sbs?.status === 'ENCONTRADO' ? num(data(sbs).accidentes) : null;
+  // Siniestralidad SBS: N° total de accidentes (suma de los 3 tipos) + el detalle por periodo.
+  const sbsAccidentes = sbs?.status === 'ENCONTRADO' ? num(data(sbs).totalSiniestros ?? data(sbs).accidentes) : null;
+  const sbsSiniestros = (sbs?.status === 'ENCONTRADO' ? (data(sbs).siniestros ?? []) : []) as Array<Record<string, unknown>>;
   // La fuente Superbid es un lookup en el índice (DB): ENCONTRADO = la placa salió en una
   // subasta; sus banderas (siniestro/aseguradora/remate) vienen en data.flags.
   const subFound = superbid?.status === 'ENCONTRADO';
@@ -146,7 +156,11 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
           boletaUrl: (subData.boletaUrl as string) ?? null,
         }
       : null;
-    const pay: SiniestroIndicator = { hasSiniestro: Boolean(hasSiniestro), periodYears, accidentes: sbsAccidentes, auction };
+    const siniestros = sbsSiniestros.map((s) => ({
+      tipo: String(s.tipo ?? ''), aseguradora: (s.aseguradora as string) ?? null,
+      desde: (s.desde as string) ?? null, hasta: (s.hasta as string) ?? null, cantidad: num(s.cantidad),
+    }));
+    const pay: SiniestroIndicator = { hasSiniestro: Boolean(hasSiniestro), periodYears, accidentes: sbsAccidentes, siniestros, auction };
     src.push({ kind: SectionKind.SINIESTRALIDAD, source: SourceId.SBS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
   } else if (sbs) {
     src.push({ kind: SectionKind.SINIESTRALIDAD, source: SourceId.SBS, status: SectionStatus.UNAVAILABLE, fetchedAt: at });

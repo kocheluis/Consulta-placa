@@ -26,6 +26,7 @@ const SBS_SITEKEY = '6Ldq0D0hAAAAAJ2EfmS-gFvA1NprMh2MBcxtRLAL';
 const URL = 'https://servicios.sbs.gob.pe/reportesoat/';
 const TIPOS = [
   { key: 'SOAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_0' },
+  { key: 'VEHICULAR', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_1' },
   { key: 'CAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_2' },
 ];
 const OK = /resultado de (la )?b[uú]squeda|listado de p[oó]lizas|n[uú]mero de accidentes|no se encontr|no registra|no tiene informaci/i;

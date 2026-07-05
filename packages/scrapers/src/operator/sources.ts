@@ -303,8 +303,37 @@ export async function runApeseg(
   }
 }
 
-/* ───────────────── SBS · SOAT + siniestralidad (reCAPTCHA v3) ───────────────── */
+/* ───────────────── SBS · SINIESTRALIDAD (3 tipos) + CAT taxis (reCAPTCHA v3) ───────────────── */
+// El SOAT vigente lo da APESEG (tiempo real; la SBS está congelada en may-2024). De la SBS se usa:
+//  (1) la SINIESTRALIDAD: N° de accidentes reportados POR PÓLIZA (con su periodo de vigencia), en los
+//      TRES tipos que ofrece el portal — SOAT (_0), Seguro Vehicular (_1) y CAT (_2);
+//  (2) el CAT vigente de los taxis (APESEG solo cubre SOAT de particulares).
+// Cada tipo = 1 reCAPTCHA v3. Por eso esta fuente corre en PRO/ULTRA (no en la consulta gratis BASIC).
 const SBS_SITEKEY = '6Ldq0D0hAAAAAJ2EfmS-gFvA1NprMh2MBcxtRLAL';
+const SBS_TABLE_PARSER = `(function(){
+  var norm=function(s){return (s||'').replace(/\\s+/g,' ').trim();};
+  var tables=Array.prototype.slice.call(document.querySelectorAll('table'));
+  for(var ti=0;ti<tables.length;ti++){
+    var trs=Array.prototype.slice.call(tables[ti].querySelectorAll('tr'));
+    var head=null;
+    for(var hi=0;hi<trs.length;hi++){var tx=trs[hi].innerText||'';if(/certificado/i.test(tx)&&/(p[oó]liza|afocat|vigencia)/i.test(tx)){head=trs[hi];break;}}
+    if(!head)continue;
+    var hc=Array.prototype.slice.call(head.querySelectorAll('th,td')).map(function(c){return norm(c.textContent).toLowerCase();});
+    var ix=function(re){for(var i=0;i<hc.length;i++){if(re.test(hc[i]))return i;}return -1;};
+    var ci={compania:ix(/compa|afocat/),clase:ix(/clase/),uso:ix(/uso/),accidentes:ix(/accidente/),poliza:ix(/p[oó]liza/),certificado:ix(/certificado/),inicio:ix(/inicio/),fin:ix(/fin/)};
+    var out=[];
+    for(var ri=0;ri<trs.length;ri++){
+      if(trs[ri]===head)continue;
+      var cells=Array.prototype.slice.call(trs[ri].querySelectorAll('td')).map(function(c){return norm(c.textContent);});
+      if(cells.length<4)continue;
+      var g=function(i){return (i>=0&&i<cells.length)?cells[i]:'';};
+      var row={compania:g(ci.compania),clase:g(ci.clase),uso:g(ci.uso),accidentes:g(ci.accidentes),poliza:g(ci.poliza),certificado:g(ci.certificado),inicio:g(ci.inicio),fin:g(ci.fin)};
+      if(row.compania||row.poliza||row.certificado)out.push(row);
+    }
+    return out;
+  }
+  return [];
+})()`;
 export async function runSbs(
   page: Page,
   plate: string,
@@ -312,96 +341,76 @@ export async function runSbs(
   shot: string,
 ): Promise<OperatorSourceResult> {
   const t0 = Date.now();
-  const base = { source: 'SBS_SOAT', label: 'SBS · SOAT/CAT y siniestralidad', category: 'SEGUROS' };
+  const base = { source: 'SBS_SOAT', label: 'SBS · siniestralidad (SOAT/Vehicular/CAT) + CAT taxis', category: 'SEGUROS' };
   const URL = 'https://servicios.sbs.gob.pe/reportesoat/';
+  const toTs = (d?: string): number => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d ?? ''); return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0; };
+  type Pol = { tipo: string; compania: string; clase: string; uso: string; accidentes: number; poliza: string; certificado: string; inicio: string; fin: string };
   try {
     await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
-    // El portal SBS tiene 3 tipos (radios): SOAT (_0), Vehicular (_1), CAT (_2). Los taxis NO tienen
-    // SOAT (usan CAT) → si SOAT sale VACÍO, consultamos CAT. Cada consulta cuesta 1 reCAPTCHA v3.
-    const TIPOS = [{ key: 'SOAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_0' }, { key: 'CAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_2' }];
+    // Los 3 tipos del portal. Se consultan TODOS (los siniestros pueden ir bajo cualquiera).
+    const TIPOS = [
+      { key: 'SOAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_0' },
+      { key: 'VEHICULAR', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_1' },
+      { key: 'CAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_2' },
+    ];
     const OK = /resultado de (la )?b[uú]squeda|listado de p[oó]lizas|n[uú]mero de accidentes|no se encontr|no registra|no tiene informaci/i;
     const NODATA = /no tiene informaci[oó]n reportada/i;
     let attemptNo = 0;
     let respondedAny = false;
+    const allPolizas: Pol[] = [];
     for (const tipo of TIPOS) {
-    for (let i = 1; i <= 2; i++) {
-      // Para la siguiente consulta (SOAT→CAT o reintento) usamos el enlace "Nueva consulta" del
-      // portal: resetea el form SIN recargar → reCAPTCHA ya inicializado, botón habilitado y sin
-      // overlay (un goto re-inicializa reCAPTCHA y deja el botón disabled/tapado). Fallback: goto.
-      if (attemptNo > 0) {
-        const nueva = page.locator('a:has-text("Nueva consulta")').first();
-        if (await nueva.count()) { await nueva.click().catch(() => {}); await page.waitForLoadState('networkidle').catch(() => {}); await wait(800); }
-        else { await page.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
-      }
-      attemptNo++;
-      await page.locator(tipo.radio).check().catch(() => {});
-      await page.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
-      const token = await solver.solveRecaptchaV3(SBS_SITEKEY, URL, 'homepage');
-      await page.evaluate(
-        `(function(tok){function set(s){document.querySelectorAll(s).forEach(function(e){e.value=tok;});}set('#ctl00_MainBodyContent_hdnReCaptchaV3');set('[name="g-recaptcha-response"]');set('#g-recaptcha-response');})(${JSON.stringify(token)})`,
-      );
-      // El botón "Consultar" arranca con clase "disabled" y, tras un goto (2º tipo = CAT), un overlay
-      // (.align-center) intercepta el clic. Lo habilitamos y disparamos su onclick por JS (string-eval
-      // por el bug __name de esbuild/tsx con funciones flecha en page.evaluate).
-      await page.evaluate("(function(){var b=document.querySelector('#ctl00_MainBodyContent_btnIngresarPla');if(b){b.classList.remove('disabled');b.click();}})()");
-      await wait(5000);
-      await page.waitForLoadState('networkidle').catch(() => {});
-      const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
-      if (!OK.test(body)) continue; // reCAPTCHA rechazado / sin respuesta → reintenta este tipo
-      respondedAny = true; // el portal respondió (con o sin datos)
-      if (NODATA.test(body)) break; // respondió pero SIN datos para este tipo → pasa al siguiente (CAT)
-      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-      const accidentes = body.match(/[uú]ltimos 5 a[nñ]os:\s*(\d+)/i)?.[1] ?? null;
-      // Tabla de pólizas: "Listado de pólizas SOAT contratadas" (SOAT: Compañía/Póliza/Certificado…)
-      // o "Listado de certificados CAT" (CAT: AFOCAT/Certificado/Vigencia…). Mapea por encabezado
-      // (robusto al orden y al tipo). String-eval (no función flecha) por
-      // el bug __name de esbuild/tsx al serializar funciones a page.evaluate.
-      const polizas = (await page.evaluate(`(function(){
-        var norm=function(s){return (s||'').replace(/\\s+/g,' ').trim();};
-        var tables=Array.prototype.slice.call(document.querySelectorAll('table'));
-        for(var ti=0;ti<tables.length;ti++){
-          var trs=Array.prototype.slice.call(tables[ti].querySelectorAll('tr'));
-          var head=null;
-          for(var hi=0;hi<trs.length;hi++){var tx=trs[hi].innerText||'';if(/certificado/i.test(tx)&&/(p[oó]liza|afocat|vigencia)/i.test(tx)){head=trs[hi];break;}}
-          if(!head)continue;
-          var hc=Array.prototype.slice.call(head.querySelectorAll('th,td')).map(function(c){return norm(c.textContent).toLowerCase();});
-          var ix=function(re){for(var i=0;i<hc.length;i++){if(re.test(hc[i]))return i;}return -1;};
-          var ci={compania:ix(/compa|afocat/),clase:ix(/clase/),uso:ix(/uso/),poliza:ix(/p[oó]liza/),certificado:ix(/certificado/),inicio:ix(/inicio/),fin:ix(/fin/)};
-          var out=[];
-          for(var ri=0;ri<trs.length;ri++){
-            if(trs[ri]===head)continue;
-            var cells=Array.prototype.slice.call(trs[ri].querySelectorAll('td')).map(function(c){return norm(c.textContent);});
-            if(cells.length<4)continue;
-            var g=function(i){return (i>=0&&i<cells.length)?cells[i]:'';};
-            var row={compania:g(ci.compania),clase:g(ci.clase),uso:g(ci.uso),poliza:g(ci.poliza),certificado:g(ci.certificado),inicio:g(ci.inicio),fin:g(ci.fin)};
-            if(row.compania||row.poliza||row.certificado)out.push(row);
-          }
-          return out;
+      for (let i = 1; i <= 2; i++) {
+        // Reset entre consultas con el enlace "Nueva consulta" del portal (SIN recargar → reCAPTCHA ya
+        // inicializado, botón habilitado, sin overlay; un goto re-inicializa reCAPTCHA y bloquea el botón).
+        if (attemptNo > 0) {
+          const nueva = page.locator('a:has-text("Nueva consulta")').first();
+          if (await nueva.count()) { await nueva.click().catch(() => {}); await page.waitForLoadState('networkidle').catch(() => {}); await wait(800); }
+          else { await page.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
         }
-        return [];
-      })()`)) as Array<Record<string, string>>;
-      // Vigente = póliza con "fin de vigencia" más reciente (≥ hoy = activa).
-      const toTs = (d?: string): number => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d ?? ''); return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0; };
-      const soat = polizas.slice().sort((a, b) => toTs(b.fin) - toTs(a.fin))[0] ?? null;
-      const vigente = soat ? toTs(soat.fin) >= Date.now() - 864e5 : false;
-      const compania = soat?.compania ?? body.match(/(R[ií]mac|La Positiva|Pac[ií]fico|Mapfre|Interseguro|Crecer Seguros|Protecta|Qualitas|Vivir|Insur|HDI)[^\n]{0,30}/i)?.[0]?.trim() ?? null;
-      return {
-        ...base,
-        status: 'ENCONTRADO',
-        summary: `${tipo.key} ${compania ?? 's/d'}${soat?.fin ? ` vig. ${soat.fin}` : ''} · ${accidentes ?? '?'} accid. 5añ`,
-        data: { tipo: tipo.key, accidentes, compania, soat, vigente, polizas, detalle: body.slice(body.search(/resultado de (la )?b[uú]squeda/i), body.search(/resultado de (la )?b[uú]squeda/i) + 600) },
-        screenshot: shot,
-        ms: Date.now() - t0,
-      };
-    }
+        attemptNo++;
+        await page.locator(tipo.radio).check().catch(() => {});
+        await page.locator('#ctl00_MainBodyContent_txtPlaca').fill(plate);
+        const token = await solver.solveRecaptchaV3(SBS_SITEKEY, URL, 'homepage');
+        await page.evaluate(
+          `(function(tok){function set(s){document.querySelectorAll(s).forEach(function(e){e.value=tok;});}set('#ctl00_MainBodyContent_hdnReCaptchaV3');set('[name="g-recaptcha-response"]');set('#g-recaptcha-response');})(${JSON.stringify(token)})`,
+        );
+        await page.evaluate("(function(){var b=document.querySelector('#ctl00_MainBodyContent_btnIngresarPla');if(b){b.classList.remove('disabled');b.click();}})()");
+        await wait(5000);
+        await page.waitForLoadState('networkidle').catch(() => {});
+        const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+        if (!OK.test(body)) continue; // reCAPTCHA rechazado / sin respuesta → reintenta este tipo
+        respondedAny = true;
+        if (NODATA.test(body)) break; // este tipo sin datos → siguiente tipo
+        const rows = (await page.evaluate(SBS_TABLE_PARSER)) as Array<Record<string, string>>;
+        for (const r of rows) allPolizas.push({ tipo: tipo.key, compania: r.compania ?? '', clase: r.clase ?? '', uso: r.uso ?? '', accidentes: parseInt((r.accidentes ?? '').replace(/\D/g, ''), 10) || 0, poliza: r.poliza ?? '', certificado: r.certificado ?? '', inicio: r.inicio ?? '', fin: r.fin ?? '' });
+        break; // tipo resuelto → siguiente tipo
+      }
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    // El portal RESPONDIÓ (SOAT/CAT sin registro) → "no tiene seguro" es un dato definitivo: sección
-    // disponible con hasActiveSoat=false (NO error). Solo es ERROR si el reCAPTCHA nunca pasó.
-    if (respondedAny) {
-      return { ...base, status: 'ENCONTRADO', summary: 'Sin SOAT ni CAT vigente', data: { tipo: null, accidentes: null, compania: null, soat: null, vigente: false, polizas: [] }, screenshot: shot, ms: Date.now() - t0 };
-    }
-    return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado (sin respuesta)', screenshot: shot, ms: Date.now() - t0 };
+    if (!respondedAny) return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado (sin respuesta)', screenshot: shot, ms: Date.now() - t0 };
+
+    // Vigente por tipo (para la sección Seguros: CAT de taxis, y SOAT SBS de respaldo).
+    const pick = (t: string): Pol | null => allPolizas.filter((p) => p.tipo === t).sort((a, b) => toTs(b.fin) - toTs(a.fin))[0] ?? null;
+    const cat = pick('CAT'); const soat = pick('SOAT');
+    const catVigente = cat ? toTs(cat.fin) >= Date.now() - 864e5 : false;
+    const soatVigente = soat ? toTs(soat.fin) >= Date.now() - 864e5 : false;
+    // Siniestralidad: pólizas con accidentes>0 → cada una es un PERIODO con N° de siniestros.
+    const siniestros = allPolizas.filter((p) => p.accidentes > 0)
+      .map((p) => ({ tipo: p.tipo, aseguradora: p.compania || null, desde: p.inicio || null, hasta: p.fin || null, cantidad: p.accidentes }))
+      .sort((a, b) => toTs(b.hasta ?? undefined) - toTs(a.hasta ?? undefined));
+    const totalSiniestros = allPolizas.reduce((s, p) => s + p.accidentes, 0);
+
+    return {
+      ...base,
+      status: 'ENCONTRADO',
+      summary: `${allPolizas.length} póliza(s) · ${totalSiniestros} siniestro(s)${catVigente ? ' · CAT vig.' : ''}${soatVigente ? ' · SOAT vig. (SBS)' : ''}`,
+      data: {
+        polizas: allPolizas, cat, soat, catVigente, soatVigente,
+        totalSiniestros, siniestros, accidentes: totalSiniestros,
+      },
+      screenshot: shot,
+      ms: Date.now() - t0,
+    };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
