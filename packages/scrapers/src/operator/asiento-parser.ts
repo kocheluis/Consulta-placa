@@ -55,66 +55,71 @@ export function pdfBytesToText(bytes: number[] | Buffer): string {
   return out.join(' ').replace(/\s+/g, ' ').trim();
 }
 
+// Unión de TODAS las etiquetas de la ficha. El valor de un campo termina donde EMPIEZA la etiqueta
+// siguiente (la que sea) → la extracción es INDEPENDIENTE DEL ORDEN. Distintos asientos ordenan los
+// campos distinto (p. ej. ADY067 pone la versión antes que la carrocería; B9K236 al revés). Si
+// apareciera una etiqueta no listada, solo el campo justo anterior se sobre-captura; el resto queda bien.
+const SPEC_LABELS =
+  'DUA|Tipo de Uso|Categor[ií]a|Nro\\.?\\s*VIN|Nro\\.?\\s*Serie|Nro\\.?\\s*Motor|Marca|Modelo|' +
+  'A[ñn]o\\s+Fabricaci[oó]n|A[ñn]o\\s+Modelo|Nro\\.?\\s*Versi[oó]n|Color|Tipo\\s+Carrocer[ií]a|' +
+  'Nro\\.?\\s*Ruedas|Nro\\.?\\s*Ejes|F[oó]rmula\\s+Rodante|Potencia\\s+Motor|Tipo\\s+Combustible|' +
+  'Nro\\.?\\s*Cilindros|Cilindrada|Longitud|Ancho|Altura|Nro\\.?\\s*Asientos|Nro\\.?\\s*Pasajeros|' +
+  'Nro\\.?\\s*Puertas|Peso\\s+Bruto|Peso\\s+Neto|Peso\\s+Seco|Carga\\s+[UÚ]til|' +
+  'Documento|Funcionario|T[ií]tulo|Fecha';
+
 /**
  * Extrae la FICHA TÉCNICA del texto de un asiento, si la contiene. Los asientos de "Primera
- * Inscripción de Dominio" y "Cambio de Características/Color" traen esta tabla (label→valor, fila
- * por fila, mismo layout que el resto del asiento); los de gravamen/cancelación/constitutivo no.
- *
- * El orden de la ficha es FIJO (formulario SUNARP), así que cada valor se acota anclando con la
- * etiqueta del campo SIGUIENTE — robusto ante valores con espacios ("GL-I GNV", "4.533 mt"). El
- * par Tipo de Uso/Categoría se trata aparte porque el uso puede contener "(Categoría M1)".
+ * Inscripción de Dominio" y "Cambio de Características/Color" traen esta tabla (label→valor); los de
+ * gravamen/cancelación/constitutivo no. El ORDEN de los campos VARÍA entre asientos, así que cada
+ * valor se captura hasta la siguiente etiqueta conocida (unión `SPEC_LABELS`), no hasta un vecino fijo.
  *
  * Devuelve `null` si el asiento no tiene ficha (no hay "Nro. VIN" ni "Nro. Versión").
  */
 export function parseCaracteristicas(textRaw: string): VehicleSpecs | null {
   const text = textRaw
     .replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/i, '')
-    // Las filas de guiones bajos separan bloques en el PDF; colapsarlas a un espacio evita que
-    // se cuelen en el último campo (Carga Util … ____ Documento) al acotar por el vecino.
+    // Las filas de guiones bajos separan bloques en el PDF; colapsarlas evita que se cuelen en un campo.
     .replace(/_{2,}/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
   if (!/Nro\.?\s*VIN/i.test(text) || !/Nro\.?\s*Versi[oó]n/i.test(text)) return null;
 
-  // Valor entre `label` y la etiqueta del campo siguiente (`next`). `.match` toma la 1ª aparición;
-  // cada etiqueta de la ficha aparece una sola vez, así que es determinista.
-  const between = (label: string, next: string): string | null => {
-    const m = text.match(new RegExp(`${label}\\s+(.+?)\\s+${next}`, 'i'));
+  // Valor de `label` = lo que sigue hasta la PRÓXIMA etiqueta conocida (lookahead) o el fin.
+  const field = (label: string): string | null => {
+    const m = text.match(new RegExp(`${label}\\s+(.+?)\\s+(?=${SPEC_LABELS}|$)`, 'i'));
     const v = m?.[1]?.trim();
     return v && v !== '-' ? v : null;
   };
 
-  // Tipo de Uso + Categoría: se captura todo hasta "Nro. VIN" y se separa la Categoría (el
-  // último "Categoría X" del blob, porque el uso puede incluir "(Categoría M1)" entre paréntesis).
+  // Tipo de Uso + Categoría: el uso suele incluir "(Categoria X)", luego viene la Categoría (valor
+  // corto). Se captura el uso hasta el ")" y la Categoría aparte; fallback sin paréntesis.
   let usage: string | null = null;
   let category: string | null = null;
-  const usoBlob = between('Tipo de Uso', 'Nro\\.?\\s*VIN');
-  if (usoBlob) {
-    const cm = usoBlob.match(/^(.*?)\s+Categor[ií]a\s+([A-Za-z0-9-]+)\s*$/i);
-    if (cm) { usage = cm[1]!.trim(); category = cm[2]!.trim(); }
-    else usage = usoBlob;
-  }
+  const um = text.match(/Tipo de Uso\s+(.+?\))\s+Categor[ií]a\s+([A-Za-z0-9-]+)/i)
+    ?? text.match(/Tipo de Uso\s+(.+?)\s+Categor[ií]a\s+([A-Za-z0-9-]+)(?:\s|$)/i);
+  if (um) { usage = um[1]!.trim(); category = um[2]!.trim(); }
+  else usage = field('Tipo de Uso');
 
   return {
-    version: between('Nro\\.?\\s*Versi[oó]n', 'Color'),
+    version: field('Nro\\.?\\s*Versi[oó]n'),
     category,
     usage,
-    bodywork: between('Tipo\\s+Carrocer[ií]a', 'Nro\\.?\\s*Ruedas'),
-    fuel: between('Tipo\\s+Combustible', 'Nro\\.?\\s*Cilindros'),
-    displacement: between('Cilindrada', 'Longitud'),
-    cylinders: between('Nro\\.?\\s*Cilindros', 'Cilindrada'),
-    power: between('Potencia\\s+Motor', 'Tipo\\s+Combustible'),
-    axles: between('Nro\\.?\\s*Ejes', 'F[oó]rmula\\s+Rodante'),
-    wheels: between('Nro\\.?\\s*Ruedas', 'Nro\\.?\\s*Ejes'),
-    driveFormula: between('F[oó]rmula\\s+Rodante', 'Potencia\\s+Motor'),
-    seats: between('Nro\\.?\\s*Asientos', 'Nro\\.?\\s*Pasajeros'),
-    passengers: between('Nro\\.?\\s*Pasajeros', 'Peso\\s+Bruto'),
-    length: between('Longitud', 'Ancho'),
-    width: between('Ancho', 'Altura'),
-    height: between('Altura', 'Nro\\.?\\s*Asientos'),
-    grossWeight: between('Peso\\s+Bruto', 'Peso\\s+Neto'),
-    netWeight: between('Peso\\s+Neto', 'Carga\\s+[UÚ]til'),
-    payload: between('Carga\\s+[UÚ]til', '(?:Documento|Funcionario|T[ií]tulo)'),
+    bodywork: field('Tipo\\s+Carrocer[ií]a'),
+    fuel: field('Tipo\\s+Combustible'),
+    displacement: field('Cilindrada'),
+    cylinders: field('Nro\\.?\\s*Cilindros'),
+    power: field('Potencia\\s+Motor'),
+    axles: field('Nro\\.?\\s*Ejes'),
+    wheels: field('Nro\\.?\\s*Ruedas'),
+    driveFormula: field('F[oó]rmula\\s+Rodante'),
+    seats: field('Nro\\.?\\s*Asientos'),
+    passengers: field('Nro\\.?\\s*Pasajeros'),
+    length: field('Longitud'),
+    width: field('Ancho'),
+    height: field('Altura'),
+    grossWeight: field('Peso\\s+Bruto'),
+    netWeight: field('Peso\\s+Neto'),
+    payload: field('Carga\\s+[UÚ]til'),
   };
 }
 

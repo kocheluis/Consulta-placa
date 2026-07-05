@@ -1370,6 +1370,11 @@ function SiniestroBody({ section, onRetry }: { section: SectionResult; onRetry: 
               ))}
             </ol>
           )}
+          <p className="font-body text-[12px] leading-snug text-muted">
+            Un «siniestro» es un evento reportado a la aseguradora bajo esa póliza — puede ir desde un
+            daño leve (un roce o abolladura) hasta una pérdida total. El número no indica la gravedad;
+            se recomienda una inspección para verificar reparaciones.
+          </p>
         </>
       )}
       {s.auction && (

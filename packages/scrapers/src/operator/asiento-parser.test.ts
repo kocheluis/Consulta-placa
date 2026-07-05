@@ -40,6 +40,21 @@ const ASIENTO_PRIMERA = // 2015-00098641 · Primera Inscripción (trae además "
   'Peso Bruto 2.075 tn Peso Neto 1.200 tn Carga Util 0.875 tn ' +
   '________________________________________________________________________ Documento: Declaración Unica de Aduanas';
 
+// B9K236 (KIA Sorento): MISMA ficha pero con los campos en OTRO ORDEN (carrocería/color/versión antes
+// que VIN/serie; uso/categoría al final; trae "Peso Seco" y "Nro. Puertas"). Blinda la independencia
+// del orden — antes salía ilegible (un campo se tragaba todo el bloque).
+const ASIENTO_ORDEN_DISTINTO =
+  'Cambio de Características 2011 - 854220 Nro Partida 111111 Placa : B9K236 ' +
+  '________________________________________________________________________ ' +
+  'Tipo Carrocería SUV Color BLANCO CLARO Nro. Versión GAS 2.4 ' +
+  'Nro. Serie KNAKU811AC5195316 Nro. VIN KNAKU811AC5195316 Nro. Motor G4KEBH752239 ' +
+  'Potencia Motor 174@6000 Tipo Combustible GASOLINA Nro. Cilindros 4 Cilindrada 2.349 cc ' +
+  'Peso Seco 1.697 tn Peso Neto 1.697 tn Carga Util 0.813 tn Peso Bruto 2.510 tn ' +
+  'Nro. Asientos 7 Longitud 4.68 mt Ancho 1.88 mt Altura 1.71 mt Fórmula Rodante 4X2 ' +
+  'Nro. Pasajeros 6 Nro. Puertas 5 Nro. Ruedas 4 Nro. Ejes 2 ' +
+  'Tipo de Uso Vehiculos Particulares (Categoria M) Categoria M1 ' +
+  '________________________________________________________________________ Documento: Formulario Registral';
+
 /** Asiento de gravamen (Garantía Mobiliaria): NO trae la ficha (usa "Serie:"/"Motor:", sin "Nro. VIN"). */
 const ASIENTO_GRAVAMEN =
   'Constitución Garantía Mobiliaria y Otros Actos 2015 - 77133345 Nro Partida 53054190 Placa : ADY067 ' +
@@ -62,6 +77,16 @@ describe('parseCaracteristicas (ficha técnica del asiento)', () => {
     expect(s?.version).toBe('GL-I GNV');
     expect(s?.bodywork).toBe('SEDAN');
     expect(s?.payload).toBe('0.875 tn');
+  });
+
+  it('extrae bien aunque los campos vengan en OTRO ORDEN (B9K236, no ilegible)', () => {
+    expect(parseCaracteristicas(ASIENTO_ORDEN_DISTINTO)).toMatchObject({
+      version: 'GAS 2.4', bodywork: 'SUV', fuel: 'GASOLINA', displacement: '2.349 cc', cylinders: '4',
+      power: '174@6000', seats: '7', passengers: '6', wheels: '4', axles: '2', driveFormula: '4X2',
+      length: '4.68 mt', width: '1.88 mt', height: '1.71 mt',
+      grossWeight: '2.510 tn', netWeight: '1.697 tn', payload: '0.813 tn',
+      usage: 'Vehiculos Particulares (Categoria M)', category: 'M1',
+    });
   });
 
   it('devuelve null en un asiento de gravamen (sin ficha)', () => {

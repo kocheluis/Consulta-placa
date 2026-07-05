@@ -983,7 +983,7 @@ function showLiveLogs(pl){var d=document.getElementById('pdetail');
       '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
   }).catch(function(){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
 // Render compacto del reporte normalizado (lo que recibe el cliente).
-var KIND_LABEL={REGISTRAL:'Identidad',IDENTIDAD_ESPECIFICA:'Identidad específica',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
+var KIND_LABEL={REGISTRAL:'Identidad',IDENTIDAD_ESPECIFICA:'Identidad específica y características',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de transferencias',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
 // Badge de estado por sección: verde=AVAILABLE, rojo=UNAVAILABLE/ERROR (fuente falló → re-generar), gris=el resto.
 function secBadge(st){var c=st==='AVAILABLE'?'b-ENCONTRADO':((st==='UNAVAILABLE'||st==='ERROR')?'b-ERROR':'b-SIN_REGISTRO');
   return '<span class="badge '+c+'" style="float:right">'+esc(st||'')+'</span>';}

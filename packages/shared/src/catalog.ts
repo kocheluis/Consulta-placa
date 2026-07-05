@@ -73,7 +73,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
   // ── PRO: el resto de fuentes ────────────────────────────────────────
   {
     key: 'identidad_especifica',
-    label: 'Identidad específica del vehículo',
+    label: 'Identidad específica y características del vehículo',
     icon: 'tune',
     tier: ReportTier.PRO,
     sources: ['SUNARP'],
