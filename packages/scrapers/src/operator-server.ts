@@ -456,10 +456,12 @@ const server = createServer(async (req, res) => {
       const body = await readBody(req);
       const placa = String(body.placa ?? '').trim();
       if (!placa) return sendJson(res, 400, { error: 'falta placa' });
+      // Nivel elegido en la consola (BASIC/PRO/ULTRA); default PRO. Decide las fuentes que corre el motor.
+      const tier = ['BASIC', 'PRO', 'ULTRA'].includes(String(body.tier)) ? String(body.tier) : 'PRO';
       // Marca de origen: los pedidos creados en la consola son del OPERADOR (los de la web quedan
       // en 'servicio' por el DEFAULT de la columna). Permite distinguirlos en el historial.
-      const p = await queue.enqueue({ placa, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined, origin: 'operador' });
-      console.log(`[cola] pedido encolado ${p.id} · ${p.placa} · origen=operador`);
+      const p = await queue.enqueue({ placa, tier, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined, origin: 'operador' });
+      console.log(`[cola] pedido encolado ${p.id} · ${p.placa} · tier=${tier} · origen=operador`);
       return sendJson(res, 200, p);
     }
     // Re-generar un pedido existente: lo vuelve a 'pendiente' (el runner lo retoma si el motor está ON).
@@ -692,6 +694,11 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
       </div>
       <div class="row">
         <input id="qplaca" placeholder="placa" maxlength="8" style="width:120px;text-transform:uppercase">
+        <select id="qtier" title="Nivel del reporte" style="padding:8px 10px;border:1px solid var(--bd);border-radius:10px;background:#fff;font:inherit">
+          <option value="BASIC">BASIC (gratis)</option>
+          <option value="PRO" selected>PRO</option>
+          <option value="ULTRA">ULTRA (con IA)</option>
+        </select>
         <input id="qwa" placeholder="WhatsApp" style="width:130px">
         <input id="qmail" placeholder="correo" style="width:160px">
         <button class="sec" onclick="enqueue()">Encolar pedido</button>
@@ -1011,7 +1018,8 @@ function requeuePedido(){if(!SELECTED_ID){alert('Selecciona un pedido');return;}
   fetch('/api/pedido/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SELECTED_ID})})
    .then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('↻ re-encolado — el motor lo tomará si está ENCENDIDO');loadHistory();}).catch(function(e){log('✖ '+e)});}
 function enqueue(){var p=document.getElementById('qplaca').value.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!p){alert('Pon una placa');return;}
-  fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
-   .then(function(r){return r.json()}).then(function(x){log('＋ pedido encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadHistory();}).catch(function(e){log('✖ '+e)});}
+  var tier=document.getElementById('qtier').value;
+  fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,tier:tier,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
+   .then(function(r){return r.json()}).then(function(x){log('＋ pedido '+esc(x.tier||tier)+' encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadHistory();}).catch(function(e){log('✖ '+e)});}
 showTab('hist');loadEngine();loadHistory();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
 </script></body></html>`;
