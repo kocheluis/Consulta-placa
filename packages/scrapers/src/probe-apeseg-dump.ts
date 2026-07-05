@@ -41,14 +41,24 @@ try {
   const p = await ctx.newPage();
   p.setDefaultTimeout(40000);
 
-  // Captura TODAS las requests salientes relevantes (endpoint + método + postData) para saber
-  // adónde y con qué se envía la consulta.
-  const reqs: string[] = [];
-  p.on('request', (r) => {
+  // Captura la SECUENCIA de la API de APESEG (captcha → verify → login → certificados): método,
+  // URL, header Authorization, postData y CUERPO de respuesta. Con esto se reconstruye el chain de
+  // tokens sin adivinar y se escribe un scraper por `fetch` (sin DOM).
+  const apiCalls: string[] = [];
+  p.on('response', async (r) => {
+    const req = r.request();
     const u = r.url();
-    if (/apeseg|soat|captcha|consulta/i.test(u) && !/\.(png|jpg|jpeg|gif|css|woff|svg|ico)(\?|$)/i.test(u)) {
-      reqs.push(`${r.method()} ${u}${r.postData() ? `  DATA=${r.postData()!.slice(0, 500)}` : ''}`);
-    }
+    if (!/apeseg\.org\.pe\/(captcha-api|consulta-soat)\/api|\/certificados\//i.test(u)) return;
+    let body = '';
+    try { body = (await r.text()).slice(0, 2500); } catch { body = '<sin cuerpo>'; }
+    const h = req.headers();
+    const auth = h['authorization'] || h['x-token'] || h['token'] || '';
+    apiCalls.push(
+      `\n>>> ${req.method()} ${u}\n    status: ${r.status()}` +
+      (auth ? `\n    Authorization: ${auth.slice(0, 80)}` : '') +
+      (req.postData() ? `\n    reqData: ${req.postData()!.slice(0, 500)}` : '') +
+      `\n    RESP: ${body}`,
+    );
   });
 
   console.log('APESEG DUMP · placa', plate, '· target', target);
@@ -97,7 +107,7 @@ try {
     } else console.log('!! no encontré img de captcha (¿reCAPTCHA? ¿otro selector?)');
 
     await cx.locator(btnSel).first().click().catch((e) => console.log('click:', (e as Error).message));
-    await wait(6000);
+    await wait(8000); // deja completar la cadena captcha→verify→login→certificados y sus respuestas
     await p.waitForLoadState('networkidle').catch(() => {});
 
     // La respuesta puede quedar en la página o en un iframe → busca el texto del resultado en todos.
@@ -113,8 +123,9 @@ try {
     console.log('\n(screenshot: /root/out/apeseg-probe.png)');
   }
 
-  console.log('\n===== REQUESTS capturadas =====');
-  for (const r of reqs) console.log('  ' + r);
+  await wait(1500); // deja resolver los cuerpos de respuesta pendientes antes de imprimir
+  console.log('\n===== API APESEG (secuencia con cuerpos de respuesta) =====');
+  for (const c of apiCalls) console.log(c);
 } finally {
   await b.close();
   process.exit(0);
