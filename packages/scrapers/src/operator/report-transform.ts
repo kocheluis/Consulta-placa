@@ -134,25 +134,27 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const subFound = superbid?.status === 'ENCONTRADO';
   const subData = data(superbid);
   const subFlags = (subData.flags ?? {}) as Record<string, boolean>;
-  // El historial registral con aseguradora/remate es una señal DURA de siniestro
-  // (el vehículo fue adjudicado/rematado por una aseguradora tras pérdida total).
-  const histSiniestro = hist?.status === 'ENCONTRADO' && (histFlags.aseguradora || histFlags.remate);
+  // SOLO la ASEGURADORA (adjudicación tras pérdida total) es señal de siniestro. Un 'remate'
+  // FINANCIERO (banco/financiera ejecutando una garantía por falta de pago) NO es un siniestro
+  // — es una carga y va a Gravámenes, no a Siniestralidad (caso CHP605: remate Santander).
+  const histSiniestro = hist?.status === 'ENCONTRADO' && histFlags.aseguradora;
   // El periodo se acota a la edad del vehículo: decir "últimos 5 años" de un auto
   // de 2 años no tiene sentido. SBS reporta hasta 5 años; tomamos el menor.
   const vehYear = num(data(sunarp).year);
   const genYear = new Date(at).getFullYear();
   const periodYears = vehYear ? Math.min(5, Math.max(1, genYear - vehYear)) : 5;
-  if (sbsAccidentes != null || subFound || histSiniestro) {
+  // Superbid SOLO cuenta para siniestralidad si la subasta es por siniestro/aseguradora
+  // (pérdida total). Un remate FINANCIERO (banco/financiera) NO es siniestro → se ignora aquí.
+  const auctionSiniestro = subFound && (subFlags.siniestro || subFlags.aseguradora);
+  if (sbsAccidentes != null || auctionSiniestro || histSiniestro) {
     const hasSiniestro =
-      (sbsAccidentes != null && sbsAccidentes > 0) ||
-      (subFound && (subFlags.siniestro || subFlags.aseguradora)) ||
-      Boolean(histSiniestro);
-    const auction: AuctionInfo | null = subFound
+      (sbsAccidentes != null && sbsAccidentes > 0) || auctionSiniestro || Boolean(histSiniestro);
+    const auction: AuctionInfo | null = auctionSiniestro
       ? {
           subasta: (subData.subasta as string) ?? null,
           estado: (subData.estado as string) ?? null,
           fuente: ((subData.fuente as string) ?? 'SUPERBID').toUpperCase(),
-          tipo: subFlags.siniestro ? 'siniestro' : subFlags.aseguradora ? 'aseguradora' : subFlags.remate ? 'remate' : null,
+          tipo: subFlags.siniestro ? 'siniestro' : 'aseguradora',
           boletaUrl: (subData.boletaUrl as string) ?? null,
         }
       : null;
@@ -273,28 +275,27 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // ir en participantes ("Cancelación a solicitud del Acreedor") y el acto a veces dice
     // "que se cancela" (por eso `cancela\w*`, no solo "cancelación").
     const RX_LEVANT = /cancela|levantamiento|caduc|extinci[oó]n|liberaci[oó]n/i;
-    const gravItems: GravamenItem[] = timeline
-      .filter((a) => {
-        const f = (a.flags ?? {}) as Record<string, boolean>;
-        return f.gravamen || f.embargo || RX_GRAV.test(String(a.acto ?? ''));
-      })
-      .map((a) => {
-        const hay = `${a.acto ?? ''} ${a.participantes ?? ''}`;
-        return {
-          type: clip(a.acto, 60) ?? 'Gravamen',
-          creditor: clip(a.participantes, 90),
-          amount: moneyOrNull(a.precio ?? a.montoPagado),
-          date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
-          status: RX_LEVANT.test(hay) ? 'LEVANTADO' : 'VIGENTE',
-        } as GravamenItem;
-      });
-    // Solo hay carga VIGENTE si las constituciones superan a las cancelaciones/levantamientos.
-    // Si el único evento de garantía mobiliaria es su cancelación → el vehículo quedó LIBRE
-    // (bandera verde), aunque el texto siga mencionando "garantía mobiliaria".
+    const esCarga = (a: Record<string, unknown>) => {
+      const f = (a.flags ?? {}) as Record<string, boolean>;
+      return f.gravamen || f.embargo || RX_GRAV.test(String(a.acto ?? ''));
+    };
+    const esCancelacion = (a: Record<string, unknown>) => RX_LEVANT.test(`${a.acto ?? ''} ${a.participantes ?? ''}`);
+    const cargas = timeline.filter(esCarga);
+    const cancelaciones = cargas.filter(esCancelacion).length;
+    // Se listan las CONSTITUCIONES (crean la carga); cada cancelación levanta la más antigua →
+    // una garantía ya cancelada se muestra LEVANTADA, no como carga viva. La cancelación en sí
+    // no es una carga y no se lista (caso CHP605: garantía Santander constituida y luego cancelada).
+    const constituciones = cargas.filter((a) => !esCancelacion(a));
+    const gravItems: GravamenItem[] = constituciones.map((a, i) => ({
+      type: clip(a.acto, 60) ?? 'Gravamen',
+      creditor: clip(a.participantes, 90),
+      amount: moneyOrNull(a.precio ?? a.montoPagado),
+      date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
+      status: i < cancelaciones ? 'LEVANTADO' : 'VIGENTE',
+    } as GravamenItem));
     const gravVigentes = gravItems.filter((it) => it.status !== 'LEVANTADO').length;
-    const gravLevantados = gravItems.filter((it) => it.status === 'LEVANTADO').length;
     const grav: GravamenesPayload = {
-      hasLiens: gravVigentes > gravLevantados,
+      hasLiens: gravVigentes > 0,
       total: gravItems.length,
       items: gravItems,
     };
@@ -307,7 +308,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       price: clip(a.precio ?? a.montoPagado, 40),
       parties: clip(a.participantes, 140),
     }));
-    const transfers = timeline.filter((a) => /transferencia|compra\s*venta|adjudicaci/i.test(String(a.acto ?? ''))).length;
+    // Transferencias de dominio = compraventas + adjudicaciones (el acto ya viene normalizado
+    // como "Compra-Venta"; la primera inscripción es el origen, no cuenta como transferencia).
+    const transfers = timeline.filter((a) => /compra\s*-?\s*venta|adjudicaci[oó]n/i.test(String(a.acto ?? ''))).length;
     const histPay: HistorialPayload = {
       totalAsientos: timeline.length,
       totalTitulos: titulos.length,

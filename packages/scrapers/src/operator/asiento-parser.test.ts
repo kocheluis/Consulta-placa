@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCaracteristicas, parseAsiento, construirTimeline } from './asiento-parser.js';
+import { parseCaracteristicas, parseAsiento, parseAsientos, splitAsientos, normalizeActo, construirTimeline } from './asiento-parser.js';
 
 /**
  * Textos REALES capturados de los asientos de ADY067 (SIGUELO_DEBUG=1), tal como los aplana
@@ -104,5 +104,76 @@ describe('parseCaracteristicas (ficha técnica del asiento)', () => {
     let ficha = null;
     for (let i = timeline.length - 1; i >= 0; i--) { const c = timeline[i]?.caracteristicas; if (c) { ficha = c; break; } }
     expect(ficha?.version).toBe('GL-I GNV');
+  });
+});
+
+// ── Datos REALES de CHP605 (SIGUELO_DEBUG): un título puede traer VARIOS asientos en el mismo
+// PDF, y las garantías no tienen etiqueta "Acto" (su acto es la cabecera). Blindan: (1) split
+// multi-acto, (2) nombre completo del acto (no "constitutivo"), (3) NO marcar 'remate' falso
+// por el clausulado de ejecución de la garantía. La basura entre páginas se simula corta.
+const CHP_280600 = // Título con DOS asientos: Compra-Venta + Cancelación de Afectación
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Transferencia de Propiedad 2025 - 00280600 Título Nro Partida 55048257 Placa : CHP605 ' +
+  '________ PERSONA NATURAL SOLIS TAIPE JHONATHAN BRAYAN DNI 47793287 Soltero ________ ' +
+  'Acto Compra - Venta Precio US$ 13,700.00 Monto Pagado US$ 13,700.00 Forma de Pago CONTADO ________ ' +
+  'Documento: Acta Notarial Funcionario: Notario - VELARDE SUSSONI, JORGE ERNESTO Fecha: 06/01/2025 ________ ' +
+  'Título 2025-280600 Fecha 27/01/2025 09:42:04 Derechos Pagados S/ 240.60 Fecha de Asiento 06/02/2025 - PRESENTACIÓN ELECTRÓNICA ________ ' +
+  'Uz³ÁÌÑÏÉ garbage ÿÿÿ 7±ÿ ' + // basura de fuente entre páginas
+  'Levantamiento de Embargo 2025 - 00280600 Título Nro Partida 55048257 Placa : CHP605 ________ ' +
+  'Acto Cancelacion de Afectacion ________ ' +
+  'DEUDOR / CONSTITUYENTE / DEPOSI - PERSONA JURIDICA YENYERE DIRECCION Y GESTION DE EVENTOS S.A.C. RUC 20603486537 ' +
+  'ACREEDOR - PERSONA JURIDICA EMPRESA DE CRÉDITOS SANTANDER CONSUMO PERÚ S.A. RUC 20550226589 ' +
+  'REPRESENTANTE - PERSONA JURIDICA ESTUDIO DONGO ABOGADOS S.A.C. RUC 20601146381 ________ ' +
+  'Documento: Acta Notarial Funcionario: Notario - VELARDE SUSSONI, JORGE ERNESTO Fecha: 06/01/2025 ________ ' +
+  'Título 2025-280600 Fecha 27/01/2025 09:42:04 Fecha de Asiento 06/02/2025 - PRESENTACIÓN ELECTRÓNICA';
+
+const CHP_GARANTIA = // Constitución de Garantía Mobiliaria (sin etiqueta "Acto"; con clausulado de ejecución)
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Constitución Garantía Mobiliaria y Otros Actos 2023 - 02736229 Título Nro Partida 55048257 Placa : CHP605 ________ ' +
+  'REGISTRO DE PROPIEDAD VEHICULAR Garantía Mobiliaria ________ ' +
+  'Participantes DEUDOR / CONSTITUYENTE / DEPOSITARIO: YENYERE DIRECCION Y GESTION DE EVENTOS S.A.C. RUC 20603486537 PARTIDA 14131401 ' +
+  'ACREEDOR: EMPRESA DE CRÉDITOS SANTANDER CONSUMO PERÚ S.A. RUC 20550226589 PARTIDA 12929498 ________ ' +
+  'Monto de gravamen Determinado S/. 87,750.00 ________ Valor del (los) bien (es) S/. 87,750.00 ________ ' +
+  'Identificación y descripción del(los) bien(es) Marca: JETOUR Modelo: DASHING Placa: CHP605 ________ ' +
+  'Forma y condiciones de ejecución del bien MEDIANTE LA VENTA EXTRAJUDICIAL PARA LA VENTA A TERCEROS DE CONFORMIDAD CON LA LEY N°28677, ' +
+  'LA ADJUDICACION AL ACREEDOR DE CONFORMIDAD CON LA LEY N°28677, O LA EJECUCION JUDICIAL, CONFORME AL CODIGO PROCESAL CIVIL. ________ ' +
+  'Fecha del acto constitutivo 18/09/2023 ________ Plazo de vigencia de la Garantía Indeterminado ________ ' +
+  'Documento: Contrato Privado con Firmas Legalizadas Funcionario: Notario VELARDE SUSSONI, JORGE E. Fecha: 18/09/2023 ________ ' +
+  'Título Nro. : 2023 - 2736229 Orden Nro. : 2023 - 12736229 Fecha : 19/09/2023 10:04:17 am Derechos Pagados : S/ 144.00 Fecha de Asiento : 05/10/2023 02:38:34 pm Sede : LIMA .';
+
+describe('parseAsientos (multi-acto + normalización, datos CHP605)', () => {
+  it('separa un título con 2 asientos en 2 registros (Compra-Venta + Cancelación de Afectación)', () => {
+    expect(splitAsientos(CHP_280600)).toHaveLength(2);
+    const recs = parseAsientos(CHP_280600);
+    expect(recs).toHaveLength(2);
+    expect(recs[0]).toMatchObject({ acto: 'Compra-Venta', tipo: 'Transferencia de Propiedad', precio: 'US$ 13,700.00' });
+    expect(recs[0]?.participantes).toContain('SOLIS TAIPE');
+    expect(recs[1]?.acto).toBe('Cancelación de Afectación');
+    expect(recs[1]?.participantes).toContain('YENYERE');
+    expect(recs[1]?.participantes).toContain('SANTANDER');
+    expect(recs[1]?.flags.embargo).toBe(true); // "Levantamiento de Embargo"
+    expect(recs[1]?.flags.remate).toBe(false);
+  });
+
+  it('la garantía usa el NOMBRE COMPLETO del acto (no "constitutivo")', () => {
+    const r = parseAsiento(CHP_GARANTIA);
+    expect(r.acto).toBe('Constitución Garantía Mobiliaria y Otros Actos');
+    expect(r.acto).not.toMatch(/constitutivo/i);
+    expect(r.flags.gravamen).toBe(true);
+    expect(r.flags.financiera).toBe(true); // EMPRESA DE CRÉDITOS SANTANDER
+    expect(r.participantes).toContain('Deudor: YENYERE');
+    expect(r.participantes).toContain('Acreedor: EMPRESA DE CRÉDITOS SANTANDER');
+    expect(r.fechaPresentacion).toMatch(/19\/09\/2023/);
+  });
+
+  it('NO marca "remate" por el clausulado de ejecución de la garantía (falso positivo CHP605)', () => {
+    // El texto tiene "LA ADJUDICACION AL ACREEDOR ... O LA EJECUCION JUDICIAL" — es hipotético, no un remate.
+    expect(parseAsiento(CHP_GARANTIA).flags.remate).toBe(false);
+  });
+
+  it('normalizeActo corrige tildes y el guion de compra-venta', () => {
+    expect(normalizeActo('Compra - Venta')).toBe('Compra-Venta');
+    expect(normalizeActo('Cancelacion de Afectacion')).toBe('Cancelación de Afectación');
+    expect(normalizeActo('Constitucion Garantia Mobiliaria')).toBe('Constitución Garantía Mobiliaria');
   });
 });

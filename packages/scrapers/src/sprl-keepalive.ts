@@ -39,9 +39,19 @@ async function refreshSlot(port: number, profile: string, label: string): Promis
       const ctx = browser.contexts()[0] ?? (await browser.newContext());
       const page = ctx.pages()[0] ?? (await ctx.newPage());
       await page.goto(PARTIDA, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
-      await wait(3500);
-      const body = (await page.locator('body').innerText().catch(() => '')).toUpperCase();
-      state = /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/.test(body) ? 'VIVA'
+      // El re-auth OAuth (SSO vivo pero token SPRL expirado) puede tardar >20s en renderizar la
+      // página logueada. Un único read a los 3.5s daba FALSO CAIDA y —peor— mataba el browser
+      // ANTES de que el re-auth que dispara este mismo goto terminara → la sesión nunca se
+      // restauraba (2h de CAIDA en el log). Poll hasta ~30s: paramos apenas veamos VIVA, y el
+      // dwell deja que el re-auth complete y mantenga la sesión de verdad.
+      const RX_VIVA = /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/;
+      let body = '';
+      for (let i = 0; i < 30; i++) {
+        await wait(1000);
+        body = (await page.locator('body').innerText().catch(() => '')).toUpperCase();
+        if (RX_VIVA.test(body)) break;
+      }
+      state = RX_VIVA.test(body) ? 'VIVA'
         : (/PASSWORD|USERNAME|INGRESAR/.test(body) ? 'CAIDA' : 'DESCONOCIDO');
     } else state = 'NO-CDP';
   } catch { state = 'ERR'; }

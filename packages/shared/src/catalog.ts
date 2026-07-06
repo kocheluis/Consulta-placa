@@ -143,7 +143,7 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
   },
   {
     key: 'historial',
-    label: 'Historial de transferencias',
+    label: 'Historial de registros',
     icon: 'history',
     tier: ReportTier.PRO,
     sources: ['SUNARP'],

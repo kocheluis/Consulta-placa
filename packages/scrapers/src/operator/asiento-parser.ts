@@ -36,7 +36,7 @@ export interface AsientoRecord {
 // Señales de due-diligence (regex sobre participantes + tipo + acto + funcionarios).
 const RX_ASEG = /\b(SEGUROS|ASEGURADORA|RIMAC|R[IÍ]MAC|PAC[IÍ]FICO|LA POSITIVA|MAPFRE|INTERSEGURO|PROTECTA|CHUBB|SECREX|CRECER SEGUROS|VIDA C[AÁ]MARA|COMPA[ÑN][IÍ]A DE SEGUROS|QU[AÁ]LITAS|AVLA|COFACE|INSUR|SANITAS|RIGEL)\b/i;
 const RX_REMATE = /\b(REMATE|SUBASTA|MARTILLER[OA]|ADJUDICACI[OÓ]N|DACI[OÓ]N EN PAGO|EJECUCI[OÓ]N (DE GARANT[IÍ]A|FORZADA)|SUPERBID|VMC SUBASTAS)\b/i;
-const RX_FINAN = /\b(LEASING|ARRENDAMIENTO FINANCIERO|FINANCIER[OA]|BANCO\b|CAJA (MUNICIPAL|RURAL)|CR[EÉ]DITO|FACTORING|EDPYME|COOPAC)\b/i;
+const RX_FINAN = /\b(LEASING|ARRENDAMIENTO FINANCIERO|FINANCIER[OA]|BANCO\b|CAJA (MUNICIPAL|RURAL)|CR[EÉ]DITOS?|FACTORING|EDPYME|COOPAC)\b/i;
 const RX_GRAVAMEN = /\b(GRAVAMEN|GARANT[IÍ]A MOBILIARIA|HIPOTECA|PRENDA|MEDIDA CAUTELAR)\b/i;
 const RX_EMBARGO = /\b(EMBARGO|ANOTACI[OÓ]N DE DEMANDA|INMOVILIZACI[OÓ]N|ORDEN DE CAPTURA|INCAUTACI[OÓ]N|SECUESTRO CONSERVATIVO)\b/i;
 
@@ -123,22 +123,72 @@ export function parseCaracteristicas(textRaw: string): VehicleSpecs | null {
   };
 }
 
+/** Tildes que SUNARP omite en los nombres de acto + el guion de compra-venta. */
+const ACENTOS: Array<[RegExp, string]> = [
+  [/\bCancelacion\b/g, 'Cancelación'], [/\bAfectacion\b/g, 'Afectación'], [/\bInscripcion\b/g, 'Inscripción'],
+  [/\bConstitucion\b/g, 'Constitución'], [/\bGarantia\b/g, 'Garantía'], [/\bEjecucion\b/g, 'Ejecución'],
+  [/\bAnotacion\b/g, 'Anotación'], [/\bAdjudicacion\b/g, 'Adjudicación'], [/\bHipoteca\b/g, 'Hipoteca'],
+];
+/** Normaliza el nombre de un acto/tipo: colapsa espacios y guiones bajos, corrige tildes y "Compra - Venta". */
+export function normalizeActo(s: string): string {
+  let out = (s || '').replace(/_{2,}/g, ' ').replace(/\s+/g, ' ').trim();
+  out = out.replace(/\bCompra\s*-\s*Venta\b/gi, 'Compra-Venta');
+  for (const [re, to] of ACENTOS) out = out.replace(re, to);
+  return out.replace(/\s*\.\s*$/, '').trim();
+}
+
+/**
+ * Un título de Síguelo puede traer VARIOS asientos en el mismo PDF (p. ej. Compra-Venta +
+ * Cancelación de Afectación). `pdfBytesToText` los concatena; esto los separa por su cabecera
+ * "<TIPO> AAAA - NNNNN Título Nro Partida <P> Placa : <PL>" para poder parsear cada uno.
+ */
+export function splitAsientos(fullText: string): string[] {
+  const re = /(?:^|[^A-Za-zÁÉÍÓÚÑáéíóúñ])([A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ ]{2,70}?)\s+20\d{2}\s*-\s*0*\d{4,8}\s+T[íi]tulo\s+Nro\s+Partida/g;
+  const starts: number[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(fullText))) starts.push(m.index + m[0].indexOf(m[1]!));
+  if (starts.length <= 1) return [fullText];
+  return starts.map((s, i) => fullText.slice(s, starts[i + 1] ?? fullText.length));
+}
+
 export function parseAsiento(textRaw: string): AsientoRecord {
-  const text = textRaw.replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/i, '').replace(/\s+/g, ' ').trim();
+  const text = textRaw
+    .replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/gi, ' ')
+    // El clausulado "Forma y condiciones de ejecución del bien" (garantías) es texto legal
+    // HIPOTÉTICO ("...la ADJUDICACIÓN al acreedor... o la EJECUCIÓN judicial"): NO es un remate
+    // real. Se quita antes de detectar banderas para no marcar 'remate' falso (caso CHP605).
+    .replace(/Forma y condiciones de ejecuci[oó]n del bien.*?(?:C[OÓ]DIGO PROCESAL CIVIL|\bCIVIL\b)\.?/i, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
   const g = (re: RegExp): string => (text.match(re)?.[1] ?? '').trim();
   const tituloM = text.match(/\b(20\d{2})\s*-\s*0*(\d{4,8})\b/);
   const anio = tituloM?.[1] ?? null;
   const numero = tituloM?.[2] ?? null;
-  const tipo = (text.split(/\s+20\d{2}\s*-\s*\d/)[0] ?? '').replace(/_{2,}/g, ' ').trim();
+  // tipo = cabecera del asiento (lo que va ANTES de "AAAA - NNNN Título Nro Partida").
+  const tipoRaw = text.match(/^\s*(.*?)\s+20\d{2}\s*-\s*0*\d{4,8}\s+T[íi]tulo\s+Nro\s+Partida/)?.[1]
+    ?? text.split(/\s+20\d{2}\s*-\s*\d/)[0] ?? '';
+  const tipo = normalizeActo(tipoRaw);
   const partida = g(/Nro Partida\s+(\d+)/i);
   const placa = g(/Placa\s*:?\s*([A-Z0-9]{5,8})/i);
-  const acto = g(/\bActo\s+(.+?)\s+(?:Precio|Monto|Forma|_)/i);
+  // Acto EXPLÍCITO: etiqueta "Acto" con A MAYÚSCULA (evita "Fecha del acto constitutivo").
+  // Si no hay acto explícito (garantías), el acto = el tipo de la cabecera.
+  const actoExpl = normalizeActo(text.match(/(?:^|[_\s])Acto\s+(.+?)\s+(?:Precio|Monto|Forma|Documento|Participantes|DEUDOR|_)/)?.[1] ?? '');
+  const acto = actoExpl || tipo;
   const precio = g(/\bPrecio\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
   const montoPagado = g(/Monto Pagado\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
   const formaPago = g(/Forma de Pago\s+(.+?)\s+(?:_|DUA|Documento|Tipo de Uso|T[IÍ]tulo)/i);
-  const fechaPresentacion = g(/T[ií]tulo\s+20\d{2}-\d+\s+Fecha\s+(\d{2}\/\d{2}\/\d{4}(?:\s+[\d:]+)?)/i);
-  const fechaAsiento = g(/Fecha (?:de )?Asiento\s+(\d{2}\/\d{2}\/\d{4})/i);
-  const participantes = (text.match(/Placa\s*:?\s*[A-Z0-9]{5,8}\s+(.+?)\s+Acto\s+/i)?.[1] ?? '').replace(/_{2,}/g, ' ').replace(/\s+/g, ' ').trim();
+  // Fecha de presentación: dos formatos de pie ("Título 2025-740912 Fecha 10/03/2025" y
+  // "Título Nro. : 2023 - 2736229 Orden Nro. : … Fecha : 19/09/2023").
+  const fechaPresentacion = g(/T[íi]tulo\s*(?:Nro\.?\s*:?\s*)?20\d{2}\s*-\s*\d+(?:\s+Orden[^_]*?)?\s+Fecha\s*:?\s*(\d{2}\/\d{2}\/\d{4}(?:\s+[\d:]+(?:\s*[ap]m)?)?)/i);
+  const fechaAsiento = g(/Fecha (?:de )?Asiento\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
+  // Participantes: entre "Placa" y "Acto" (compraventa/inscripción); si viene vacío (garantía/
+  // cancelación), se arma con DEUDOR/ACREEDOR (soporta ":" y "-" como separador).
+  let participantes = normalizeActo(text.match(/Placa\s*:?\s*[A-Z0-9]{5,8}\s+(.+?)\s+Acto\s+/)?.[1] ?? '');
+  if (!participantes || /^[.\s_]*$/.test(participantes)) {
+    const deu = text.match(/DEUDOR[^:\-]*[:\-]\s*(?:PERSONA \w+\s+)?([A-ZÁÉÍÓÚÑ0-9][^_]+?)\s+(?:RUC|PARTIDA|ACREEDOR|_)/);
+    const acr = text.match(/ACREEDOR[^:\-]*[:\-]\s*(?:PERSONA \w+\s+)?([A-ZÁÉÍÓÚÑ0-9][^_]+?)\s+(?:RUC|PARTIDA|REPRESENTANTE|_)/);
+    participantes = [deu?.[1] && `Deudor: ${deu[1].trim()}`, acr?.[1] && `Acreedor: ${acr[1].trim()}`].filter(Boolean).join(' · ');
+  }
 
   const documentos: AsientoDoc[] = [];
   const docRe = /Documento:\s*(.+?)\s+Funcionario:\s*(.+?)\s+Fecha:\s*(\d{2}\/\d{2}\/\d{4})/gi;
@@ -155,6 +205,11 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   };
 
   return { tipo, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes, documentos, flags, caracteristicas: parseCaracteristicas(textRaw) };
+}
+
+/** Parsea TODOS los asientos que trae el PDF de un título (múltiples actos → múltiples registros). */
+export function parseAsientos(fullText: string): AsientoRecord[] {
+  return splitAsientos(fullText).map(parseAsiento).filter((r) => Boolean(r.titulo) || Boolean(r.acto));
 }
 
 /** dd/mm/aaaa[ hh:mm:ss] → epoch ms (para ordenar). */

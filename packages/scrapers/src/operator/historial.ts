@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser } from 'playwright';
-import { parseAsiento, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
+import { parseAsientos, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
 import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
@@ -157,7 +157,16 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         for (let i = 0; i < 15 && !(await passVisible()); i++) await wait(1000);
       }
       if (!(await passVisible())) {
-        log('no apareció el form de login');
+        // SIN form de login = 3 casos, hay que distinguirlos:
+        //  1) La sesión VOLVIÓ: el force-clear + goto disparó el re-auth OAuth (el SSO
+        //     seguía vivo) y SUNARP re-logueó solo → es ÉXITO, no fallo. Fue el bug de
+        //     M4S859 (sesión viva, pero isLogged tardó >25s en renderizar tras el redirect).
+        //  2) Lockout: SUNARP muestra "se superó el número de intentos" en vez del form.
+        //  3) Otra cosa (cambio de página / red): logueo qué sirvió para poder diagnosticar.
+        if (await isLogged()) { log('sesión recuperada por re-auth (sin form de login) → sigo'); return true; }
+        const bodySnippet = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+        if (await isLocked()) { blockReason = 'lockout'; log('SPRL bloqueada por SUNARP (exceso de intentos) — sin form de login; no reintento'); }
+        else log(`no apareció el form de login · url=${page.url()} · body="${bodySnippet}"`);
         await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
         return false;
       }
@@ -184,9 +193,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (!(await isLogged()) && (await isLocked())) blockReason = 'lockout';
       return isLogged();
     }
-    // Esperar a que la sesión activa se renderice (el re-auth OAuth puede tardar ~20s).
+    // Esperar a que la sesión activa se renderice. El re-auth OAuth puede tardar >25s en
+    // VPS lento; si nos rendimos antes, autoLogin dispara un force-clear innecesario que
+    // destruye una sesión que estaba por aparecer (fue el bug de M4S859) → 45s de margen.
     let logged = false;
-    for (let i = 0; i < 25 && !logged; i++) { await wait(1000); logged = await isLogged(); }
+    for (let i = 0; i < 45 && !logged; i++) { await wait(1000); logged = await isLogged(); }
     // Si sigue sin sesión (logout/expirada), login automático (autoLogin consigue el
     // form solo vía force-clear; un re-login sobre sesión válida también es inocuo).
     if (!logged) { log('sin sesión activa → login automático'); logged = await autoLogin(); }
@@ -276,6 +287,10 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (!resp) return null;
       const body = (await resp.json().catch(() => null)) as { cmVzcG9uc2U?: string } | null;
       const dec = body?.cmVzcG9uc2U ? sgDecrypt(body.cmVzcG9uc2U) : null;
+      // Depuración: vuelca el JSON descifrado de listarAsientos SIN los bytes del PDF, para ver
+      // si trae los actos ya estructurados (código+descripción+participantes) → fuente limpia
+      // para el parser multi-acto en vez de raspar el texto del PDF.
+      if (process.env.SIGUELO_DEBUG && dec) log(`  [DEBUG listarAsientos ${anioT}-${numeroT}] ${dec.replace(/"paginaAsiento":\s*\[[-\d,\s]*\]/g, '"paginaAsiento":"<bytes>"').slice(0, 4000)} [/DEBUG]`);
       const obj = dec ? (JSON.parse(dec) as { list?: Array<{ paginaAsiento?: number[] }> }) : null;
       const bytes = obj?.list?.[0]?.paginaAsiento;
       return Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
@@ -289,9 +304,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       // extracción de características (N° de Versión, carrocería, cilindrada…) de "Identidad específica".
       // Sin recorte: las características de la Primera Inscripción pueden ir más allá de los 3000 chars.
       if (process.env.SIGUELO_DEBUG) log(`  [DEBUG asiento ${tit}] ${text} [/DEBUG]`);
-      const rec = parseAsiento(text);
-      records.push(rec);
-      log(`  ${tit}: ${rec.acto || rec.tipo} · ${rec.precio || 's/precio'} · ${rec.fechaPresentacion}`);
+      // Un título puede traer VARIOS asientos (p. ej. Compra-Venta + Cancelación de Afectación) → todos.
+      for (const rec of parseAsientos(text)) {
+        records.push(rec);
+        log(`  ${tit}: ${rec.acto || rec.tipo} · ${rec.precio || 's/precio'} · ${rec.fechaPresentacion}`);
+      }
     };
 
     if (opts.parallel && valid.length > 1) {
