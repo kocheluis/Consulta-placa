@@ -173,7 +173,11 @@ export async function runMtcCitv(
     // Señal de RESULTADO REAL = un código de certificado CITV (C-AAAA-…). NO uses la cabecera de la
     // tabla ("NRO DE CERTIFICADO"): aparece aunque el resultado esté vacío → daría falso positivo.
     const OK = /\bC-\d{4}-\d/i;
-    const CAP_ERR = /captcha|c[oó]digo ingresado|no es v[aá]lid|verifique/i;
+    // "No se encontró información, Verifique." = el vehículo NO tiene CITV (auto nuevo / aún no
+    // obligatorio) → SIN_REGISTRO, NO un error. ⚠️ Contiene "Verifique", por eso CAP_ERR ya NO
+    // incluye "verifique" (antes lo confundía con captcha rechazado → devolvía ERROR falso).
+    const NO_INFO = /no se encontr[oó]|sin informaci[oó]n|no existe/i;
+    const CAP_ERR = /captcha|c[oó]digo ingresado|no es v[aá]lid/i;
     let cap = '';
 
     for (let i = 1; i <= 4; i++) {
@@ -188,6 +192,11 @@ export async function runMtcCitv(
       await buscar.click();
       let body = '';
       for (let k = 0; k < 12; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; }
+      // "No se encontró información" = sin CITV (auto nuevo / aún no obligatorio) → SIN_REGISTRO.
+      if (NO_INFO.test(dialog)) {
+        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        return { ...base, status: 'SIN_REGISTRO', summary: `Sin CITV registrado · MTC: "${dialog.trim().slice(0, 70)}"`, data: { mensaje: dialog.trim(), captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+      }
       // Captcha rechazado (alert) → reintenta con uno nuevo.
       if (CAP_ERR.test(dialog)) continue;
       if (OK.test(body)) {

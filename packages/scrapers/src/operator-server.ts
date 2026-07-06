@@ -395,7 +395,13 @@ const server = createServer(async (req, res) => {
     if (path === '/api/engine' && req.method === 'GET') {
       const cj = currentAutoJobId ? jobs.get(currentAutoJobId) : null;
       const current = cj
-        ? { jobId: cj.id, placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done }
+        ? { jobId: cj.id, placa: cj.plate, percent: cj.percent, step: cj.step, source: cj.current, done: cj.done,
+            // Estado por fuente (para el % de carga individual en la consola): hecha (su status),
+            // corriendo (la actual) o en cola.
+            sources: cj.sources.map((s) => {
+              const r = cj.results.find((x) => x.source.toLowerCase().replace(/_/g, '-') === s);
+              return { source: s, status: r ? r.status : (s === cj.current ? 'RUNNING' : 'PENDING') };
+            }) }
         : null;
       // Ya NO se envía el token crudo al navegador (opción B): solo si hay secreto configurado.
       // El preview se firma por placa y bajo demanda en /api/preview-token.
@@ -1020,7 +1026,18 @@ function showLiveLogs(pl){var d=document.getElementById('pdetail');
     var bar=proc
       ?'<div class="prog2"><div class="top"><span class="pl">⏳ '+esc(pl)+'</span><span class="pc">'+pct+'%</span></div><div class="st">'+esc(s.current.source||'procesando fuentes…')+'</div><div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>'
       :'<div class="prog2 idle"><div class="top"><span class="pl">'+esc(pl)+'</span><span class="pc">—</span></div><div class="st">⚠ aún sin reporte.json (¿en proceso en otra máquina o pedido viejo?)</div></div>';
-    d.innerHTML=hHeader(pl)+detailTabs()+bar+
+    // % de carga POR FUENTE: hecha=100% (verde/rojo según status), corriendo=parcial (azul), en cola=0%.
+    var ss=(proc&&s.current.sources)||[];
+    var perSrc=ss.length?('<div style="margin:12px 0 4px">'+ss.map(function(x){
+      var st=x.status||'PENDING', done=(st!=='PENDING'&&st!=='RUNNING');
+      var col=(st==='ENCONTRADO'||st==='SIN_REGISTRO')?'#15803D':((st==='RUNNING')?'#2563EB':(done?'#B91C1C':'#94A3B8'));
+      var w=done?100:((st==='RUNNING')?55:0), lab=(st==='RUNNING')?'corriendo…':((st==='PENDING')?'en cola':esc(st));
+      return '<div style="display:flex;align-items:center;gap:10px;margin:5px 0">'+
+        '<span style="width:120px;font:600 12px ui-monospace,monospace;color:#334155">'+esc(x.source)+'</span>'+
+        '<div style="flex:1;height:8px;background:#E2E8F0;border-radius:999px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+';transition:width .5s ease"></div></div>'+
+        '<span style="width:95px;text-align:right;font:600 11px ui-monospace,monospace;color:'+col+'">'+lab+'</span></div>';
+    }).join('')+'</div>'):'';
+    d.innerHTML=hHeader(pl)+detailTabs()+bar+perSrc+
       '<div class="pmeta" style="display:block;margin-top:12px">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
     // Auto-refresco mientras procesa ESTA placa y sigues en la pestaña Fuentes → el % avanza solo.
     if(proc&&DTAB==='fuentes'&&SELECTED===pl)setTimeout(function(){if(DTAB==='fuentes'&&SELECTED===pl)loadFuentes();},4000);
