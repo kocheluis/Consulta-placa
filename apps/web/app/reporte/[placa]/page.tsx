@@ -1062,18 +1062,36 @@ function CapturaBody({ section, onRetry }: { section: SectionResult; onRetry: ()
   );
 }
 
+// Cronograma oficial de la 1ª ITV según el ÚLTIMO dígito de la placa (Reglamento Nacional de
+// Inspecciones Técnicas Vehiculares): mes de referencia + etiqueta legible.
+const CITV_CRONOGRAMA: Record<string, { month: number; label: string }> = {
+  '0': { month: 1, label: 'enero-febrero' }, '1': { month: 3, label: 'marzo' }, '2': { month: 4, label: 'abril' },
+  '3': { month: 5, label: 'mayo' }, '4': { month: 6, label: 'junio' }, '5': { month: 7, label: 'julio-agosto' },
+  '6': { month: 9, label: 'septiembre' }, '7': { month: 10, label: 'octubre' }, '8': { month: 11, label: 'noviembre' },
+  '9': { month: 12, label: 'diciembre' },
+};
+
 function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; vehicle: Report['vehicle']; onRetry: () => void }) {
+  const params = useParams<{ placa: string }>();
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const r = section.payload as RevisionTecnica | undefined;
   if (!r) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
-  // Los autos particulares NO requieren CITV hasta el 4º año de antigüedad (obligación a los 3
-  // años del vehículo 0km). Sin certificado, solo es "vencida" si YA le corresponde y no lo tiene;
-  // si es nuevo —o no podemos determinar la edad— NO se alarma: aún no le toca la revisión.
+  // Regla de la ITV (Reglamento): PARTICULAR obligada desde el 4º año (exento los 3 primeros);
+  // SERVICIO (taxi/transporte/carga) desde el 3er año. El mes exacto lo fija el cronograma según
+  // el último dígito de la placa. Sin certificado, solo es "vencida" si YA le corresponde; si es
+  // nuevo —o no sabemos la edad— NO se alarma.
   const year = vehicle?.year ?? null;
-  const currentYear = new Date().getFullYear();
+  const servicio = /taxi|transporte|colectiv|carga|mercanc|servicio/i.test(r.serviceType ?? '');
+  const lastDigit = (params.placa ?? '').replace(/\D/g, '').slice(-1);
+  const crono = lastDigit ? CITV_CRONOGRAMA[lastDigit] : undefined;
+  const now = new Date();
   const noCert = !r.lastInspection && !r.validUntil;
-  const obligado = year != null && currentYear >= year + 3; // ya le corresponde CITV
-  const vencida = !r.hasValid && (!noCert || obligado);      // tuvo CITV (vencido) o ya obligado sin él
+  // Año de la 1ª ITV: particular = 4º año (refYear+3, exento 3 años); servicio = 3er año (refYear+2).
+  const dueYear = year != null ? year + (servicio ? 2 : 3) : null;
+  const dueMonth = crono?.month ?? 1;
+  const obligado = dueYear != null && (now.getFullYear() > dueYear || (now.getFullYear() === dueYear && now.getMonth() + 1 >= dueMonth));
+  const vencida = !r.hasValid && (!noCert || obligado); // tuvo CITV (vencido) o ya obligado sin él
+  const cuando = dueYear != null ? `${crono ? `${crono.label} de ` : ''}${dueYear}` : null;
   return (
     <div className="flex flex-col gap-3">
       {r.hasValid ? (
@@ -1082,8 +1100,8 @@ function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; v
         <StatusLine tone="warning" icon="warning">Revisión técnica vencida o sin registro vigente</StatusLine>
       ) : (
         <StatusLine tone="success" icon="schedule">
-          {year != null
-            ? `Aún no requiere revisión técnica (obligatoria desde el 4º año de antigüedad; le correspondería desde ${year + 3}).`
+          {cuando
+            ? `Aún no requiere revisión técnica — ${servicio ? 'vehículo de servicio: obligatoria desde el 3er año' : 'particular: obligatoria desde el 4º año'}; le corresponde desde ${cuando}.`
             : 'Aún no requiere revisión técnica (vehículo nuevo / aún no obligado).'}
         </StatusLine>
       )}
