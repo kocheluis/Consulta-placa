@@ -1066,22 +1066,26 @@ function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; v
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const r = section.payload as RevisionTecnica | undefined;
   if (!r) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
-  // Los autos particulares NO requieren CITV hasta el 4º año de antigüedad. Si no hay
-  // certificado y el vehículo es nuevo, NO es "vencida": aún no le corresponde.
+  // Los autos particulares NO requieren CITV hasta el 4º año de antigüedad (obligación a los 3
+  // años del vehículo 0km). Sin certificado, solo es "vencida" si YA le corresponde y no lo tiene;
+  // si es nuevo —o no podemos determinar la edad— NO se alarma: aún no le toca la revisión.
   const year = vehicle?.year ?? null;
   const currentYear = new Date().getFullYear();
   const noCert = !r.lastInspection && !r.validUntil;
-  const exempt = !r.hasValid && noCert && year != null && currentYear < year + 3;
+  const obligado = year != null && currentYear >= year + 3; // ya le corresponde CITV
+  const vencida = !r.hasValid && (!noCert || obligado);      // tuvo CITV (vencido) o ya obligado sin él
   return (
     <div className="flex flex-col gap-3">
       {r.hasValid ? (
         <StatusLine tone="success" icon="fact_check">Revisión técnica vigente</StatusLine>
-      ) : exempt ? (
-        <StatusLine tone="success" icon="schedule">
-          {`Aún no requiere revisión técnica (obligatoria desde el 4º año de antigüedad; le correspondería desde ${year! + 3}).`}
-        </StatusLine>
-      ) : (
+      ) : vencida ? (
         <StatusLine tone="warning" icon="warning">Revisión técnica vencida o sin registro vigente</StatusLine>
+      ) : (
+        <StatusLine tone="success" icon="schedule">
+          {year != null
+            ? `Aún no requiere revisión técnica (obligatoria desde el 4º año de antigüedad; le correspondería desde ${year + 3}).`
+            : 'Aún no requiere revisión técnica (vehículo nuevo / aún no obligado).'}
+        </StatusLine>
       )}
       {/lunas|polariza|oscurec/i.test(r.lunasPolarizadas ?? '') && (
         <StatusLine tone="warning" icon="dark_mode">Posibles lunas polarizadas (mención en el CITV — verificar)</StatusLine>
