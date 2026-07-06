@@ -461,6 +461,7 @@ const server = createServer(async (req, res) => {
       // Marca de origen: los pedidos creados en la consola son del OPERADOR (los de la web quedan
       // en 'servicio' por el DEFAULT de la columna). Permite distinguirlos en el historial.
       const p = await queue.enqueue({ placa, tier, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined, origin: 'operador' });
+      forceReprocess.add(String(p.id)); // pedidos de la consola (incl. "Re-generar") → datos FRESCOS, sin reúso
       console.log(`[cola] pedido encolado ${p.id} · ${p.placa} · tier=${tier} · origen=operador`);
       return sendJson(res, 200, p);
     }
@@ -662,6 +663,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   table.ped td{padding:9px 12px;border-top:1px solid var(--bd)}
   table.ped tbody tr{cursor:pointer} table.ped tbody tr:hover td{background:#F1F5F9}
   table.ped tr.sel td{background:#EFF6FF;box-shadow:inset 3px 0 0 var(--azul)}
+  table.ped tr.subrow td{background:#F8FAFC;color:#475569;font-size:12.5px} table.ped tr.subrow:hover td{background:#EEF2F7}
+  .gtoggle{cursor:pointer;color:var(--azul);font-weight:800;display:inline-block;width:14px;text-align:center;user-select:none}
   .tg{font:700 10.5px ui-monospace,monospace;padding:2px 7px;border-radius:999px;white-space:nowrap}
   .tg-BASIC{background:#E2E8F0;color:#475569} .tg-PRO{background:#DBEAFE;color:#1D4ED8} .tg-ULTRA{background:#EDE9FE;color:#6D28D9}
   .og-operador{background:#FEF3C7;color:#92400E} .og-servicio{background:#DCFCE7;color:#15803D}
@@ -718,7 +721,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   </div>
 
   <section id="tab-hist">
-    <table class="ped"><thead><tr><th>Placa</th><th>Origen</th><th>Nivel</th><th>Reporte</th><th>Estado</th><th>Creado</th><th>Terminado</th><th>Duración</th><th></th></tr></thead><tbody id="histbody"><tr><td colspan="9" style="color:#64748B">Cargando…</td></tr></tbody></table>
+    <table class="ped"><thead><tr><th>Placa</th><th>Origen</th><th>Nivel</th><th>Usuario</th><th>Reporte</th><th>Estado</th><th>Creado</th><th>Terminado</th><th>Duración</th></tr></thead><tbody id="histbody"><tr><td colspan="9" style="color:#64748B">Cargando…</td></tr></tbody></table>
     <div class="pager" id="histpager"></div>
     <div class="pdetail" id="pdetail"></div>
   </section>
@@ -886,26 +889,60 @@ function loadHistory(){fetch('/api/pedidos/history').then(function(r){return r.j
   renderHistory();
   if(!HISTSEEN&&HISTLIST[0]){HISTSEEN=true; selectPedido(HISTLIST[0].placa,HISTLIST[0].id);}  // por defecto: el último pedido
 }).catch(function(){});}
+// Usuario que generó el pedido: operador (consola) o, en servicio, su email/id/whatsapp.
+function ousuario(p){
+  if(String(p.origin||'').toLowerCase()==='operador')return '<span class="tg og-operador">operador</span>';
+  var u=p.email||p.userId||p.whatsapp||'';
+  if(!u)return '<span class="meta">—</span>';
+  var s=String(u), sh=s.length>22?s.slice(0,20)+'…':s;
+  return '<span class="meta" title="'+esc(s)+'">'+esc(sh)+'</span>';
+}
+// Agrupa los pedidos por placa (HISTLIST viene desc por creado → cada grupo queda desc, y el orden
+// de grupos es por su generación más reciente). El grupo tiene un "registro principal" (el más
+// reciente, en la tabla) y sub-registros (generaciones anteriores, indexadas, expandibles).
+function groupHistory(){
+  var m={},order=[];
+  for(var i=0;i<HISTLIST.length;i++){var p=HISTLIST[i],k=p.placa;if(!m[k]){m[k]={placa:k,list:[]};order.push(k);}m[k].list.push(p);}
+  return order.map(function(k){return m[k];});
+}
+function histRow(p,isMain,tog,nSubs,groupPlaca){
+  var placaCell=isMain
+    ?('<span>'+(tog||'<span style="display:inline-block;width:14px"></span>')+' <b style="font:700 13px ui-monospace,monospace">'+esc(p.placa)+'</b>'+(nSubs?' <span class="meta" title="'+nSubs+' generación(es) anterior(es)">+'+nSubs+'</span>':'')+'</span>')
+    :('<span style="padding-left:22px;color:#94A3B8">↳ <span style="font:600 12px ui-monospace,monospace">'+esc(p.placa)+'</span></span>');
+  return '<tr'+(groupPlaca?' class="subrow" data-group="'+esc(groupPlaca)+'" style="display:none"':'')+' data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\',\\''+esc(p.id)+'\\')">'+
+    '<td>'+placaCell+'</td>'+
+    '<td>'+oorigen(p.origin)+'</td>'+
+    '<td>'+otier(p.tier)+'</td>'+
+    '<td>'+ousuario(p)+'</td>'+
+    '<td>'+oreporte(p)+'</td>'+
+    '<td>'+pestado(p.estado)+(p.error?'<div style="color:#B91C1C;font-size:11px;margin-top:2px">'+esc((p.error||'').slice(0,42))+'</div>':'')+'</td>'+
+    '<td>'+esc(fmtTime(p.createdAt))+'</td>'+
+    '<td>'+esc(fmtTime(p.finishedAt))+'</td>'+
+    '<td style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+fmtDur(p.startedAt||p.createdAt,p.finishedAt)+'</td></tr>';
+}
 function renderHistory(){
-  var tb=document.getElementById('histbody'), total=HISTLIST.length;
+  var tb=document.getElementById('histbody');
+  var groups=groupHistory(), total=groups.length;
   if(!total){tb.innerHTML='<tr><td colspan="9" style="color:#64748B">Sin pedidos todavía</td></tr>';renderPager(0,1,0);return;}
   var pages=Math.max(1,Math.ceil(total/HISTPER));
   if(HISTPAGE>=pages)HISTPAGE=pages-1; if(HISTPAGE<0)HISTPAGE=0;
-  var start=HISTPAGE*HISTPER, slice=HISTLIST.slice(start,start+HISTPER);
-  tb.innerHTML=slice.map(function(p){
-    return '<tr data-placa="'+esc(p.placa)+'" onclick="selectPedido(\\''+esc(p.placa)+'\\',\\''+esc(p.id)+'\\')">'+
-      '<td style="font:700 13px ui-monospace,monospace">'+esc(p.placa)+'</td>'+
-      '<td>'+oorigen(p.origin)+'</td>'+
-      '<td>'+otier(p.tier)+'</td>'+
-      '<td>'+oreporte(p)+'</td>'+
-      '<td>'+pestado(p.estado)+(p.error?'<div style="color:#B91C1C;font-size:11px;margin-top:2px">'+esc((p.error||'').slice(0,42))+'</div>':'')+'</td>'+
-      '<td>'+esc(fmtTime(p.createdAt))+'</td>'+
-      '<td>'+esc(fmtTime(p.finishedAt))+'</td>'+
-      '<td style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+fmtDur(p.startedAt||p.createdAt,p.finishedAt)+'</td>'+
-      '<td style="color:#1E3A8A">›</td></tr>';
-  }).join('');
+  var start=HISTPAGE*HISTPER, slice=groups.slice(start,start+HISTPER);
+  var html='';
+  slice.forEach(function(g){
+    var main=g.list[0], subs=g.list.slice(1), n=subs.length;
+    var tog=n?'<span class="gtoggle" onclick="event.stopPropagation();toggleGroup(this,\\''+esc(g.placa)+'\\')" title="Ver generaciones anteriores">▸</span>':'<span style="display:inline-block;width:14px"></span>';
+    html+=histRow(main,true,tog,n,null);
+    for(var j=0;j<subs.length;j++)html+=histRow(subs[j],false,'',0,g.placa);
+  });
+  tb.innerHTML=html;
   renderPager(total,pages,start+slice.length);
   markSel();
+}
+// Expande/colapsa los sub-registros (generaciones anteriores) de una placa.
+function toggleGroup(el,placa){
+  var open=el.textContent.indexOf('▾')>=0; el.textContent=open?'▸':'▾';
+  var rows=document.querySelectorAll('#histbody tr.subrow[data-group="'+placa+'"]');
+  for(var i=0;i<rows.length;i++)rows[i].style.display=open?'none':'table-row';
 }
 function renderPager(total,pages,shownEnd){
   var el=document.getElementById('histpager'); if(!el)return;
@@ -920,7 +957,7 @@ function renderPager(total,pages,shownEnd){
 }
 function setPerPage(v){HISTPER=parseInt(v,10)||25;HISTPAGE=0;renderHistory();}
 function histPage(d){HISTPAGE+=d;renderHistory();}
-function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=0;i<rows.length;i++){rows[i].className=(rows[i].getAttribute('data-placa')===SELECTED)?'sel':'';}}
+function markSel(){var rows=document.querySelectorAll('#histbody tr');for(var i=0;i<rows.length;i++){var sub=rows[i].getAttribute('data-group')?'subrow':'';var sel=(rows[i].getAttribute('data-placa')===SELECTED)?'sel':'';rows[i].className=(sub&&sel)?sub+' '+sel:(sub||sel);}}
 function hHeader(pl){return '<h2>'+esc(pl)+' <button class="sec" style="font-size:13px;padding:6px 12px" onclick="requeuePedido()">↻ Re-generar reporte</button></h2>';}
 function detailTabs(){return '<div class="tabs" style="margin:10px 0 12px">'+
   '<button class="tab'+(DTAB==='fuentes'?' active':'')+'" onclick="showDetailTab(\\'fuentes\\')">Fuentes</button>'+
@@ -977,10 +1014,16 @@ function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!b
 function showLiveLogs(pl){var d=document.getElementById('pdetail');
   fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
     var proc=s.current&&s.current.placa===pl;var srcs=s.autoSources||[];
+    var pct=proc?(s.current.percent||0):0;
     var links=srcs.map(function(x){return '<a href="/log/'+encodeURIComponent(pl)+'/'+x+'" target="_blank" style="margin:0 12px 6px 0;display:inline-block;color:#0C6F64">'+esc(x)+'</a>';}).join('');
-    d.innerHTML=hHeader(pl)+detailTabs()+
-      '<div class="pmeta">'+(proc?('⏳ En proceso · '+(s.current.percent||0)+'% · '+esc(s.current.source||'')):'⚠ aún sin reporte.json (¿en proceso o pedido viejo/otra máquina?)')+'</div>'+
-      '<div class="pmeta" style="display:block">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
+    // Barra de % de carga de la tarea → se ve el avance en vivo (no parece "colgado").
+    var bar=proc
+      ?'<div class="prog2"><div class="top"><span class="pl">⏳ '+esc(pl)+'</span><span class="pc">'+pct+'%</span></div><div class="st">'+esc(s.current.source||'procesando fuentes…')+'</div><div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>'
+      :'<div class="prog2 idle"><div class="top"><span class="pl">'+esc(pl)+'</span><span class="pc">—</span></div><div class="st">⚠ aún sin reporte.json (¿en proceso en otra máquina o pedido viejo?)</div></div>';
+    d.innerHTML=hHeader(pl)+detailTabs()+bar+
+      '<div class="pmeta" style="display:block;margin-top:12px">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
+    // Auto-refresco mientras procesa ESTA placa y sigues en la pestaña Fuentes → el % avanza solo.
+    if(proc&&DTAB==='fuentes'&&SELECTED===pl)setTimeout(function(){if(DTAB==='fuentes'&&SELECTED===pl)loadFuentes();},4000);
   }).catch(function(){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
 // Render compacto del reporte normalizado (lo que recibe el cliente).
 var KIND_LABEL={REGISTRAL:'Identidad',IDENTIDAD_ESPECIFICA:'Identidad específica y características',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de registros',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
@@ -1013,10 +1056,14 @@ function renderWebReport(rep){var v=rep.vehicle,html='';
   html+='<div class="cards">'+secs.map(function(s){return '<div class="card"><h3>'+esc(KIND_LABEL[s.kind]||s.kind)+secBadge(s.status)+'</h3><div class="sum">'+sectionSummary(s)+'</div></div>';}).join('')+'</div>';
   return '<div class="meta" style="margin-bottom:10px">Vista de lo que recibe el cliente. (BASIC: identidad/propietarios/SOAT · PRO/ULTRA: el resto.)</div>'+html;
 }
-function requeuePedido(){if(!SELECTED_ID){alert('Selecciona un pedido');return;}
-  log('↻ re-generando pedido '+SELECTED+' (#'+SELECTED_ID+') …');
-  fetch('/api/pedido/requeue',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({id:SELECTED_ID})})
-   .then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('↻ re-encolado — el motor lo tomará si está ENCENDIDO');loadHistory();}).catch(function(e){log('✖ '+e)});}
+// Re-generar = CREAR UN NUEVO pedido (sub-registro) de la misma placa/nivel, NO reusar la fila:
+// así cada generación queda con su propio creado/terminado/duración y su usuario (operador).
+function requeuePedido(){if(!SELECTED){alert('Selecciona un pedido');return;}
+  var cur=null;for(var i=0;i<HISTLIST.length;i++){if(String(HISTLIST[i].id)===String(SELECTED_ID)){cur=HISTLIST[i];break;}}
+  var tier=(cur&&cur.tier)||'PRO';
+  log('↻ re-generando '+SELECTED+' ('+tier+') — nuevo registro …');
+  fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:SELECTED,tier:tier})})
+   .then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('↻ nuevo pedido #'+esc(x.id)+' ('+esc(x.tier||tier)+') — el motor lo tomará si está ENCENDIDO');loadHistory();}).catch(function(e){log('✖ '+e)});}
 function enqueue(){var p=document.getElementById('qplaca').value.toUpperCase().replace(/[^A-Z0-9]/g,'');if(!p){alert('Pon una placa');return;}
   var tier=document.getElementById('qtier').value;
   fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,tier:tier,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
