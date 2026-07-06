@@ -276,13 +276,22 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (!(await buscar.isEnabled().catch(() => false))) return null;
       const respP = pg.waitForResponse((r) => /listarAsientos/i.test(r.url()), { timeout: 70000 }).catch(() => null);
       await buscar.click().catch(() => {});
-      await wait(4000);
-      for (const txt of ['Asiento de inscripción', 'Asiento de inscripcion', 'Asiento']) {
-        const el = pg.locator(`button:has-text("${txt}"), a:has-text("${txt}"), [role="tab"]:has-text("${txt}")`).first();
-        if (await el.isVisible().catch(() => false)) { await el.click().catch(() => {}); await wait(3000); break; }
+      await wait(3500);
+      const asientoSel = 'button:has(i.fa-eye), a:has(i.fa-eye), .fa-eye, button.btn-success, ' +
+        '[title*="ver" i], [title*="asiento" i], a:has-text("Asiento de inscrip"), a:has-text("Ver anotaci"), ' +
+        'a:has-text("Acceder al asiento"), a:has-text("TIVE")';
+      // Dispara listarAsientos con REINTENTOS del clic: algunos títulos (garantía mobiliaria / BIENES
+      // MUEBLES) tardan o exponen el acceso como link → sin esto el asiento se pierde por timeout mudo
+      // (caso CHP605 2023-02736229: intermitente). Reclickea hasta que la respuesta esté en vuelo.
+      for (let i = 0; i < 6; i++) {
+        for (const txt of ['Asiento de inscripción', 'Asiento de inscripcion', 'Asiento']) {
+          const tab = pg.locator(`[role="tab"]:has-text("${txt}"), button:has-text("${txt}")`).first();
+          if (await tab.isVisible().catch(() => false)) { await tab.click().catch(() => {}); await wait(1000); break; }
+        }
+        const el = pg.locator(asientoSel).first();
+        if (await el.isVisible().catch(() => false)) await el.click().catch(() => {});
+        if (await Promise.race([respP.then(() => true), wait(2500).then(() => false)])) break;
       }
-      const ojo = pg.locator('button:has(i.fa-eye), a:has(i.fa-eye), .fa-eye, button.btn-success, [title*="ver" i], [title*="asiento" i]').first();
-      if (await ojo.isVisible().catch(() => false)) { await ojo.click().catch(() => {}); }
       const resp = await respP;
       if (!resp) return null;
       const body = (await resp.json().catch(() => null)) as { cmVzcG9uc2U?: string } | null;
@@ -321,7 +330,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         const out = await Promise.all(batch.map(async ([aT, nT], k) => {
           await wait(k * 1800);
           const pg = await ctx.newPage();
-          try { return { tit: `${aT}-${nT}`, text: await searchSiguelo(pg, aT, nT).catch(() => null) }; }
+          try {
+            let text = await searchSiguelo(pg, aT, nT).catch(() => null);
+            if (!text) text = await searchSiguelo(pg, aT, nT).catch(() => null);
+            return { tit: `${aT}-${nT}`, text };
+          }
           finally { await pg.close().catch(() => {}); }
         }));
         for (const r of out) procesar(r.text, r.tit);
@@ -329,7 +342,12 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     } else {
       // SECUENCIAL (default, validado): una sola pestaña reutilizada.
       const sg = await ctx.newPage();
-      for (const [aT, nT] of valid) { log(`Síguelo ${aT}-${nT}…`); procesar(await searchSiguelo(sg, aT, nT).catch(() => null), `${aT}-${nT}`); }
+      for (const [aT, nT] of valid) {
+        log(`Síguelo ${aT}-${nT}…`);
+        let text = await searchSiguelo(sg, aT, nT).catch(() => null);
+        if (!text) { log(`  ${aT}-${nT}: sin asiento → reintento`); text = await searchSiguelo(sg, aT, nT).catch(() => null); }
+        procesar(text, `${aT}-${nT}`);
+      }
       await sg.close().catch(() => {});
     }
 
