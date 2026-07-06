@@ -315,7 +315,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       totalAsientos: timeline.length,
       totalTitulos: titulos.length,
       transfers,
-      flags: { aseguradora: Boolean(histFlags.aseguradora), remate: Boolean(histFlags.remate), financiera: Boolean(histFlags.financiera) },
+      flags: { aseguradora: Boolean(histFlags.aseguradora), remate: Boolean(histFlags.remate), financiera: Boolean(histFlags.financiera), gravamen: (grav.total ?? 0) > 0 },
       events,
     };
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });

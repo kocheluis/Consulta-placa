@@ -256,8 +256,9 @@ export interface HistorialPayload {
   totalTitulos: number;
   /** N° de transferencias de propiedad (compraventas/adjudicaciones). */
   transfers: number;
-  /** Banderas de riesgo halladas en el historial. */
-  flags: { aseguradora: boolean; remate: boolean; financiera: boolean };
+  /** Banderas de riesgo halladas en el historial. `gravamen` = si la sección Gravámenes tiene
+   *  alguna carga (vigente o levantada) que revisar → evita mandar a Gravámenes cuando está vacío. */
+  flags: { aseguradora: boolean; remate: boolean; financiera: boolean; gravamen?: boolean };
   /** Eventos ordenados cronológicamente (más reciente primero al renderizar). */
   events: HistorialEvent[];
 }

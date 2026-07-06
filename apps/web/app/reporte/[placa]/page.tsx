@@ -1270,11 +1270,14 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
           Banderas en el historial: {hardTxt}
         </StatusLine>
       )}
-      {/* "Financiera" es señal BLANDA (el auto tuvo un crédito, muy común): nota informativa,
-          no alerta. El estado vigente del gravamen se ve en la sección de Gravámenes. */}
+      {/* "Financiera" es señal BLANDA (una entidad financiera/banco aparece en el historial:
+          compra financiada o leasing, muy común). Solo mandamos a «Gravámenes» si ahí HAY algo
+          (carga vigente o levantada); si no, la nota lo aclara para no confundir. */}
       {h.flags.financiera && !hardTxt && (
         <StatusLine tone="neutral" icon="account_balance">
-          Tuvo financiamiento vehicular en su historial (común). Revisa «Gravámenes / prendas» para el estado vigente.
+          {h.flags.gravamen
+            ? 'Aparece una entidad financiera en su historial (compra financiada o leasing). Revisa «Gravámenes / prendas» para el estado vigente de la carga.'
+            : 'Aparece una entidad financiera en su historial (compra financiada o leasing — muy común). No figura una prenda ni garantía registrada en los asientos disponibles.'}
         </StatusLine>
       )}
       {events.length > 0 ? (
