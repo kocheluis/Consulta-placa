@@ -100,6 +100,20 @@ export interface PapeletaItem {
   status: string;
 }
 
+/** Detalle de una papeleta concreta del portal (SAT Lima), tal como la lista el resultado. */
+export interface PapeletaDetalle {
+  /** N° de papeleta/documento. */
+  numero: string | null;
+  /** Fecha de la infracción (dd/mm/aaaa). */
+  fecha: string | null;
+  /** Código/descripción de la falta (p. ej. "M27"). */
+  infraccion: string | null;
+  /** Importe de la papeleta (S/). */
+  monto: number | null;
+  /** Estado (Pendiente, En cobranza coactiva, etc.), si el portal lo indica. */
+  estado: string | null;
+}
+
 /** Payload de la sección PAPELETAS (SAT municipal + SUTRAN cinemómetro). */
 export interface PapeletasPayload {
   /** N° de "conceptos" (una entrada por jurisdicción con papeletas). Gate de "sin papeletas". */
@@ -108,6 +122,9 @@ export interface PapeletasPayload {
   count?: number;
   pendingAmount: number;
   items: PapeletaItem[];
+  /** Detalle de papeletas individuales de SAT Lima (número, fecha, falta, importe), si el portal
+   *  las listó y el parser las reconoció. Vacío/ausente → la web cae al conteo + total. */
+  detalle?: PapeletaDetalle[];
   /** Jurisdicciones efectivamente consultadas (p. ej. ["Lima (SAT)", "Callao"]). */
   checkedScopes?: string[];
   /** Monto con beneficio de pronto pago (descuento) si el portal lo ofrece. */
@@ -231,18 +248,29 @@ export interface GravamenesPayload {
   items: GravamenItem[];
 }
 
-/** Un evento del historial registral (un asiento de SPRL/Síguelo). */
+/** Una acción/acto individual dentro de un asiento registral. */
+export interface HistorialAccion {
+  /** Acto registral: "Compra-Venta", "Cancelación de Afectación", etc. */
+  act: string | null;
+  /** Precio/monto declarado del acto (texto, p. ej. "US$ 16,000.00"). */
+  price: string | null;
+  /** Partes intervinientes (comprador/vendedor, o deudor/acreedor), texto. */
+  parties: string | null;
+}
+
+/**
+ * Un evento del historial = UN asiento registral (SPRL/Síguelo), agrupado por su número de título.
+ * Un asiento puede registrar VARIAS acciones (p. ej. dos compra-ventas en tracto sucesivo, o una
+ * cancelación + una compra-venta): se listan en `acciones`, con sus montos POR SEPARADO — nunca se
+ * suman ni se cuentan como asientos distintos.
+ */
 export interface HistorialEvent {
   /** Fecha de presentación o del asiento (texto, formato dd/mm/aaaa). */
   date: string | null;
-  /** Acto registral: "Compraventa", "Garantía mobiliaria", etc. */
-  act: string | null;
-  /** N° de título (AAAA-NNNNNN). */
+  /** N° de título/asiento (AAAA-NNNNNN). */
   title: string | null;
-  /** Precio declarado del acto (texto, p. ej. "US$ 12,000.00"). */
-  price: string | null;
-  /** Partes intervinientes (comprador/vendedor), texto. */
-  parties: string | null;
+  /** Acciones registradas en este asiento (≥1). */
+  acciones: HistorialAccion[];
 }
 
 /**

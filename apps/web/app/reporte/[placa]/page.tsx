@@ -1047,6 +1047,26 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
         </StatusLine>
       ) : null}
       <DefGrid items={p.items.map((it) => [it.entity, it.amount > 0 ? `S/ ${it.amount.toFixed(2)}` : 'Pendiente (revisar en el portal)'] as [string, string])} />
+      {p.detalle && p.detalle.length > 0 && (
+        <ol className="flex flex-col gap-2">
+          {p.detalle.map((d, i) => (
+            <li key={i} className="rounded-lg border border-border bg-surface p-2.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="font-body text-[13px] font-semibold text-foreground">
+                  {d.infraccion ? `Falta ${d.infraccion}` : 'Papeleta'}{d.numero ? ` · ${d.numero}` : ''}
+                </span>
+                {d.monto != null && d.monto > 0 && <span className="font-mono text-[13px] text-foreground">S/ {d.monto.toFixed(2)}</span>}
+              </div>
+              {(d.fecha || d.estado) && (
+                <div className="mt-0.5 flex flex-wrap gap-x-3 font-body text-[12px] text-muted">
+                  {d.fecha && <span>{d.fecha}</span>}
+                  {d.estado && <span className="capitalize">{d.estado}</span>}
+                </div>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
     </div>
   );
 }
@@ -1282,25 +1302,37 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
       )}
       {events.length > 0 ? (
         <ol className="flex flex-col gap-2.5">
-          {events.slice(0, MAX).map((e, i) => (
-            <li key={i} className="rounded-lg border border-border bg-surface p-3">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-body text-[14px] font-semibold text-foreground">{e.act || 'Asiento registral'}</span>
-                {e.date && <span className="font-mono text-[12px] text-muted">{e.date}</span>}
-              </div>
-              {(e.price || e.parties || e.title) && (
-                <div className="mt-1 flex flex-col gap-0.5">
-                  {e.price && (
-                    <span className="font-body text-[13px] text-foreground">
-                      Precio: <strong>{e.price}</strong>
-                    </span>
-                  )}
-                  {e.parties && <span className="font-body text-[13px] text-muted">{e.parties}</span>}
+          {events.slice(0, MAX).map((e, i) => {
+            // Un asiento puede tener varias acciones (2 compra-ventas en tracto sucesivo, o
+            // cancelación + compra-venta): se listan por separado, sin sumar montos. Si todas
+            // comparten acto, se rotula una vez; si son distintas, cada bloque nombra el suyo.
+            const acciones = e.acciones ?? [];
+            const actos = [...new Set(acciones.map((a) => a.act).filter(Boolean))];
+            const multi = acciones.length > 1;
+            const header = actos.length === 1 ? actos[0] : actos.length > 1 ? `${acciones.length} actos en el asiento` : 'Asiento registral';
+            return (
+              <li key={i} className="rounded-lg border border-border bg-surface p-3">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-body text-[14px] font-semibold text-foreground">{header}</span>
+                  {e.date && <span className="font-mono text-[12px] text-muted">{e.date}</span>}
+                </div>
+                <div className="mt-1 flex flex-col gap-2">
+                  {acciones.map((a, j) => (
+                    <div key={j} className={multi ? 'border-l-2 border-border pl-2.5' : 'flex flex-col gap-0.5'}>
+                      {multi && a.act && <span className="font-body text-[13px] font-semibold text-foreground">{a.act}</span>}
+                      {a.price && (
+                        <span className="font-body text-[13px] text-foreground">
+                          Precio: <strong>{a.price}</strong>
+                        </span>
+                      )}
+                      {a.parties && <span className="font-body text-[13px] text-muted">{a.parties}</span>}
+                    </div>
+                  ))}
                   {e.title && <span className="font-mono text-[11px] text-slate-400">{e.title}</span>}
                 </div>
-              )}
-            </li>
-          ))}
+              </li>
+            );
+          })}
         </ol>
       ) : (
         <p className="font-body text-sm text-muted">Sin asientos detallados disponibles.</p>

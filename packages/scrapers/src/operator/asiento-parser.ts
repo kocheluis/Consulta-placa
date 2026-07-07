@@ -212,6 +212,48 @@ export function parseAsientos(fullText: string): AsientoRecord[] {
   return splitAsientos(fullText).map(parseAsiento).filter((r) => Boolean(r.titulo) || Boolean(r.acto));
 }
 
+/** Una acción/acto individual dentro de un asiento. */
+export interface AsientoAccion { acto: string; precio: string; montoPagado: string; participantes: string }
+/** Un asiento registral (agrupado por su número de título AAAA-NNNNNN) con TODAS sus acciones. */
+export interface AsientoGrupo {
+  titulo: string | null;
+  fechaPresentacion: string;
+  fechaAsiento: string;
+  acciones: AsientoAccion[];
+  flags: AsientoFlags;
+}
+
+/**
+ * Agrupa los registros por NÚMERO DE ASIENTO (título). Un mismo asiento puede registrar VARIAS
+ * acciones que `parseAsientos` devuelve sueltas: dos compra-ventas en tracto sucesivo (CDK293,
+ * título 2024-02723258) o una cancelación + una compra-venta (CHP605, 2025-00280600). Aquí se
+ * colapsan en UN grupo (= un asiento), conservando el orden de aparición y OR-eando las banderas.
+ *
+ * Regla del reporte: se cuentan ASIENTOS, no acciones; los montos de un mismo asiento se muestran
+ * POR SEPARADO (nunca se suman — no se asume que dos compra-ventas sean una sola operación).
+ */
+export function agruparAsientos(records: AsientoRecord[]): AsientoGrupo[] {
+  const grupos: AsientoGrupo[] = [];
+  const porTitulo = new Map<string, AsientoGrupo>();
+  records.forEach((r, i) => {
+    const key = r.titulo ?? `__sin_titulo_${i}`; // sin título → cada uno su propio grupo
+    let g = porTitulo.get(key);
+    if (!g) {
+      g = {
+        titulo: r.titulo, fechaPresentacion: r.fechaPresentacion, fechaAsiento: r.fechaAsiento,
+        acciones: [], flags: { aseguradora: false, remate: false, financiera: false, gravamen: false, embargo: false },
+      };
+      porTitulo.set(key, g);
+      grupos.push(g);
+    }
+    g.acciones.push({ acto: r.acto, precio: r.precio, montoPagado: r.montoPagado, participantes: r.participantes });
+    (Object.keys(g.flags) as Array<keyof AsientoFlags>).forEach((k) => { if (r.flags?.[k]) g!.flags[k] = true; });
+    if (!g.fechaPresentacion && r.fechaPresentacion) g.fechaPresentacion = r.fechaPresentacion;
+    if (!g.fechaAsiento && r.fechaAsiento) g.fechaAsiento = r.fechaAsiento;
+  });
+  return grupos;
+}
+
 /** dd/mm/aaaa[ hh:mm:ss] → epoch ms (para ordenar). */
 function fechaMs(f: string): number {
   const m = f.match(/(\d{2})\/(\d{2})\/(\d{4})/);

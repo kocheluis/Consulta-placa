@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import type { Page, Frame, Locator } from 'playwright';
 import type { CaptchaSolver } from '../captcha/index.js';
+import type { PapeletaDetalle } from '@app/shared';
 
 /** Resultado uniforme por fuente para la consola del operador. */
 export type OperatorStatus = 'ENCONTRADO' | 'SIN_REGISTRO' | 'ERROR' | 'REQUIERE_DNI';
@@ -460,9 +461,19 @@ export async function runSatPapeletas(
       return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas pendientes en Lima', screenshot: shot, ms: Date.now() - t0 };
     }
     if (/papeleta|infracci[oó]n|S\/\s*[0-9]/i.test(body)) {
-      const { montoTotal, count } = parseSatPapeletasMontos(body);
+      const detalle = parseSatPapeletasItems(body);
+      const { montoTotal: montoRx, count: countRx } = parseSatPapeletasMontos(body);
+      // Prefiere la suma de los importes por papeleta (más fiable que sumar todo "S/ n" del texto,
+      // que incluye descuentos/totales). Si el detalle no calzó, cae al regex antiguo.
+      const montoItems = Math.round(detalle.reduce((a, d) => a + (d.monto ?? 0), 0) * 100) / 100;
+      const montoTotal = montoItems > 0 ? montoItems : montoRx;
+      const count = detalle.length || countRx;
+      // SAT_DEBUG=1 → vuelca el HTML real del resultado (para fijar el parser de filas como fixture).
+      if (process.env.SAT_DEBUG) {
+        try { const { writeFileSync } = await import('node:fs'); writeFileSync(`sat-result-${plate}.html`, await resultFrame.content(), 'utf8'); } catch { /* noop */ }
+      }
       const montoTxt = montoTotal > 0 ? ` · S/ ${montoTotal.toFixed(2)}` : '';
-      return { ...base, status: 'ENCONTRADO', summary: `Papeletas pendientes en Lima${count ? ` (${count})` : ''}${montoTxt}`, data: { montoTotal, count, texto: body.slice(0, 800) }, screenshot: shot, ms: Date.now() - t0 };
+      return { ...base, status: 'ENCONTRADO', summary: `Papeletas pendientes en Lima${count ? ` (${count})` : ''}${montoTxt}`, data: { montoTotal, count, detalle, texto: body.slice(0, 6000) }, screenshot: shot, ms: Date.now() - t0 };
     }
     return { ...base, status: 'ERROR', summary: 'Respuesta no reconocida', screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
@@ -591,4 +602,30 @@ function parseSatPapeletasMontos(body: string): { montoTotal: number; count: num
   const montos = [...body.matchAll(/S\/\.?\s*([0-9][0-9.,]*)/gi)].map((m) => toNum(m[1] ?? '')).filter((n) => n > 0);
   if (total) return { montoTotal: round2(toNum(total[1] ?? '')), count: montos.length };
   return { montoTotal: round2(montos.reduce((a, b) => a + b, 0)), count: montos.length };
+}
+
+/**
+ * Extrae papeletas INDIVIDUALES del texto del resultado de SAT Lima (best-effort). El grid del
+ * portal (`innerText`) aplana cada papeleta en una fila; se anclan las filas que tengan A LA VEZ
+ * una fecha (dd/mm/aaaa) y un importe "S/ n" — así se descartan cabeceras, totales y textos sueltos
+ * (p. ej. "Fecha de consulta: 23/06/2026" no trae importe → se ignora). De cada fila se captura n°,
+ * código de falta y estado si aparecen. Si el formato no calza devuelve [] (no inventa filas: el
+ * reporte cae al conteo + total). Pendiente fijarlo con una captura real CON papeletas (SAT_DEBUG=1).
+ */
+export function parseSatPapeletasItems(bodyRaw: string): PapeletaDetalle[] {
+  const toNum = (s: string): number => Math.round((parseFloat(s.replace(/,/g, '')) || 0) * 100) / 100;
+  const rows: PapeletaDetalle[] = [];
+  for (const raw of bodyRaw.split(/\r?\n+/)) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    const fecha = line.match(/\b(\d{2}\/\d{2}\/\d{4})\b/)?.[1] ?? null;
+    const montoM = line.match(/S\/\.?\s*([0-9][0-9.,]*)/i);
+    if (!fecha || !montoM) continue;
+    const monto = toNum(montoM[1] ?? '');
+    if (monto <= 0) continue;
+    const numero = line.match(/\b(\d{7,})\b/)?.[1] ?? line.match(/\b([A-Z]{1,3}[-\s]?\d{4,})\b/)?.[1] ?? null;
+    const infraccion = line.match(/\b([A-Z]\.?\d{1,3}[A-Za-z]?)\b/)?.[1] ?? null;
+    const estado = line.match(/\b(pendiente|en cobranza coactiva|cobranza|coactiv\w*|firme|reclam\w*|impugn\w*)\b/i)?.[1] ?? null;
+    rows.push({ numero, fecha, infraccion, monto, estado });
+  }
+  return rows;
 }

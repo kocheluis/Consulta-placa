@@ -78,10 +78,12 @@ function buildSummary(report: Report): Record<string, unknown> {
   const gravItems = ((grav.items ?? []) as Array<Record<string, unknown>>).map((it) => ({
     tipo: it.type, acreedor: it.creditor, monto: it.amount, estado: it.status, fecha: it.date,
   }));
-  // Historial SIN participantes (nombres/DNI): solo acto, fecha y precio declarado.
-  const eventos = ((hist.events ?? []) as Array<Record<string, unknown>>).map((e) => ({
-    fecha: e.date, acto: e.act, precio: e.price,
-  }));
+  // Historial SIN participantes (nombres/DNI): solo acto, fecha y precio declarado. Cada asiento
+  // puede traer varias acciones (tracto sucesivo / cancelación + compra-venta): se aplanan, con la
+  // fecha del asiento, para que la IA vea cada precio por separado (nunca sumados).
+  const eventos = ((hist.events ?? []) as Array<{ date?: unknown; acciones?: Array<Record<string, unknown>> }>).flatMap((e) =>
+    (e.acciones ?? []).map((a) => ({ fecha: e.date, acto: a.act, precio: a.price })),
+  );
 
   return {
     vehiculo: v ? { marca: v.brand, modelo: v.model, anio: v.year, color: v.color, placa: v.plateDisplay, alertaRobo: v.stolenAlert } : null,

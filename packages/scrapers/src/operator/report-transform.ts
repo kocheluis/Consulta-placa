@@ -11,6 +11,7 @@ import {
   type RevisionTecnica,
   type PapeletasPayload,
   type PapeletaItem,
+  type PapeletaDetalle,
   type GravamenesPayload,
   type GravamenItem,
   type HistorialPayload,
@@ -20,6 +21,7 @@ import {
   type VehicleSpecs,
 } from '@app/shared';
 import type { OperatorSourceResult } from './index.js';
+import { agruparAsientos, type AsientoRecord } from './asiento-parser.js';
 
 /**
  * Transforma los resultados crudos del motor del operador (por fuente) al `Report`
@@ -187,6 +189,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const items: PapeletaItem[] = [];
     const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
     const limaCount = satP?.status === 'ENCONTRADO' ? num(data(satP).count) : 0;
+    const limaDetalle = satP?.status === 'ENCONTRADO' ? ((data(satP).detalle as PapeletaDetalle[] | undefined) ?? []) : [];
     if (satP?.status === 'ENCONTRADO') items.push({ type: `Infracciones Lima${limaCount ? ` (${limaCount})` : ''}`, entity: 'SAT Lima', date: null, amount: limaAmt, status: 'PENDIENTE' });
     const callaoAmt = callao?.status === 'ENCONTRADO' ? num(data(callao).total) : 0;
     const callaoCount = callao?.status === 'ENCONTRADO' ? num(data(callao).count) : 0;
@@ -207,6 +210,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       ...(papeletaCount > 0 ? { count: papeletaCount } : {}),
       pendingAmount: Math.round((limaAmt + callaoAmt) * 100) / 100,
       items, checkedScopes,
+      ...(limaDetalle.length ? { detalle: limaDetalle } : {}),
       ...(benefitAmount > 0 ? { benefitAmount, benefitUntil } : {}),
     };
     src.push({ kind: SectionKind.PAPELETAS, source: SourceId.SAT, status: anyOk ? SectionStatus.AVAILABLE : SectionStatus.UNAVAILABLE, fetchedAt: at, payload: pay });
@@ -301,18 +305,27 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     };
     src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: grav });
     const titulos = (hd.titulos ?? []) as unknown[];
-    const events: HistorialEvent[] = timeline.map((a) => ({
-      date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
-      act: clip(a.acto, 80),
-      title: (a.titulo as string) ?? null,
-      price: clip(a.precio ?? a.montoPagado, 40),
-      parties: clip(a.participantes, 140),
+    // Un mismo asiento (título AAAA-NNNNNN) puede traer VARIAS acciones (dos compra-ventas en
+    // tracto sucesivo, o cancelación + compra-venta). Se agrupan por asiento: el reporte cuenta
+    // ASIENTOS, no acciones, y muestra los montos por separado (nunca los suma). Ver CDK293.
+    const grupos = agruparAsientos(timeline as unknown as AsientoRecord[]);
+    const events: HistorialEvent[] = grupos.map((g) => ({
+      date: g.fechaPresentacion || g.fechaAsiento || null,
+      title: g.titulo,
+      acciones: g.acciones.map((a) => ({
+        act: clip(a.acto, 80),
+        price: clip(a.precio || a.montoPagado, 40),
+        parties: clip(a.participantes, 140),
+      })),
     }));
-    // Transferencias de dominio = compraventas + adjudicaciones (el acto ya viene normalizado
-    // como "Compra-Venta"; la primera inscripción es el origen, no cuenta como transferencia).
-    const transfers = timeline.filter((a) => /compra\s*-?\s*venta|adjudicaci[oó]n/i.test(String(a.acto ?? ''))).length;
+    // Transferencias de dominio = compraventas + adjudicaciones (cuenta ACCIONES: un asiento en
+    // tracto sucesivo transfiere el dominio más de una vez). La primera inscripción es el origen.
+    const transfers = grupos.reduce(
+      (n, g) => n + g.acciones.filter((a) => /compra\s*-?\s*venta|adjudicaci[oó]n/i.test(String(a.acto ?? ''))).length,
+      0,
+    );
     const histPay: HistorialPayload = {
-      totalAsientos: timeline.length,
+      totalAsientos: grupos.length,
       totalTitulos: titulos.length,
       transfers,
       flags: { aseguradora: Boolean(histFlags.aseguradora), remate: Boolean(histFlags.remate), financiera: Boolean(histFlags.financiera), gravamen: (grav.total ?? 0) > 0 },

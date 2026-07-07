@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseCaracteristicas, parseAsiento, parseAsientos, splitAsientos, normalizeActo, construirTimeline } from './asiento-parser.js';
+import { parseCaracteristicas, parseAsiento, parseAsientos, splitAsientos, normalizeActo, construirTimeline, agruparAsientos } from './asiento-parser.js';
 
 /**
  * Textos REALES capturados de los asientos de ADY067 (SIGUELO_DEBUG=1), tal como los aplana
@@ -175,5 +175,86 @@ describe('parseAsientos (multi-acto + normalización, datos CHP605)', () => {
     expect(normalizeActo('Compra - Venta')).toBe('Compra-Venta');
     expect(normalizeActo('Cancelacion de Afectacion')).toBe('Cancelación de Afectación');
     expect(normalizeActo('Constitucion Garantia Mobiliaria')).toBe('Constitución Garantía Mobiliaria');
+  });
+});
+
+// ── Datos REALES de CDK293 (SIGUELO_DEBUG): 3 asientos, pero el título 2024-02723258 trae DOS
+// compra-ventas en tracto sucesivo (ZEVALLOS → ROMERO). Blindan: (1) NO contar ese asiento como
+// dos (son 3 asientos, no 4), (2) NO sumar los montos (US$16k y US$17k van por separado),
+// (3) agruparlos en UN asiento con ambas acciones. Ver `agruparAsientos`.
+const CDK_1549906 = // 2025-01549906 · Compra-Venta (asiento simple, 1 acción)
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Transferencia de Propiedad 2025 - 01549906 Título Nro Partida 54901940 Placa : CDK293 ' +
+  'PERSONA NATURAL MAUCAYLLA MAMANI NOE JAK DNI 41097147 Soltero ' +
+  'Acto Compra - Venta Precio US$ 7,000.00 Monto Pagado US$ 7,000.00 Forma de Pago DEPOSITO A LA CUENTA DE AHORROS ' +
+  'Documento: Acta Notarial Funcionario: Notario - MENDOZA VASQUEZ, ENRIQUE Fecha: 23/05/2025 ' +
+  'Título 2025-1549906 Fecha 27/05/2025 15:26:04 Derechos Pagados S/ 96.20 Recibo 2025-1-596572(LIMA) Fecha de Asiento 05/06/2025 - PRESENTACIÓN ELECTRÓNICA';
+
+const CDK_2723258 = // 2024-02723258 · UN asiento con DOS compra-ventas (tracto sucesivo). NO son 2 asientos.
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Transferencia de Propiedad 2024 - 02723258 Título Nro Partida 54901940 Placa : CDK293 ' +
+  'PERSONA NATURAL ZEVALLOS SOTO STEVEN ALEX DNI 43403766 Casado ' +
+  'Acto Compra - Venta Precio US$ 16,000.00 Forma de Pago AL CONTADO ' +
+  'Documento: Acta de Transferencia Funcionario: Notario - MEDINA RAGGIO, FERNANDO MARIO Fecha: 27/08/2024 ' +
+  'Título 2024-2723258 Fecha 17/09/2024 16:39:42 Derechos Pagados S/ 185.20 Recibo 2024-1-1026764(LIMA) Fecha de Asiento 20/09/2024 - PRESENTACIÓN ELECTRÓNICA ' +
+  'ỹ Transferencia de Propiedad 2024 - 02723258 Título Nro Partida 54901940 Placa : CDK293 ' +
+  'PERSONA NATURAL ROMERO SANCHEZ WILLY JHONATAN DNI 48728641 Soltero ' +
+  'Acto Compra - Venta Precio US$ 17,000.00 Forma de Pago AL CONTADO ' +
+  'Documento: Acta de Transferencia Funcionario: Notario - MEDINA RAGGIO, FERNANDO MARIO Fecha: 13/09/2024 ' +
+  'Título 2024-2723258 Fecha 17/09/2024 16:39:42 Derechos Pagados S/ 185.20 Recibo 2024-1-1026764(LIMA) Fecha de Asiento 20/09/2024 - PRESENTACIÓN ELECTRÓNICA';
+
+const CDK_170786 = // 2023-00170786 · Primera Inscripción de Dominio (trae ficha técnica)
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Inscripción de Vehículo 2023 - 00170786 Título Nro Partida 54901940 Placa : CDK293 ' +
+  'PERSONA NATURAL CHAVEZ RAMIREZ CINTHYA LESLIE DNI 42028316 Casado SEPARACION DE PATRIMONIO. PARTIDA REGISTRAL: 13895386 ' +
+  'Acto Primera Inscripción de Dominio Precio US$ 31,790.00 Forma de Pago CONTADO ' +
+  'DUA 118 2022 10 507334 1 Tipo de Uso Vehiculos Particulares (Categoria M) Categoria M1 Nro. VIN KMHLR41FGPU460603 ' +
+  'Nro. Serie KMHLR41FGPU460603 Nro. Motor G4FPNU342867 Marca HYUNDAI Modelo NEW ELANTRA Año Modelo 2023 Nro. Versión GLS ' +
+  'Color NEGRO Tipo Carrocería SEDAN Nro. Ruedas 4 Nro. Ejes 2 Fórmula Rodante 4X2 Potencia Motor 150@6300 ' +
+  'Tipo Combustible GASOLINA Nro. Cilindros 4 Cilindrada 1.598 L Longitud 4.675 mt Ancho 1.825 mt Altura 1.43 mt ' +
+  'Nro. Asientos 5 Nro. Pasajeros 4 Peso Bruto 1.850 tn Peso Neto 1.330 tn Carga Util 0.520 tn ' +
+  'Documento: Boleta de Venta Funcionario: Persona Jurídica - MAQUINARIA NACIONAL SA PERU Fecha: 17/12/2022 ' +
+  'Título 2023-170786 Fecha 17/01/2023 14:42:23 Monto Cobrado S/ 89.00 Recibo 2023-206-3811(LIMA) Fecha Asiento 20/01/2023';
+
+describe('agruparAsientos (un asiento = un título, con N acciones)', () => {
+  it('el título con 2 compra-ventas es UN asiento con 2 acciones (no 2 asientos)', () => {
+    const grupos = agruparAsientos(parseAsientos(CDK_2723258));
+    expect(grupos).toHaveLength(1);
+    expect(grupos[0]?.titulo).toBe('2024-2723258');
+    expect(grupos[0]?.acciones).toHaveLength(2);
+    // Los montos van POR SEPARADO — nunca sumados (no US$ 33,000).
+    expect(grupos[0]?.acciones.map((a) => a.precio)).toEqual(['US$ 16,000.00', 'US$ 17,000.00']);
+    expect(grupos[0]?.acciones[0]?.participantes).toContain('ZEVALLOS SOTO');
+    expect(grupos[0]?.acciones[1]?.participantes).toContain('ROMERO SANCHEZ');
+    expect(grupos[0]?.acciones.every((a) => a.acto === 'Compra-Venta')).toBe(true);
+  });
+
+  it('CDK293 completa: 3 asientos (no 4) y 3 transferencias de dominio', () => {
+    const recs = [...parseAsientos(CDK_1549906), ...parseAsientos(CDK_2723258), ...parseAsientos(CDK_170786)];
+    const grupos = agruparAsientos(construirTimeline(recs));
+    expect(grupos).toHaveLength(3); // ← el fix: antes contaba 4 (partía el tracto sucesivo)
+    const transfers = grupos.reduce(
+      (n, g) => n + g.acciones.filter((a) => /compra\s*-?\s*venta|adjudicaci[oó]n/i.test(a.acto)).length, 0,
+    );
+    expect(transfers).toBe(3); // 3 compra-ventas (7k + 16k + 17k); la 1ª inscripción no cuenta
+    // La ficha técnica del vehículo sale de la Primera Inscripción.
+    const conFicha = recs.find((r) => r.caracteristicas);
+    expect(conFicha?.caracteristicas?.version).toBe('GLS');
+    expect(conFicha?.caracteristicas?.bodywork).toBe('SEDAN');
+  });
+
+  it('CHP605: cancelación + compra-venta en el mismo asiento → 1 grupo, 2 acciones', () => {
+    const grupos = agruparAsientos(parseAsientos(CHP_280600));
+    expect(grupos).toHaveLength(1);
+    expect(grupos[0]?.acciones).toHaveLength(2);
+    expect(grupos[0]?.acciones.map((a) => a.acto)).toEqual(['Compra-Venta', 'Cancelación de Afectación']);
+    expect(grupos[0]?.flags.embargo).toBe(true); // OR de las banderas de sus acciones
+  });
+
+  it('asientos con títulos distintos NO se agrupan (un grupo por título)', () => {
+    const grupos = agruparAsientos([...parseAsientos(CDK_1549906), ...parseAsientos(CDK_170786)]);
+    expect(grupos).toHaveLength(2);
+    expect(grupos.map((g) => g.acciones.length)).toEqual([1, 1]);
   });
 });
