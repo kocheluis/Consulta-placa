@@ -158,7 +158,6 @@ describe('parseAsientos (multi-acto + normalización, datos CHP605)', () => {
   it('la garantía usa el NOMBRE COMPLETO del acto (no "constitutivo")', () => {
     const r = parseAsiento(CHP_GARANTIA);
     expect(r.acto).toBe('Constitución Garantía Mobiliaria y Otros Actos');
-    expect(r.acto).not.toMatch(/constitutivo/i);
     expect(r.flags.gravamen).toBe(true);
     expect(r.flags.financiera).toBe(true); // EMPRESA DE CRÉDITOS SANTANDER
     expect(r.participantes).toContain('Deudor: YENYERE');
@@ -256,5 +255,28 @@ describe('agruparAsientos (un asiento = un título, con N acciones)', () => {
     const grupos = agruparAsientos([...parseAsientos(CDK_1549906), ...parseAsientos(CDK_170786)]);
     expect(grupos).toHaveLength(2);
     expect(grupos.map((g) => g.acciones.length)).toEqual([1, 1]);
+  });
+});
+
+// Caso REAL de BHC294 (batch de tipificación): el asiento de garantía 2018-02919994 degradó a
+// BINARIO en pdfBytesToText → el acto salía con 10 KB de basura. El parser debe emitir un
+// registro "no legible" limpio, conservando el título (para no perder el conteo del asiento).
+const ASIENTO_BINARIO =
+  'Uz' + String.fromCharCode(...Array.from({ length: 200 }, (_, i) => 192 + (i % 63))) +
+  ' 2018 - 02919994 Titulo Nro Partida ' + String.fromCharCode(...Array.from({ length: 160 }, () => 0));
+
+describe('parseAsiento — asiento binario/ilegible (robustez, caso BHC294)', () => {
+  it('emite "Asiento no legible" en vez de volcar la basura binaria', () => {
+    const r = parseAsiento(ASIENTO_BINARIO);
+    expect(r.acto).toBe('Asiento no legible');
+    expect(r.tipo).toBe('Asiento no legible');
+    expect(r.titulo).toBe('2018-2919994'); // el título SÍ se conserva → no se pierde el asiento
+    expect(r.flags.gravamen).toBe(false); // no marca banderas sobre bytes al azar
+    expect(r.caracteristicas).toBeNull();
+  });
+
+  it('un asiento normal NO se marca como ilegible', () => {
+    expect(parseAsiento(CDK_1549906).acto).toBe('Compra-Venta');
+    expect(parseAsiento(CHP_GARANTIA).acto).toBe('Constitución Garantía Mobiliaria y Otros Actos');
   });
 });

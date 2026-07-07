@@ -131,11 +131,23 @@ const ACENTOS: Array<[RegExp, string]> = [
 ];
 /** Normaliza el nombre de un acto/tipo: colapsa espacios y guiones bajos, corrige tildes y "Compra - Venta". */
 export function normalizeActo(s: string): string {
-  let out = (s || '').replace(/_{2,}/g, ' ').replace(/\s+/g, ' ').trim();
+  // Quita caracteres NO imprimibles (basura de streams del PDF que se cuela entre bloques):
+  // deja ASCII imprimible + letras latinas con tilde ( -ɏ). Evita que un acto arrastre bytes binarios.
+  let out = (s || '').replace(/[^\t\n\r\x20-\x7E -ɏ]/g, ' ').replace(/_{2,}/g, ' ').replace(/\s+/g, ' ').trim();
   out = out.replace(/\bCompra\s*-\s*Venta\b/gi, 'Compra-Venta');
   for (const [re, to] of ACENTOS) out = out.replace(re, to);
   return out.replace(/\s*\.\s*$/, '').trim();
 }
+
+/** Proporción de caracteres imprimibles ASCII — detecta el texto de un asiento que quedó BINARIO
+ *  (el PDF trae streams que `pdfBytesToText` no supo inflar/extraer → sale ilegible). */
+function printableRatio(s: string): number {
+  if (!s) return 1;
+  return (s.match(/[\t\n\r\x20-\x7E]/g)?.length ?? 0) / s.length;
+}
+
+/** Acto/tipo placeholder cuando el asiento no se pudo leer (PDF binario). */
+const NO_LEGIBLE = 'Asiento no legible';
 
 /**
  * Un título de Síguelo puede traer VARIOS asientos en el mismo PDF (p. ej. Compra-Venta +
@@ -164,6 +176,18 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   const tituloM = text.match(/\b(20\d{2})\s*-\s*0*(\d{4,8})\b/);
   const anio = tituloM?.[1] ?? null;
   const numero = tituloM?.[2] ?? null;
+  // Si el asiento degradó a BINARIO (PDF con streams que pdfBytesToText no supo extraer), NO se
+  // vuelca la basura como acto: se emite un registro "no legible" conservando el título/número
+  // (para no perder el conteo del asiento ni marcar banderas falsas sobre bytes al azar).
+  if (printableRatio(text) < 0.6) {
+    return {
+      tipo: NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null,
+      partida: '', placa: '', acto: NO_LEGIBLE, precio: '', montoPagado: '', formaPago: '',
+      fechaPresentacion: '', fechaAsiento: '', participantes: '', documentos: [],
+      flags: { aseguradora: false, remate: false, financiera: false, gravamen: false, embargo: false },
+      caracteristicas: null,
+    };
+  }
   // tipo = cabecera del asiento (lo que va ANTES de "AAAA - NNNN Título Nro Partida").
   const tipoRaw = text.match(/^\s*(.*?)\s+20\d{2}\s*-\s*0*\d{4,8}\s+T[íi]tulo\s+Nro\s+Partida/)?.[1]
     ?? text.split(/\s+20\d{2}\s*-\s*\d/)[0] ?? '';
