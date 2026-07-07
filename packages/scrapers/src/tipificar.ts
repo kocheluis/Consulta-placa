@@ -29,6 +29,14 @@ const RX_GARANT = /garant[ií]a mobiliaria|prenda|hipoteca|gravamen/i;
 const RX_REMATE = /remate|subasta|adjudicaci[oó]n|daci[oó]n en pago/i;
 const RX_CV = /compra\s*-?\s*venta/i;
 
+/** Acto BASE = el nombre del acto sin su "Observación/detalle" (para tipificar la casuística). */
+function baseActo(a: string): string {
+  let s = a.split(/\s+Observaci[oó]n\b/i)[0]!;                 // "... Observación ..." → detalle
+  s = s.replace(/(?<!\bNo)(?<!\bNro)\.\s+.*$/i, '');           // ". Detalle" (protege No./Nro.)
+  s = s.replace(/\s+[-–]?\s*[A-ZÑÁÉÍÓÚ0-9][A-ZÑÁÉÍÓÚ0-9 .,/()°#'"%$:–-]{16,}$/, ''); // detalle EN MAYÚSCULAS
+  return s.replace(/[.\s–-]+$/, '').trim() || a.slice(0, 40);
+}
+
 const L: string[] = [];
 const p = (s = ''): void => { L.push(s); };
 
@@ -70,7 +78,14 @@ for (const r of ok) {
     if (!vistos.has(a.acto)) { vistos.add(a.acto); (actoPlacas.get(a.acto) ?? actoPlacas.set(a.acto, []).get(a.acto)!).push(r.plate); }
   }
 }
-p(`## Actos distintos (${actoFreq.size}) — frecuencia`);
+// Actos BASE (sin observación) — la taxonomía real de casuísticas.
+const baseFreq = new Map<string, number>();
+for (const [k, n] of actoFreq) inc(baseFreq, baseActo(k), n);
+p(`## Actos BASE (${baseFreq.size}) — casuísticas (nº de apariciones)`);
+for (const [k, n] of sortDesc(baseFreq)) p(`- ${n}× ${k}`);
+p();
+
+p(`## Actos distintos con detalle (${actoFreq.size})`);
 for (const [k, n] of sortDesc(actoFreq)) p(`- ${n}× ${k}`);
 p();
 
