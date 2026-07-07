@@ -36,6 +36,11 @@ export interface HistorialOptions {
   port?: number;
   /** Perfil persistente del Chrome del SPRL (por slot). Default env CDP_SPRL_PROFILE. */
   profile?: string;
+  /** Chrome CDP ya abierto por el CALLER (lo abre y lo cierra él). Si se pasa, esta función NO
+   *  hace spawn ni close → la sesión SPRL queda CALIENTE entre llamadas: un login por cuenta en
+   *  todo un lote, NO uno por placa (el re-login en bucle es lo que dispara el bloqueo por IP).
+   *  Úsalo para procesar muchas placas seguidas con la misma cuenta. */
+  browser?: Browser;
   oficina?: string; // si ya se conoce la sede; si no, se saca de SUNARP
   parallel?: boolean; // opt-in: corre las búsquedas de Síguelo en paralelo (conc. 2)
   log?: (m: string) => void;
@@ -97,10 +102,14 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
 
   // Lanzar el Chrome del SPRL PRIMERO: el re-auth (OAuth) se asienta mientras corre
   // el SUNARP (igual que el probe que funciona) → evita el race de login.
-  let browser: Browser | null = null;
-  log(`Chrome SPRL (CDP :${PORT})…`);
-  const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
-  proc.on('error', (e) => log(`spawn: ${e.message}`));
+  // Si el caller pasó un browser (modo lote), NO se hace spawn ni close: se reusa su sesión.
+  const reuseBrowser = !!opts.browser;
+  let browser: Browser | null = opts.browser ?? null;
+  if (!reuseBrowser) {
+    log(`Chrome SPRL (CDP :${PORT})…`);
+    const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
+    proc.on('error', (e) => log(`spawn: ${e.message}`));
+  }
 
   // ── [1] SUNARP → SEDE en PARALELO ──
   // La sede SOLO la necesita Síguelo (no el SPRL: este busca por placa sin oficina).
@@ -364,6 +373,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   } catch (e) {
     return { ...empty, sede: oficina, vehiculo, error: (e as Error).message };
   } finally {
-    if (browser) await browser.close().catch(() => {});
+    // Solo cerramos lo que abrimos: en modo lote (browser del caller) la sesión queda caliente.
+    if (browser && !reuseBrowser) await browser.close().catch(() => {});
   }
 }
