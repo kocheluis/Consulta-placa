@@ -605,27 +605,34 @@ function parseSatPapeletasMontos(body: string): { montoTotal: number; count: num
 }
 
 /**
- * Extrae papeletas INDIVIDUALES del texto del resultado de SAT Lima (best-effort). El grid del
- * portal (`innerText`) aplana cada papeleta en una fila; se anclan las filas que tengan A LA VEZ
- * una fecha (dd/mm/aaaa) y un importe "S/ n" — así se descartan cabeceras, totales y textos sueltos
- * (p. ej. "Fecha de consulta: 23/06/2026" no trae importe → se ignora). De cada fila se captura n°,
- * código de falta y estado si aparecen. Si el formato no calza devuelve [] (no inventa filas: el
- * reporte cae al conteo + total). Pendiente fijarlo con una captura real CON papeletas (SAT_DEBUG=1).
+ * Extrae papeletas INDIVIDUALES del texto del resultado de SAT Lima. El grid del portal
+ * (`innerText`, con tabs→espacio y filas por salto de línea) tiene las columnas:
+ *   Placa · Reglamento · Falta · N° Documento · Fecha Infracción · Importe · Gastos · Descuento · Deuda · Estado · …
+ * Ej. real (CDK293): `CDK293 RNT M20a E3761377 25/07/2025 990.00 0.00 0.00 990.00 Pendiente …`.
+ * ⚠️ El importe NO trae "S/" (es un decimal pelado). Se ancla cada fila por su **fecha de
+ * infracción** (dd/mm/aaaa) seguida de ≥1 decimal `n.dd`; así se descartan cabeceras y la línea
+ * "Fecha de consulta" (día de 1 dígito / sin importes). N° Documento / Falta / Reglamento salen
+ * de las columnas ANTES de la fecha; el monto es la **Deuda** (4º decimal) o el Importe.
  */
 export function parseSatPapeletasItems(bodyRaw: string): PapeletaDetalle[] {
-  const toNum = (s: string): number => Math.round((parseFloat(s.replace(/,/g, '')) || 0) * 100) / 100;
+  const toNum = (s: string): number => Math.round((parseFloat(String(s).replace(/,/g, '')) || 0) * 100) / 100;
+  const RX_ESTADO = /(en cobranza coactiva|cobranza coactiva|pendiente|coactiv\w*|firme|reclamad\w*|impugnad\w*|fraccionad\w*|pagad\w*)/i;
   const rows: PapeletaDetalle[] = [];
-  for (const raw of bodyRaw.split(/\r?\n+/)) {
+  for (const raw of bodyRaw.split(/\r?\n/)) {
     const line = raw.replace(/\s+/g, ' ').trim();
-    const fecha = line.match(/\b(\d{2}\/\d{2}\/\d{4})\b/)?.[1] ?? null;
-    const montoM = line.match(/S\/\.?\s*([0-9][0-9.,]*)/i);
-    if (!fecha || !montoM) continue;
-    const monto = toNum(montoM[1] ?? '');
-    if (monto <= 0) continue;
-    const numero = line.match(/\b(\d{7,})\b/)?.[1] ?? line.match(/\b([A-Z]{1,3}[-\s]?\d{4,})\b/)?.[1] ?? null;
-    const infraccion = line.match(/\b([A-Z]\.?\d{1,3}[A-Za-z]?)\b/)?.[1] ?? null;
-    const estado = line.match(/\b(pendiente|en cobranza coactiva|cobranza|coactiv\w*|firme|reclam\w*|impugn\w*)\b/i)?.[1] ?? null;
-    rows.push({ numero, fecha, infraccion, monto, estado });
+    const tokens = line.split(' ');
+    const di = tokens.findIndex((t) => /^\d{2}\/\d{2}\/\d{4}$/.test(t)); // fecha de infracción (2 dígitos día)
+    if (di < 1) continue;
+    const decimals = tokens.slice(di + 1).filter((t) => /^\d[\d,]*\.\d{2}$/.test(t)); // Importe·Gastos·Descuento·Deuda
+    if (!decimals.length) continue; // sin importes → cabecera / "Fecha de consulta"
+    const importe = toNum(decimals[0] ?? '0');
+    const deuda = toNum(decimals[3] ?? decimals[decimals.length - 1] ?? decimals[0] ?? '0');
+    const numero = (tokens[di - 1] || '').trim() || null;      // N° Documento (p. ej. E3761377)
+    const falta = (tokens[di - 2] || '').trim() || null;       // código de Falta (M20a)
+    const reglamento = tokens[di - 3] ?? '';                   // RNT, RNTV, etc.
+    const infraccion = [/^[A-ZÑ]{2,6}$/.test(reglamento) ? reglamento : null, falta].filter(Boolean).join(' ') || null;
+    const estado = RX_ESTADO.exec(line)?.[1] ?? null;
+    rows.push({ numero, fecha: tokens[di]!, infraccion, monto: deuda || importe || null, estado });
   }
   return rows;
 }
