@@ -13,7 +13,7 @@
  *   (DNIs con y sin multas) para ver ambos formatos.
  */
 import { chromium } from 'patchright';
-import { writeFileSync, mkdirSync, appendFileSync } from 'node:fs';
+import { writeFileSync, mkdirSync, appendFileSync, copyFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { createInterface } from 'node:readline';
@@ -72,8 +72,9 @@ const ask = (q: string): Promise<string> =>
     const code = (await ask('\n➜ Lee el captcha del PNG y escribe el código (ENTER = usar el de CapSolver): ')) || guess;
     if (!code) { console.log('sin código, salgo'); return; }
     console.log(`Usando código: ${code}`);
-    // Referencia CapSolver-vs-correcto (para tunear el solver).
-    appendFileSync(join(outDir, 'captcha-referencia.csv'), `${new Date().toISOString()};${guess};${code};${guess === code ? 'OK' : 'DIFF'}\n`);
+    // Referencia CapSolver-vs-correcto + set ETIQUETADO (captcha-<código>.png) para tunear el OCR local.
+    appendFileSync(join(outDir, 'captcha-referencia.csv'), `${guess};${code};${guess === code ? 'OK' : 'DIFF'}\n`);
+    if (/^\d{4,6}$/.test(code)) { try { copyFileSync(capPng, join(outDir, `captcha-${code}.png`)); } catch { /* */ } }
 
     await page.locator('#inpcaptcha').click().catch(() => {});
     for (const ch of code) await page.keyboard.type(ch, { delay: rnd(80, 150) });
@@ -84,9 +85,17 @@ const ask = (q: string): Promise<string> =>
     console.log('términos:', await page.locator('#ckbtermino').isChecked().catch(() => false) ? 'marcado ✓' : 'NO');
     captured.length = 0;
     await page.locator('button:has-text("Consultar"), button[type="submit"]').first().click().catch(() => {});
-    await wait(7000);
+    await wait(2500);
+    // Al dar CONSULTAR aparece el modal de Términos y Condiciones → hay que "Aceptar" (2 intentos).
+    for (let i = 0; i < 2; i++) {
+      const aceptar = page.locator('button:has-text("Aceptar")').first();
+      if (await aceptar.isVisible().catch(() => false)) { console.log('  · modal T&C → clic Aceptar'); await aceptar.click().catch(() => {}); await wait(2500); }
+    }
+    await page.waitForURL(/multa/i, { timeout: 9000 }).catch(() => {}); // el resultado vive en /multa
+    await wait(3500);
     await page.screenshot({ path: join(outDir, 'manual-02-resultado.png'), fullPage: true }).catch(() => {});
     writeFileSync(join(outDir, 'manual-result.html'), await page.content(), 'utf8');
+    console.log('  · URL final:', page.url());
 
     const resultTxt = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ');
     console.log('\n=== RESULTADO (texto) ===\n', resultTxt.slice(0, 900));
