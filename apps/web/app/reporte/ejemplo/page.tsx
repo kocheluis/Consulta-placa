@@ -15,7 +15,7 @@ type Plan = keyof typeof PLAN_LEVEL;
 const PLANS: { id: Plan; name: string; price: string; blurb: string }[] = [
   { id: 'basic', name: 'Basic', price: 'Gratis', blurb: 'Vista general del vehículo' },
   { id: 'pro', name: 'Pro', price: 'S/ 15.90', blurb: 'Reporte completo de las fuentes + score' },
-  { id: 'ultra', name: 'Ultra', price: 'S/ 19.90', blurb: 'Todo + IA, odómetro y valorización' },
+  { id: 'ultra', name: 'Ultra', price: 'S/ 19.90', blurb: 'Todo + IA y valorización de mercado' },
 ];
 const neededName = (level: number) => (level === 3 ? 'Ultra' : 'Pro');
 
@@ -275,12 +275,12 @@ export default function ReporteEjemploPage() {
             <ReportItem status="success" label="Sin multas electorales del propietario" icon="check_circle" />
           </SectionCard>
 
-          <SectionCard title="Odómetro / kilometraje" icon="speed" level={3} plan={plan} badge={<Badge tone="info" size="sm" icon={null}>Coherente</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="Valorización de mercado" icon="payments" level={3} plan={plan} badge={<Badge tone="info" size="sm" icon={null}>Estimado</Badge>} onUpgrade={setPlan}>
             <div className="flex flex-col gap-1.5">
-              {[['2025', '78,400 km'], ['2024', '61,200 km'], ['2023', '42,900 km'], ['2022', '19,500 km']].map(([y, km]) => (
-                <div key={y} className="flex justify-between text-sm">
-                  <span className="text-muted">{y}</span>
-                  <span className="font-mono font-semibold text-foreground">{km}</span>
+              {[['Uso bajo', 'S/ 56,000 – 62,500'], ['Uso promedio', 'S/ 52,000 – 58,000'], ['Uso alto', 'S/ 47,000 – 52,000']].map(([u, r]) => (
+                <div key={u} className="flex justify-between text-sm">
+                  <span className="text-muted">{u}</span>
+                  <span className="font-mono font-semibold text-foreground">{r}</span>
                 </div>
               ))}
             </div>

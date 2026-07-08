@@ -518,7 +518,7 @@ const TIER_PANEL_META: Record<string, { name: string; short: string; icon: strin
   },
   [ReportTier.ULTRA]: {
     name: 'Reporte Ultra', short: 'Ultra', icon: 'auto_awesome', price: '19.90',
-    desc: 'Todo lo de Pro + valorización de mercado, análisis de odómetro y recomendación con IA.',
+    desc: 'Todo lo de Pro + valorización de mercado y recomendación de compra con IA.',
     accent: 'bg-violet-50 text-violet-700',
   },
 };
@@ -773,7 +773,7 @@ function LockedPaidPanel({
                 </div>
               </div>
               <p className="max-w-md font-body text-[12.5px] leading-snug text-muted">
-                <strong className="text-foreground">Ultra</strong> incluye recomendación de compra con IA, valorización y odómetro.
+                <strong className="text-foreground">Ultra</strong> incluye recomendación de compra con IA y valorización de mercado.
                 Al activar, el reporte se procesa y estará listo en 3 a 10 minutos.
               </p>
             </div>
@@ -794,7 +794,7 @@ function UltraUpsell({ busy, onActivate }: { busy: boolean; onActivate: () => vo
         <Badge tone="info" size="sm" icon={null}>Con IA</Badge>
       </div>
       <p className="mb-3 font-body text-[13px] leading-snug text-muted">
-        Recomendación de compra con IA a partir de todo el reporte, valorización de mercado y análisis de odómetro.
+        Recomendación de compra con IA a partir de todo el reporte y valorización de mercado.
       </p>
       <Button variant="accent" size="md" icon="auto_awesome" onClick={onActivate} disabled={busy}>
         {busy ? 'Procesando…' : 'Activar Ultra · S/ 19.90'}

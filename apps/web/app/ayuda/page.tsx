@@ -18,7 +18,7 @@ const CATS = [
 const FAQS = [
   {
     q: '¿Qué información incluye un reporte?',
-    a: 'Identidad del vehículo, propietarios, SOAT, papeletas, siniestralidad, órdenes de captura, revisión técnica y —en Ultra— gravámenes, odómetro, valorización y análisis con IA. Todo desde +10 fuentes nacionales.',
+    a: 'Identidad del vehículo, propietarios, SOAT, papeletas, siniestralidad, órdenes de captura, revisión técnica y —en Ultra— gravámenes, valorización de mercado y análisis con IA. Todo desde +10 fuentes nacionales.',
   },
   {
     q: '¿De dónde provienen los datos?',

@@ -9,7 +9,7 @@ import { ReportTier, ScoreConcept, SectionKind } from './enums.js';
  * Modelo de niveles (confirmado jun-2026):
  *  - BASIC  (gratis): SUNARP Consulta Vehicular + SBS SOAT (sin siniestralidad) + MTC revisión técnica.
  *  - PRO            : todo lo demás (SBS, SAT, MTC, SUTRAN, ATU, ONPE…), con score.
- *  - ULTRA          : PRO + valorización de mercado, análisis con IA y odómetro.
+ *  - ULTRA          : PRO + valorización de mercado y análisis con IA.
  *
  * La UI itera este catálogo: muestra el dato si está disponible, "Próximamente"
  * si la fuente aún no se conecta, o un candado "Mejora a PRO/ULTRA" si la sección
@@ -162,18 +162,9 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     blurb: 'Multas electorales del titular (por DNI, con su consentimiento).',
     comingSoon: true,
   },
-  // ── ULTRA: valorización + IA + odómetro ─────────────────────────────
-  {
-    key: 'odometro',
-    label: 'Análisis de odómetro',
-    icon: 'speed',
-    tier: ReportTier.ULTRA,
-    sources: ['MTC'],
-    concept: ScoreConcept.USAGE,
-    dataKind: null,
-    blurb: 'Lecturas históricas de kilometraje y coherencia (detección de retroceso).',
-    comingSoon: true,
-  },
+  // ── ULTRA: valorización + IA ────────────────────────────────────────
+  // (El "análisis de odómetro" se retiró: el kilometraje NO es público en Perú — el MTC no lo
+  //  expone por placa, confirmado por probe. No se puede ofrecer un gráfico km-vs-tiempo online.)
   {
     key: 'valorizacion',
     label: 'Valorización de mercado',
