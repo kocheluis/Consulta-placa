@@ -30,12 +30,13 @@ const KEY = process.env.CAPTCHA_API_KEY ?? '';
 // Estructura del formulario (evaluate como STRING para no chocar con el helper __name de tsx).
 const FORM_EVAL = `(() => {
   const q = (s) => Array.from(document.querySelectorAll(s));
-  const d = (el) => [el.tagName.toLowerCase(), el.id&&('#'+el.id), el.getAttribute('formcontrolname')&&('fcn='+el.getAttribute('formcontrolname')), el.getAttribute('type')&&('type='+el.getAttribute('type')), el.getAttribute('placeholder')&&('ph='+el.getAttribute('placeholder')), el.getAttribute('maxlength')&&('max='+el.getAttribute('maxlength'))].filter(Boolean).join(' ');
+  const d = (el) => [el.tagName.toLowerCase(), el.id&&('#'+el.id), el.getAttribute('formcontrolname')&&('fcn='+el.getAttribute('formcontrolname')), el.getAttribute('type')&&('type='+el.getAttribute('type')), el.getAttribute('placeholder')&&('ph='+el.getAttribute('placeholder')), el.className&&('class='+String(el.className).slice(0,40))].filter(Boolean).join(' ');
   return {
     inputs: q('input').map(d),
     buttons: q('button,input[type=submit]').map((b)=>((b.innerText||'').trim()||d(b))).filter(Boolean),
     checkboxes: q('input[type=checkbox],mat-checkbox').map(d),
-    captchaImgs: q('img').map((i)=>i.src).filter((s)=>/captcha|codigo|code|base64|data:image/i.test(s)),
+    imgs: q('img').map((i)=>({ src:(i.src||'').slice(0,90), w:i.naturalWidth||i.width, h:i.naturalHeight||i.height })),
+    canvas: q('canvas').map((c)=>({ w:c.width, h:c.height })),
     recaptcha: q('[data-sitekey],iframe[src*=recaptcha],.g-recaptcha').map((e)=>e.getAttribute&&e.getAttribute('data-sitekey')||'recaptcha'),
     body: (document.body.innerText||'').replace(/\\s+/g,' ').slice(0,500)
   };
@@ -97,29 +98,45 @@ const FORM_EVAL = `(() => {
     for (const ch of DNI) { await page.keyboard.type(ch, { delay: rnd(90, 200) }); }
     await wait(rnd(500, 1200));
 
-    // ── Términos: marcar el checkbox si existe ──
-    const term = page.locator('mat-checkbox, input[type="checkbox"]').first();
-    if (await term.isVisible().catch(() => false)) { await term.click().catch(() => {}); console.log('  · términos aceptados'); await wait(rnd(400, 900)); }
-
-    // ── Captcha: imagen (código a tipear) o reCAPTCHA ──
-    const capImg = page.locator('img[src*="captcha" i], img[src^="data:image"], img[src*="codigo" i]').first();
-    const hasImg = await capImg.isVisible().catch(() => false);
-    const hasRecaptcha = Array.isArray(info.recaptcha) && info.recaptcha.length > 0;
-    if (hasImg && KEY) {
-      console.log('  · captcha de IMAGEN → resolviendo con CapSolver…');
+    // ── Captcha de IMAGEN: elige el <img> con proporción de captcha (~200×60), no el logo/íconos ──
+    const capIdx = await page.evaluate(`(() => {
+      const imgs = Array.from(document.querySelectorAll('img'));
+      let best = -1, score = 0;
+      imgs.forEach((im, i) => {
+        const w = im.naturalWidth||im.width, h = im.naturalHeight||im.height, src = im.src||'';
+        let s = 0;
+        if (/captcha|codigo|code/i.test(src)) s += 100;
+        if (src.indexOf('data:image') === 0) s += 30;
+        if (w >= 140 && w <= 460 && h >= 28 && h <= 120) s += 50; // caja típica de captcha
+        if (s > score) { score = s; best = i; }
+      });
+      return best;
+    })()`) as number;
+    console.log('  · captcha img idx =', capIdx, KEY ? '' : '(sin CAPTCHA_API_KEY)');
+    if (capIdx >= 0 && KEY) {
       const solver = createCaptchaSolver({ provider: process.env.CAPTCHA_PROVIDER ?? 'capsolver', apiKey: KEY });
-      const b64 = (await capImg.screenshot().catch(() => null))?.toString('base64');
+      const b64 = (await page.locator('img').nth(capIdx).screenshot().catch(() => null))?.toString('base64');
       if (b64) {
-        const code = (await solver.solveImage(b64).catch(() => '')).trim();
-        console.log(`  · código captcha: "${code}"`);
-        const capInput = page.locator('input[formcontrolname*="captcha" i], input[placeholder*="código" i], input[placeholder*="captcha" i], input[maxlength="4"], input[maxlength="5"], input[maxlength="6"]').first();
-        if (code && await capInput.isVisible().catch(() => false)) { await capInput.click().catch(() => {}); for (const ch of code) await page.keyboard.type(ch, { delay: rnd(90, 180) }); }
-      }
-    } else if (hasRecaptcha && KEY) {
-      console.log('  · reCAPTCHA detectado (solver de imagen no aplica aquí; requiere sitekey — ver dump).');
-    } else {
-      console.log(`  · captcha: ${hasImg ? 'imagen sin CAPTCHA_API_KEY' : 'no detecté imagen'} · recaptcha=${hasRecaptcha}`);
+        const code = (await solver.solveImage(b64).catch((e) => { console.log('  solveImage ERR', (e as Error).message); return ''; })).trim();
+        console.log(`  · captcha resuelto: "${code}"`);
+        const capInput = page.locator('input[placeholder*="captcha" i], input[formcontrolname*="captcha" i], input[placeholder*="código" i]').first();
+        if (code && await capInput.isVisible().catch(() => false)) {
+          await capInput.click().catch(() => {}); for (const ch of code) await page.keyboard.type(ch, { delay: rnd(80, 160) });
+          console.log('  · captcha ingresado');
+        } else console.log('  ⚠️ no encontré el input del captcha (o código vacío)');
+      } else console.log('  ⚠️ no pude capturar la imagen del captcha');
     }
+
+    // ── Términos: marcar y VERIFICAR ──
+    await wait(rnd(400, 800));
+    const term = page.locator('input[type="checkbox"], mat-checkbox').first();
+    if (await term.isVisible().catch(() => false)) {
+      await term.click().catch(() => {});
+      await wait(350);
+      let checked = await term.isChecked().catch(() => false);
+      if (!checked) { await page.getByText(/T[eé]rminos y Condiciones/i).first().click().catch(() => {}); await wait(300); checked = await term.isChecked().catch(() => false); }
+      console.log('  · términos:', checked ? 'marcado' : 'NO se marcó');
+    } else console.log('  · términos: no encontré el checkbox');
     await shot(page, '02-lleno');
 
     // ── Consultar ──
