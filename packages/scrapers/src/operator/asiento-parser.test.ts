@@ -265,6 +265,12 @@ const ASIENTO_BINARIO =
   'Uz' + String.fromCharCode(...Array.from({ length: 200 }, (_, i) => 192 + (i % 63))) +
   ' 2018 - 02919994 Titulo Nro Partida ' + String.fromCharCode(...Array.from({ length: 160 }, () => 0));
 
+// Cola binaria que pdfBytesToText deja al final de CADA asiento (streams del PDF). El texto que
+// llega al parser es [asiento legible] + [esta cola]. El ratio de imprimibles del TEXTO COMPLETO da
+// bajo → un guard sobre el texto entero marcaba falso "ilegible" en asientos buenos (regresión
+// CDK293). La legibilidad debe juzgarse por el ACTO extraído, no por el texto completo.
+const COLA_BINARIA = String.fromCharCode(...Array.from({ length: 1500 }, (_, i) => (i % 4 === 0 ? 0 : 128 + (i % 127))));
+
 describe('parseAsiento — asiento binario/ilegible (robustez, caso BHC294)', () => {
   it('emite "Asiento no legible" en vez de volcar la basura binaria', () => {
     const r = parseAsiento(ASIENTO_BINARIO);
@@ -273,6 +279,14 @@ describe('parseAsiento — asiento binario/ilegible (robustez, caso BHC294)', ()
     expect(r.titulo).toBe('2018-2919994'); // el título SÍ se conserva → no se pierde el asiento
     expect(r.flags.gravamen).toBe(false); // no marca banderas sobre bytes al azar
     expect(r.caracteristicas).toBeNull();
+  });
+
+  it('★ asiento LEGIBLE con cola binaria del PDF se parsea igual (regresión CDK293)', () => {
+    const r = parseAsiento(`${CDK_1549906} ${COLA_BINARIA}`);
+    expect(r.acto).toBe('Compra-Venta'); // NO "Asiento no legible"
+    expect(r.tipo).toBe('Transferencia de Propiedad');
+    expect(r.precio).toBe('US$ 7,000.00');
+    expect(r.participantes).toContain('MAUCAYLLA');
   });
 
   it('un asiento normal NO se marca como ilegible', () => {

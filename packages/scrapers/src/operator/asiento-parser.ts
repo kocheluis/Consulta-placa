@@ -139,11 +139,18 @@ export function normalizeActo(s: string): string {
   return out.replace(/\s*\.\s*$/, '').trim();
 }
 
-/** Proporción de caracteres imprimibles ASCII — detecta el texto de un asiento que quedó BINARIO
- *  (el PDF trae streams que `pdfBytesToText` no supo inflar/extraer → sale ilegible). */
-function printableRatio(s: string): number {
-  if (!s) return 1;
-  return (s.match(/[\t\n\r\x20-\x7E]/g)?.length ?? 0) / s.length;
+/**
+ * ¿El acto extraído es un nombre de acto PLAUSIBLE (no basura binaria)? Se juzga la legibilidad por
+ * el acto, NO por el texto completo: `pdfBytesToText` deja una cola binaria al final de CADA asiento
+ * (streams del PDF), así que un ratio global daría falso "ilegible" en asientos perfectos (fue la
+ * regresión de CDK293). Un acto real es corto y mayormente letras; la basura de un asiento que el
+ * PDF degradó es larguísima o está llena de símbolos.
+ */
+function esActoPlausible(s: string): boolean {
+  const t = (s || '').trim();
+  if (t.length < 3 || t.length > 300) return false;
+  const letras = (t.match(/[A-Za-zÁÉÍÓÚÑáéíóúñ]/g) ?? []).length;
+  return letras / t.length >= 0.5;
 }
 
 /** Acto/tipo placeholder cuando el asiento no se pudo leer (PDF binario). */
@@ -176,18 +183,6 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   const tituloM = text.match(/\b(20\d{2})\s*-\s*0*(\d{4,8})\b/);
   const anio = tituloM?.[1] ?? null;
   const numero = tituloM?.[2] ?? null;
-  // Si el asiento degradó a BINARIO (PDF con streams que pdfBytesToText no supo extraer), NO se
-  // vuelca la basura como acto: se emite un registro "no legible" conservando el título/número
-  // (para no perder el conteo del asiento ni marcar banderas falsas sobre bytes al azar).
-  if (printableRatio(text) < 0.6) {
-    return {
-      tipo: NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null,
-      partida: '', placa: '', acto: NO_LEGIBLE, precio: '', montoPagado: '', formaPago: '',
-      fechaPresentacion: '', fechaAsiento: '', participantes: '', documentos: [],
-      flags: { aseguradora: false, remate: false, financiera: false, gravamen: false, embargo: false },
-      caracteristicas: null,
-    };
-  }
   // tipo = cabecera del asiento (lo que va ANTES de "AAAA - NNNN Título Nro Partida").
   const tipoRaw = text.match(/^\s*(.*?)\s+20\d{2}\s*-\s*0*\d{4,8}\s+T[íi]tulo\s+Nro\s+Partida/)?.[1]
     ?? text.split(/\s+20\d{2}\s*-\s*\d/)[0] ?? '';
@@ -197,7 +192,13 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   // Acto EXPLÍCITO: etiqueta "Acto" con A MAYÚSCULA (evita "Fecha del acto constitutivo").
   // Si no hay acto explícito (garantías), el acto = el tipo de la cabecera.
   const actoExpl = normalizeActo(text.match(/(?:^|[_\s])Acto\s+(.+?)\s+(?:Precio|Monto|Forma|Documento|Participantes|DEUDOR|_)/)?.[1] ?? '');
-  const acto = actoExpl || tipo;
+  const actoRaw = actoExpl || tipo;
+  // Si el asiento degradó a BINARIO (streams que pdfBytesToText no supo extraer), el acto sale como
+  // basura: se emite "no legible" conservando el título (para no perder el conteo del asiento ni
+  // marcar banderas falsas). La legibilidad se juzga por el ACTO, no por el texto (que SIEMPRE trae
+  // cola binaria) → así no marca falsos ilegibles en asientos buenos (CDK293). Caso real: BHC294.
+  const legible = esActoPlausible(actoRaw);
+  const acto = legible ? actoRaw : NO_LEGIBLE;
   const precio = g(/\bPrecio\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
   const montoPagado = g(/Monto Pagado\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
   const formaPago = g(/Forma de Pago\s+(.+?)\s+(?:_|DUA|Documento|Tipo de Uso|T[IÍ]tulo)/i);
@@ -219,7 +220,8 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   let dm: RegExpExecArray | null;
   while ((dm = docRe.exec(text))) documentos.push({ documento: dm[1]!.trim(), funcionario: dm[2]!.trim(), fecha: dm[3]! });
 
-  const blob = `${tipo} ${participantes} ${acto} ${documentos.map((d) => d.funcionario).join(' ')}`;
+  // Asiento ilegible → no se detectan banderas sobre bytes al azar (blob vacío).
+  const blob = legible ? `${tipo} ${participantes} ${acto} ${documentos.map((d) => d.funcionario).join(' ')}` : '';
   const flags: AsientoFlags = {
     aseguradora: RX_ASEG.test(blob),
     remate: RX_REMATE.test(blob),
@@ -228,7 +230,7 @@ export function parseAsiento(textRaw: string): AsientoRecord {
     embargo: RX_EMBARGO.test(blob),
   };
 
-  return { tipo, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes, documentos, flags, caracteristicas: parseCaracteristicas(textRaw) };
+  return { tipo: legible ? tipo : NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes: legible ? participantes : '', documentos: legible ? documentos : [], flags, caracteristicas: legible ? parseCaracteristicas(textRaw) : null };
 }
 
 /** Parsea TODOS los asientos que trae el PDF de un título (múltiples actos → múltiples registros). */
