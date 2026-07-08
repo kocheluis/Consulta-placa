@@ -17,6 +17,9 @@ import { SectionKind, SectionStatus, buildValuation, type Report, type IaAnalysi
 const API_KEY = () => process.env.ANTHROPIC_API_KEY ?? '';
 const MODEL = () => process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
 const BASE = () => (process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/+$/, '');
+const OPENAI_KEY = () => process.env.OPENAI_API_KEY ?? '';
+const OPENAI_MODEL = () => process.env.OPENAI_MODEL ?? 'gpt-4o';
+const OPENAI_BASE = () => (process.env.OPENAI_BASE_URL ?? 'https://api.openai.com').replace(/\/+$/, '');
 
 const IA_SCHEMA = {
   type: 'object',
@@ -123,43 +126,60 @@ function buildSummary(report: Report): Record<string, unknown> {
   };
 }
 
-/** Genera el análisis IA del reporte. Devuelve null si no hay API key o si la llamada falla. */
-export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | null> {
-  const key = API_KEY();
-  if (!key) { console.log('[ia] ANTHROPIC_API_KEY no configurada → omito análisis IA'); return null; }
+/** Llama a Anthropic (Messages API) con structured output. Devuelve el texto JSON + el modelo. */
+async function callAnthropic(userText: string, signal: AbortSignal): Promise<{ text: string; model: string }> {
   const model = MODEL();
-  const summary = buildSummary(report);
-
   // `effort` NO existe en Haiku 4.5 ni Sonnet 4.5 (devuelven 400). Se envía solo si el modelo
-  // lo soporta (Opus 4.5+/4.6+/4.7/4.8, Sonnet 4.6, Fable 5) → así basta cambiar ANTHROPIC_MODEL
-  // a claude-haiku-4-5 (más asequible) sin tocar código.
-  const supportsEffort = !/haiku|sonnet-4-5/i.test(model);
+  // lo soporta (Opus 4.5+/4.6+/4.7/4.8, Sonnet 4.6, Fable 5) → basta cambiar ANTHROPIC_MODEL.
   const outputConfig: Record<string, unknown> = { format: { type: 'json_schema', schema: IA_SCHEMA } };
-  if (supportsEffort) outputConfig.effort = 'medium';
+  if (!/haiku|sonnet-4-5/i.test(model)) outputConfig.effort = 'medium';
+  const res = await fetch(`${BASE()}/v1/messages`, {
+    method: 'POST', signal,
+    headers: { 'x-api-key': API_KEY(), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    body: JSON.stringify({ model, max_tokens: 4000, output_config: outputConfig, system: SYSTEM, messages: [{ role: 'user', content: userText }] }),
+  });
+  if (!res.ok) { console.warn(`[ia] Anthropic ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`); return { text: '', model }; }
+  const data = (await res.json()) as { stop_reason?: string; content?: Array<{ type: string; text?: string }> };
+  if (data.stop_reason === 'refusal') { console.warn('[ia] la IA declinó el análisis (refusal)'); return { text: '', model }; }
+  return { text: (data.content ?? []).find((b) => b.type === 'text')?.text ?? '', model };
+}
+
+/** Llama a OpenAI (Chat Completions) con structured output (json_schema strict). */
+async function callOpenai(userText: string, signal: AbortSignal): Promise<{ text: string; model: string }> {
+  const model = OPENAI_MODEL();
+  const res = await fetch(`${OPENAI_BASE()}/v1/chat/completions`, {
+    method: 'POST', signal,
+    headers: { authorization: `Bearer ${OPENAI_KEY()}`, 'content-type': 'application/json' },
+    body: JSON.stringify({
+      model,
+      messages: [{ role: 'system', content: SYSTEM }, { role: 'user', content: userText }],
+      response_format: { type: 'json_schema', json_schema: { name: 'reporte_vehicular', strict: true, schema: IA_SCHEMA } },
+    }),
+  });
+  if (!res.ok) { console.warn(`[ia] OpenAI ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`); return { text: '', model }; }
+  const data = (await res.json()) as { choices?: Array<{ message?: { content?: string; refusal?: string } }> };
+  const msg = data.choices?.[0]?.message;
+  if (msg?.refusal) { console.warn('[ia] OpenAI declinó (refusal):', msg.refusal.slice(0, 150)); return { text: '', model }; }
+  return { text: msg?.content ?? '', model };
+}
+
+/**
+ * Genera el análisis IA del reporte. Usa Anthropic si hay `ANTHROPIC_API_KEY`; si no, OpenAI con
+ * `OPENAI_API_KEY` (mismo esquema JSON) → la valorización y la recomendación funcionan con cualquiera
+ * de las dos. Devuelve null si no hay ninguna clave o si la llamada falla (no bloquea el reporte).
+ */
+export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | null> {
+  const anthropic = !!API_KEY();
+  const openai = !!OPENAI_KEY();
+  if (!anthropic && !openai) { console.log('[ia] sin ANTHROPIC_API_KEY ni OPENAI_API_KEY → omito análisis IA'); return null; }
+  const summary = buildSummary(report);
+  const userText = `Analiza este vehículo y devuelve tu recomendación de compra.\n\nDATOS (JSON):\n${JSON.stringify(summary, null, 2)}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);
   try {
-    const res = await fetch(`${BASE()}/v1/messages`, {
-      method: 'POST',
-      signal: controller.signal,
-      headers: { 'x-api-key': key, 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-      body: JSON.stringify({
-        model,
-        max_tokens: 4000,
-        output_config: outputConfig,
-        system: SYSTEM,
-        messages: [{
-          role: 'user',
-          content: `Analiza este vehículo y devuelve tu recomendación de compra.\n\nDATOS (JSON):\n${JSON.stringify(summary, null, 2)}`,
-        }],
-      }),
-    });
-    if (!res.ok) { console.warn(`[ia] Messages API ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`); return null; }
-    const data = (await res.json()) as { stop_reason?: string; content?: Array<{ type: string; text?: string }> };
-    if (data.stop_reason === 'refusal') { console.warn('[ia] la IA declinó el análisis (refusal)'); return null; }
-    const text = (data.content ?? []).find((b) => b.type === 'text')?.text ?? '';
-    if (!text) { console.warn('[ia] respuesta sin bloque de texto'); return null; }
+    const { text, model } = anthropic ? await callAnthropic(userText, controller.signal) : await callOpenai(userText, controller.signal);
+    if (!text) { console.warn('[ia] respuesta vacía'); return null; }
     const parsed = JSON.parse(text) as IaAnalysis;
     if (!parsed.verdict || !Array.isArray(parsed.redFlags)) { console.warn('[ia] JSON con forma inesperada'); return null; }
     return { ...parsed, model };
