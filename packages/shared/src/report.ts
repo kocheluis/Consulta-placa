@@ -318,8 +318,67 @@ export interface IaAnalysis {
   redFlags: IaFlag[];
   /** Puntos a favor. */
   positives: string[];
+  /** Estimación del precio BASE de mercado (marca/modelo/versión/año) que hace la IA. La sección
+   *  VALORIZACION la usa como ancla; el motor determinístico calcula las bandas de km y los ajustes. */
+  valuation?: IaMarketBase | null;
   /** Modelo que generó el análisis (trazabilidad). */
   model?: string;
+}
+
+/** Precio base de mercado estimado por la IA (buen estado, km promedio para la antigüedad), en soles. */
+export interface IaMarketBase {
+  /** Rango base en S/ (0 si la IA no pudo estimar — modelo poco común/importado). */
+  baseMin: number;
+  baseMax: number;
+  confidence: 'alta' | 'media' | 'baja';
+  /** En qué se basó (versión, año, tipo de cambio, comparables conocidos). */
+  basis: string;
+}
+
+/** Precio estimado para un rango de kilometraje (banda de uso). */
+export interface ValuationBand {
+  /** Etiqueta ("Uso bajo", "Uso promedio", "Uso alto", "Uso muy alto"). */
+  label: string;
+  /** Rango de km textual ("~45 000–85 000 km"). */
+  kmRange: string;
+  priceMin: number;
+  priceMax: number;
+  /** true en la banda que corresponde al km esperado por antigüedad (referencia principal). */
+  isExpected?: boolean;
+}
+
+/** Un ajuste al precio por la condición del vehículo (derivado del reporte). */
+export interface ValuationAdjustment {
+  factor: string;
+  /** Impacto legible: "−22%", "−S/ 990", "Informativo". */
+  impact: string;
+  detail: string;
+}
+
+/**
+ * Payload de la sección VALORIZACION (ULTRA). Como el kilometraje real NO es público en Perú,
+ * se dan precios por BANDAS de km (uso bajo/promedio/alto), partiendo de un precio base de mercado
+ * (marca/modelo/versión/año, estimado por la IA) y ajustando por la condición hallada en el reporte
+ * (siniestro, uso taxi, GNV, gravamen vigente, papeletas, nº de dueños, RTV vencida, robo).
+ */
+export interface Valuation {
+  currency: 'PEN';
+  /** false si no se pudo estimar el precio base (sin bandas). */
+  available: boolean;
+  baseMin: number;
+  baseMax: number;
+  /** Km esperado por antigüedad (≈15 000 km/año); null si no se conoce el año. */
+  expectedKm: number | null;
+  bands: ValuationBand[];
+  adjustments: ValuationAdjustment[];
+  /** Rango final estimado (banda esperada, con ajustes aplicados). */
+  netMin: number;
+  netMax: number;
+  confidence: 'alta' | 'media' | 'baja';
+  basis: string;
+  /** true = robo vigente u otra señal que desaconseja la compra → no se valoriza como normal. */
+  blocked?: boolean;
+  disclaimer: string;
 }
 
 /**

@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import { SectionKind, SectionStatus, type Report, type IaAnalysis, type SectionResult } from '@app/shared';
+import { SectionKind, SectionStatus, buildValuation, type Report, type IaAnalysis, type SectionResult, type Valuation } from '@app/shared';
 
 /**
  * Análisis con IA del nivel ULTRA: Claude lee TODO el reporte y devuelve un veredicto de
@@ -40,8 +40,19 @@ const IA_SCHEMA = {
       },
     },
     positives: { type: 'array', items: { type: 'string' } },
+    valuation: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        baseMin: { type: 'number' },
+        baseMax: { type: 'number' },
+        confidence: { type: 'string', enum: ['alta', 'media', 'baja'] },
+        basis: { type: 'string' },
+      },
+      required: ['baseMin', 'baseMax', 'confidence', 'basis'],
+    },
   },
-  required: ['verdict', 'summary', 'recommendation', 'priceComment', 'redFlags', 'positives'],
+  required: ['verdict', 'summary', 'recommendation', 'priceComment', 'redFlags', 'positives', 'valuation'],
 } as const;
 
 const SYSTEM = `Eres un asesor experto en compra de vehículos usados en Perú. A partir de los datos de \
@@ -52,10 +63,16 @@ orden de captura, muchas transferencias en poco tiempo, papeletas altas o revisi
 Reglas:
 - Veredicto: "comprar" (sin señales relevantes), "precaucion" (señales que exigen verificación) o "evitar" \
 (señales graves: siniestro/pérdida total, gravamen vigente, orden de captura).
-- priceComment: comentario CUALITATIVO sobre el precio basado SOLO en los precios declarados del historial, \
-la antigüedad y la ficha técnica (versión exacta, combustible, cilindrada — una versión tope/GNV o con más \
-equipamiento no vale igual que la base). NO inventes una tasación de mercado; aclara que no es un avalúo y que \
-se recomienda comparar con avisos del mercado.
+- priceComment: comentario CUALITATIVO sobre el precio, en relación a la valorización estimada, los precios \
+declarados del historial, la antigüedad y la ficha (versión exacta, combustible — una versión tope/GNV no vale \
+igual que la base). Aclara que no es un avalúo y que conviene comparar con avisos del mercado.
+- valuation: estima el PRECIO BASE de mercado en Perú, en SOLES (S/), para ESTE vehículo por su marca, modelo, \
+VERSIÓN exacta y año, en BUEN estado y kilometraje PROMEDIO para su antigüedad. Devuelve baseMin y baseMax (rango \
+realista de venta ENTRE PARTICULARES, no de concesionario). Usa tu conocimiento del mercado peruano de usados y el \
+tipo de cambio (~S/ 3.7 por US$). Si el modelo es muy poco común/importado y no puedes estimar con fundamento, \
+devuelve baseMin=0, baseMax=0 y confidence="baja". confidence: "alta" (modelo común con precio conocido), "media" \
+(estimas por segmento), "baja" (incierto). basis: 1 frase de en qué te basaste. El sistema añade luego las bandas \
+por kilometraje y los descuentos por condición — tú solo das el precio base en buen estado.
 - No inventes datos que no estén en la entrada. Si un dato falta o la fuente falló, dilo. Escribe en español, \
 claro y conciso.`;
 
@@ -158,4 +175,49 @@ export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | 
 export function attachIaSection(report: Report, ia: IaAnalysis, at: string): Report {
   const section: SectionResult = { kind: SectionKind.IA, source: null, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: ia };
   return { ...report, sections: [...report.sections.filter((s) => s.kind !== SectionKind.IA), section] };
+}
+
+/** Extrae del reporte las señales de condición que ajustan el precio (siniestro, taxi, GNV, etc.). */
+function extractCondition(report: Report, currentYear: number) {
+  const byKind = (k: string): SectionResult | undefined => report.sections.find((s) => s.kind === k && s.status === 'AVAILABLE');
+  const p = (k: string): Record<string, unknown> => (byKind(k)?.payload ?? {}) as Record<string, unknown>;
+  const sin = p('SINIESTRALIDAD'), grav = p('GRAVAMENES'), pap = p('PAPELETAS'), hist = p('HISTORIAL');
+  const especs = p('IDENTIDAD_ESPECIFICA'), rev = p('REVISION_TECNICA'), trans = p('TRANSPORTE');
+  const year = report.vehicle?.year ?? null;
+
+  const gravMonto = ((grav.items ?? []) as Array<Record<string, unknown>>)
+    .filter((it) => it.status !== 'LEVANTADO')
+    .reduce((s, it) => s + (Number(it.amount) || 0), 0);
+  const actos = ((hist.events ?? []) as Array<{ acciones?: Array<Record<string, unknown>> }>)
+    .flatMap((e) => (e.acciones ?? []).map((a) => String(a.act ?? '')));
+  const roboVigente = Boolean(report.vehicle?.stolenAlert)
+    || (actos.some((a) => /anotaci[oó]n de robo/i.test(a)) && !actos.some((a) => /cancelaci[oó]n de anotaci[oó]n robo/i.test(a)));
+
+  return {
+    siniestro: Boolean(sin.hasSiniestro),
+    usoTaxi: Boolean(trans.isPublicTransport) || /taxi|transporte|servicio|colectiv|mercanc/i.test(String(rev.serviceType ?? '')),
+    gnv: /gnv|glp|gas natural|bi-?combustible/i.test(String(especs.fuel ?? '')),
+    gravamenVigente: Boolean(grav.hasLiens),
+    gravamenMonto: gravMonto > 0 ? gravMonto : null,
+    papeletasPendientes: Number(pap.pendingAmount) || 0,
+    transfers: Number(hist.transfers) || 0,
+    roboVigente,
+    revisionVencida: Boolean(byKind('REVISION_TECNICA')) && !rev.hasValid && !!year && currentYear - (year as number) >= 4,
+  };
+}
+
+/**
+ * Arma la sección VALORIZACION a partir del precio base que estimó la IA + la condición del reporte,
+ * y la adjunta al Report. Si la IA no devolvió base (o no hubo IA), no agrega la sección.
+ */
+export function attachValuationSection(report: Report, ia: IaAnalysis, at: string, currentYear: number): Report {
+  if (!ia.valuation) return report;
+  const cond = extractCondition(report, currentYear);
+  const valuation: Valuation = buildValuation({
+    baseMin: ia.valuation.baseMin, baseMax: ia.valuation.baseMax,
+    confidence: ia.valuation.confidence, basis: ia.valuation.basis,
+    year: report.vehicle?.year ?? null, currentYear, ...cond,
+  });
+  const section: SectionResult = { kind: SectionKind.VALORIZACION, source: null, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: valuation };
+  return { ...report, sections: [...report.sections.filter((s) => s.kind !== SectionKind.VALORIZACION), section] };
 }

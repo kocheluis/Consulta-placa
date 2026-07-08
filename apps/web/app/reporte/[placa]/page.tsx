@@ -18,6 +18,7 @@ import type {
   TransporteInfo,
   VehicleSpecs,
   IaAnalysis,
+  Valuation,
 } from '@app/shared';
 import {
   formatPlateDisplay,
@@ -968,6 +969,10 @@ function SectionBody({
     return section ? <TransporteBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
+  if (entry.key === 'valorizacion') {
+    return section ? <ValorizacionBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
   if (entry.key === 'ia') {
     return section ? <IaBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
@@ -976,6 +981,83 @@ function SectionBody({
 }
 
 /* ── Análisis con IA (ULTRA) ──────────────────────────────────────── */
+function ValorizacionBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const v = section.payload as Valuation | undefined;
+  if (!v) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  const soles = (n: number) => `S/ ${Math.round(n).toLocaleString('es-PE')}`;
+  const confTone: Record<string, Tone> = { alta: 'success', media: 'warning', baja: 'neutral' };
+
+  if (!v.available) {
+    return (
+      <div className="flex flex-col gap-3">
+        <StatusLine tone="neutral" icon="info">No se pudo estimar el precio base (modelo poco común o importado).{v.basis ? ` ${v.basis}` : ''}</StatusLine>
+        <p className="font-body text-[11px] leading-snug text-slate-400">{v.disclaimer}</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-3">
+      {/* Rango estimado (banda de uso promedio, con ajustes aplicados) */}
+      <div className="rounded-xl border border-border bg-background p-4">
+        <div className="flex items-center justify-between gap-2">
+          <span className="font-body text-xs font-bold uppercase tracking-wide text-muted">Precio estimado (uso promedio)</span>
+          <Badge tone={confTone[v.confidence] ?? 'neutral'} size="sm" icon={null}>confianza {v.confidence}</Badge>
+        </div>
+        <p className="mt-1 font-display text-[26px] font-bold text-foreground">{soles(v.netMin)} – {soles(v.netMax)}</p>
+        {v.basis && <p className="mt-0.5 font-body text-[12px] text-muted">{v.basis}</p>}
+      </div>
+
+      {v.blocked && <StatusLine tone="danger" icon="gpp_bad">Anotación de robo vigente — no proceder con la compra.</StatusLine>}
+
+      {/* Precio por rango de kilometraje */}
+      <div>
+        <p className="mb-1.5 font-body text-xs font-bold uppercase tracking-wide text-muted">Precio por rango de kilometraje</p>
+        <div className="flex flex-col gap-1.5">
+          {v.bands.map((b, i) => (
+            <div key={i} className={`flex items-center justify-between gap-2 rounded-lg border p-2.5 ${b.isExpected ? 'border-border bg-background' : 'border-border bg-surface'}`}>
+              <div className="flex flex-col">
+                <span className="font-body text-[13px] font-semibold text-foreground">
+                  {b.label}
+                  {b.isExpected && <Badge tone="info" size="sm" icon={null}>referencia</Badge>}
+                </span>
+                <span className="font-body text-[11.5px] text-muted">{b.kmRange}</span>
+              </div>
+              <span className="font-mono text-[13px] text-foreground">{soles(b.priceMin)} – {soles(b.priceMax)}</span>
+            </div>
+          ))}
+        </div>
+        {v.expectedKm != null && (
+          <p className="mt-1 font-body text-[11px] text-slate-400">
+            Km esperado por antigüedad ≈ {v.expectedKm.toLocaleString('es-PE')} km (≈15 000/año). El kilometraje real no es público en Perú.
+          </p>
+        )}
+      </div>
+
+      {/* Ajustes por condición (ya reflejados en los precios) */}
+      {v.adjustments.length > 0 && (
+        <div>
+          <p className="mb-1.5 font-body text-xs font-bold uppercase tracking-wide text-muted">Ajustes por condición del vehículo</p>
+          <div className="flex flex-col gap-1.5">
+            {v.adjustments.map((a, i) => (
+              <div key={i} className="rounded-lg border border-border bg-surface p-2.5">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="font-body text-[13px] font-semibold text-foreground">{a.factor}</span>
+                  <span className="font-mono text-[12px] text-danger">{a.impact}</span>
+                </div>
+                <p className="mt-0.5 font-body text-[12px] text-muted">{a.detail}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <p className="font-body text-[11px] leading-snug text-slate-400">{v.disclaimer}</p>
+    </div>
+  );
+}
+
 function IaBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const a = section.payload as IaAnalysis | undefined;

@@ -10,7 +10,7 @@ import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
 import { publishReport, fetchReport, fetchReportsMeta } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
-import { analyzeReportWithAI, attachIaSection } from './operator/ai-analysis.js';
+import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
 import type { Report } from '@app/shared';
 
@@ -327,7 +327,13 @@ async function processPedido(p: Pedido): Promise<void> {
         // ULTRA: análisis con IA sobre el reporte completo (recomendación + banderas + precio).
         if (tier === 'ULTRA') {
           const ia = await analyzeReportWithAI(report);
-          if (ia) { report = attachIaSection(report, ia, new Date().toISOString()); console.log(`[ia] análisis IA agregado a ${p.placa} · veredicto=${ia.verdict}`); }
+          if (ia) {
+            const at = new Date().toISOString();
+            report = attachIaSection(report, ia, at);
+            // Valorización: precio base de la IA + bandas de km + ajustes por condición del reporte.
+            report = attachValuationSection(report, ia, at, new Date().getFullYear());
+            console.log(`[ia] análisis IA agregado a ${p.placa} · veredicto=${ia.verdict}${ia.valuation?.baseMax ? ` · base ~S/${ia.valuation.baseMax}` : ''}`);
+          }
         }
         const pub = await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: String(p.id) });
         console.log(`[reportes] publicado para ${p.placa}: ${pub ? 'sí' : 'no (¿Supabase sin configurar?)'}`);

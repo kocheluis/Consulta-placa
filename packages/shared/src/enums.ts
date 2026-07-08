@@ -26,6 +26,8 @@ export const SectionKind = {
   HISTORIAL: 'HISTORIAL',
   /** Identidad específica: versión, carrocería, combustible, cilindrada, dimensiones… (asiento SUNARP). */
   IDENTIDAD_ESPECIFICA: 'IDENTIDAD_ESPECIFICA',
+  /** Valorización de mercado (ULTRA): precio estimado por rangos de km + ajustes por condición. */
+  VALORIZACION: 'VALORIZACION',
   GNV: 'GNV',
   DEUDA_BANCARIA: 'DEUDA_BANCARIA',
   PNP: 'PNP',
