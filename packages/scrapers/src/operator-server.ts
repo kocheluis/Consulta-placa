@@ -484,9 +484,22 @@ const server = createServer(async (req, res) => {
               return { source: s, status: r ? r.status : (s === cj.current ? 'RUNNING' : 'PENDING') };
             }) }
         : null;
+      // Tarjeta por pedido para la consola multi-barra: estado por fuente (✓ hecha / ⟳ corriendo / en cola).
+      const cardOf = (plate: string, srcs: string[], results: OperatorSourceResult[], percent: number, running: string, jobId?: string) => ({
+        jobId, placa: plate, percent,
+        sources: srcs.map((s) => {
+          const r = results.find((x) => x.source.toLowerCase().replace(/_/g, '-') === s);
+          return { source: s, status: r ? r.status : (s === running ? 'RUNNING' : 'PENDING') };
+        }),
+      });
+      // Pedidos EN PROCESO: los del lote (batchJobs) + el del path single (si hay). Una barra por cada uno.
+      const currentJobs = [
+        ...[...batchJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '')),
+        ...(cj ? [cardOf(cj.plate, cj.sources, cj.results, cj.percent, cj.current, cj.id)] : []),
+      ];
       // Ya NO se envía el token crudo al navegador (opción B): solo si hay secreto configurado.
       // El preview se firma por placa y bajo demanda en /api/preview-token.
-      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
+      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current, currentJobs, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
     }
     if (path === '/api/engine/toggle' && req.method === 'POST') {
       autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
@@ -770,6 +783,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .prog2 .bw{height:10px;background:#1E293B;border-radius:999px;overflow:hidden;margin-top:8px}
   .prog2 .bf{height:100%;width:0;background:linear-gradient(90deg,var(--teal),#3B82F6);transition:width .5s ease}
   .prog2.idle{background:#F1F5F9;color:var(--mut)} .prog2.idle .pl{color:#334155}
+  .prog2 .chip{display:inline-block;font-size:11px;margin-right:7px;color:#94A3B8}
+  #engBars .prog2+.prog2{margin-top:8px}
   .pmeta{font-size:13px;color:var(--mut);margin:6px 0 12px;display:flex;gap:14px;flex-wrap:wrap}
   .pdetail h2{font-size:16px;margin:4px 0 2px}
 </style></head><body>
@@ -794,12 +809,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
         <button class="sec" onclick="enqueue()">Encolar pedido</button>
       </div>
     </div>
-    <div id="prog2" class="prog2 idle">
-      <div class="top"><span class="pl" id="p2pl">Motor libre</span><span class="pc" id="p2pc"></span></div>
-      <div class="st" id="p2st">Sin pedidos en proceso</div>
-      <div class="bw"><div class="bf" id="p2bf"></div></div>
-      <div id="p2act" style="margin-top:9px"></div>
-    </div>
+    <div id="engBars"><div class="prog2 idle"><div class="top"><span class="pl">Motor libre</span><span class="pc"></span></div><div class="st">Sin pedidos en proceso</div><div class="bw"><div class="bf"></div></div></div></div>
   </div>
 
   <div class="tabs">
@@ -924,21 +934,22 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
   var b=document.getElementById('engBtn');
   b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='sw '+(s.enabled?'on':'off');
   document.getElementById('engInfo').textContent=(s.busy?'· atendiendo un pedido ':'· libre ')+'· cola: '+esc(s.queue);
-  var box=document.getElementById('prog2'), c=s.current;
-  if(c){box.className='prog2';
-    document.getElementById('p2pl').textContent='⚙ '+esc(c.placa);
-    document.getElementById('p2pc').textContent=(c.percent||0)+'%';
-    document.getElementById('p2st').textContent=esc((c.source||'')+(c.step?' · '+c.step:''))||'procesando…';
-    document.getElementById('p2bf').style.width=(c.percent||0)+'%';
-    document.getElementById('p2act').innerHTML=
-      (c.source?'<a href="/log/'+encodeURIComponent(c.placa)+'/'+srcId(c.source)+'" target="_blank" style="color:#7DD3FC;margin-right:14px">ver log de '+esc(c.source)+'</a>':'')+
-      (c.jobId?'<button class="danger" style="padding:5px 12px;font-size:13px" onclick="cancelAuto(\\''+c.jobId+'\\')">Cancelar</button>':'');
-  }else{box.className='prog2 idle';
-    document.getElementById('p2pl').textContent='Motor '+(s.enabled?'encendido':'apagado');
-    document.getElementById('p2pc').textContent='';
-    document.getElementById('p2st').textContent=s.enabled?'Esperando pedidos…':'Motor apagado';
-    document.getElementById('p2bf').style.width='0%';
-    document.getElementById('p2act').innerHTML='';
+  // Panel del motor = UNA barra por pedido en proceso (lote o single). Vacío → "Esperando pedidos".
+  var wrap=document.getElementById('engBars'); var jobs=s.currentJobs||[];
+  if(jobs.length){
+    wrap.innerHTML=jobs.map(function(c){
+      var chips=(c.sources||[]).map(function(x){
+        var m=(x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO')?'✓ ':(x.status==='RUNNING'?'⟳ ':(x.status==='ERROR'?'✕ ':'· '));
+        return '<span class="chip">'+m+esc(x.source)+'</span>';
+      }).join('');
+      var pct=c.percent||0;
+      return '<div class="prog2"><div class="top"><span class="pl">⚙ '+esc(c.placa)+'</span><span class="pc">'+pct+'%</span></div>'+
+        '<div class="st">'+(chips||'procesando…')+'</div>'+
+        '<div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>';
+    }).join('');
+  }else{
+    wrap.innerHTML='<div class="prog2 idle"><div class="top"><span class="pl">Motor '+(s.enabled?'encendido':'apagado')+'</span><span class="pc"></span></div>'+
+      '<div class="st">'+(s.enabled?'Esperando pedidos…':'Motor apagado')+'</div><div class="bw"><div class="bf" style="width:0%"></div></div></div>';
   }
 }).catch(function(){});}
 function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
