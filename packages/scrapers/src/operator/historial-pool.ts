@@ -84,7 +84,11 @@ const failResult = (error: string): HistorialResult =>
   ({ ok: false, sede: '', vehiculo: null, titulos: [], timeline: [], flags: { aseguradora: false, remate: false, financiera: false, gravamen: false, embargo: false }, error }) as HistorialResult;
 
 const defaultRunOne = (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void): Promise<HistorialResult> =>
-  runHistorialRegistral(plate, { browser: browser ?? undefined, sprlUser: slot.user, sprlPass: slot.pass, port: slot.port, profile: slot.profile, log });
+  runHistorialRegistral(plate, {
+    browser: browser ?? undefined, sprlUser: slot.user, sprlPass: slot.pass, port: slot.port, profile: slot.profile, log,
+    // Síguelo en paralelo (conc. 2 por placa) si HISTORIAL_PARALLEL=1 → ~2× en autos con varios títulos.
+    parallel: process.env.HISTORIAL_PARALLEL === '1',
+  });
 
 /**
  * Corre el historial de `plates` con un pool de workers (uno por cuenta SPRL). Devuelve un
