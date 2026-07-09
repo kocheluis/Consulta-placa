@@ -6,6 +6,9 @@ import { createCaptchaSolver, type CaptchaSolver } from '../captcha/index.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { scrapeAtuViaCdp } from './atu-cdp.js';
 import { runHistorialRegistral } from './historial.js';
+import { runHistorialPool, type HistorialResult } from './historial-pool.js';
+import { runLightLane } from './source-lane.js';
+import type { Lane } from './batch.js';
 import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
@@ -307,6 +310,72 @@ async function runHistorialSource(
  * (aparece antes que SUNARP). Hace un SUNARP rápido para marca/modelo/año (narrow) y
  * busca el anexo `<PLACA>.pdf`. EXPERIMENTAL — opt-in, requiere validación en vivo.
  */
+/**
+ * Convierte el resultado del historial (runHistorialRegistral / pool) en OperatorSourceResult
+ * — MISMA forma que produce runHistorialSource. Lo usa el carril de historial del lote.
+ */
+export function mapHistorial(r: HistorialResult, ms: number, shotPath?: string): OperatorSourceResult {
+  const base = { source: 'HISTORIAL', label: 'SPRL+Síguelo · Historial registral', category: 'REGISTRAL' };
+  if (r.ok) {
+    const flagTxt = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.financiera && 'FINANCIERA', r.flags.gravamen && 'GRAVAMEN', r.flags.embargo && 'EMBARGO'].filter(Boolean).join('/');
+    const summary = `${r.timeline.length} asientos · ${r.titulos.length} títulos${flagTxt ? ` · ⚠ ${flagTxt}` : ' · sin banderas'}`;
+    return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas }, ...(shotPath ? { screenshot: shotPath } : {}), ms };
+  }
+  return { ...base, status: 'ERROR', summary: r.error ?? 'No se obtuvo historial', ms };
+}
+
+export interface BatchLaneOpts {
+  captchaApiKey: string;
+  captchaProvider?: string;
+  headless?: boolean;
+}
+
+/**
+ * Arma los CARRILES del lote (para orchestrateBatch) cableando los runners reales: historial
+ * en 2 hilos SPRL (runHistorialPool), cada fuente ligera transpuesta (runLightLane, reúso de
+ * navegador) y sunarp/atu/superbid por placa. La UNIÓN de fuentes cubre BASIC y PRO/ULTRA; el
+ * orquestador corre cada carril SOLO sobre las placas cuyo tier incluye esa fuente.
+ */
+export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[]; run: Lane }> {
+  const baseOpts = (outDir: string): OperatorReportOptions => ({ outDir, captchaProvider: opts.captchaProvider, captchaApiKey: opts.captchaApiKey, headless: opts.headless ?? true });
+  const solver = (): CaptchaSolver => createCaptchaSolver({ provider: opts.captchaProvider ?? 'capsolver', apiKey: opts.captchaApiKey });
+  const lanes: Array<{ sources: string[]; run: Lane }> = [];
+
+  // Historial: 2 hilos SPRL (1 login por cuenta, reúso de sesión entre placas).
+  lanes.push({ sources: ['historial'], run: async (plates, report) => {
+    const outBy = new Map(plates.map((p) => [p.plate, p.outDir]));
+    await runHistorialPool(plates.map((p) => p.plate), {
+      onResult: (pr) => report(pr.plate, mapHistorial(pr.result, pr.ms, join(outBy.get(pr.plate) ?? '', 'historial.png'))),
+    });
+  } });
+
+  // Fuentes ligeras: un carril por fuente, transpuesto (1 navegador barre las N placas).
+  for (const id of Object.keys(SOURCE_RUNNERS)) {
+    lanes.push({ sources: [id], run: async (plates, report) => {
+      await runLightLane(id, SOURCE_RUNNERS[id]!, plates.map((p) => ({ plate: p.plate, outDir: p.outDir })), {
+        captchaApiKey: opts.captchaApiKey, captchaProvider: opts.captchaProvider, headless: opts.headless ?? true,
+        onResult: (lr) => report(lr.plate, lr.result),
+      });
+    } });
+  }
+
+  // SUNARP: por placa (CDP; KEEP_SUNARP_WARM reusa la sesión caliente entre placas).
+  lanes.push({ sources: ['sunarp'], run: async (plates, report) => {
+    const s = solver();
+    for (const p of plates) report(p.plate, await runSunarpSource(p.plate, s, join(p.outDir, 'sunarp.png'), baseOpts(p.outDir)));
+  } });
+  // ATU: por placa (CDP reCAPTCHA v3 nativo).
+  lanes.push({ sources: ['atu'], run: async (plates, report) => {
+    for (const p of plates) report(p.plate, await runAtuSource(p.plate, join(p.outDir, 'atu.png'), baseOpts(p.outDir)));
+  } });
+  // Superbid: lookup en DB (instantáneo).
+  lanes.push({ sources: ['superbid'], run: async (plates, report) => {
+    for (const p of plates) report(p.plate, await runSuperbidSource(p.plate, join(p.outDir, 'superbid.png'), baseOpts(p.outDir)));
+  } });
+
+  return lanes;
+}
+
 async function runSuperbidSource(
   plate: string,
   shotPath: string,

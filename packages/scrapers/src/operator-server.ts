@@ -4,7 +4,8 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
-import { runSingleSource, OPERATOR_SOURCES, type OperatorSourceResult } from './operator/index.js';
+import { runSingleSource, OPERATOR_SOURCES, buildBatchLanes, type OperatorSourceResult } from './operator/index.js';
+import { orchestrateBatch, type OrchJob } from './operator/batch.js';
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
@@ -116,6 +117,11 @@ const CONCURRENCY = Math.max(1, Number(process.env.OPERATOR_CONCURRENCY ?? 1));
 // SÍ va en paralelo (default 3) aunque el reporte de pago (6-8 fuentes pesadas) siga secuencial
 // en el VPS de 1 vCPU. Revertir con BASIC_CONCURRENCY=1 si hiciera falta.
 const BASIC_CONCURRENCY = Math.max(1, Number(process.env.BASIC_CONCURRENCY ?? 3));
+// Motor por LOTES: cuando hay ≥2 pedidos, se atienden juntos (historial en 2 hilos SPRL +
+// fuentes ligeras transpuestas con reúso de navegador). BATCH_MAX = cuántos pedidos toma el
+// lote; LANE_CONCURRENCY = cuántos carriles (navegadores) corren a la vez (tope de RAM: 4 GB).
+const BATCH_MAX = Math.max(1, Number(process.env.BATCH_MAX ?? 8));
+const LANE_CONCURRENCY = Math.max(1, Number(process.env.BATCH_LANE_CONCURRENCY ?? 2));
 const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
@@ -126,6 +132,8 @@ interface Job {
   concurrency?: number;
 }
 const jobs = new Map<string, Job>();
+// Pedidos del lote EN CURSO (para la consola multi-barra: una barra por pedido).
+const batchJobs = new Map<string, OrchJob>();
 const newId = () => `j${Date.now().toString(36)}${Math.floor(Math.random() * 1e6).toString(36)}`;
 
 /** Última línea del log de la fuente (sin timestamp) → texto de "paso" en la barra. */
@@ -359,15 +367,82 @@ async function processPedido(p: Pedido): Promise<void> {
   }
 }
 
-/** Bucle del motor automático: si está encendido y libre, atiende el siguiente pedido (FIFO). */
+/** Publica + entrega un pedido del LOTE (ULTRA agrega IA + valorización). Espejo del cierre de processPedido. */
+async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
+  const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
+  if (ok === 0) { await queue.setError(p.id, 'ninguna fuente respondió'); console.log(`[motor-lote] ${p.placa} ERROR (ninguna fuente respondió)`); return; }
+  try {
+    let report = toWebReport(p.placa, job.results, new Date().toISOString(), job.id);
+    if (job.tier === 'ULTRA') {
+      const ia = await analyzeReportWithAI(report);
+      if (ia) {
+        const at = new Date().toISOString();
+        report = attachIaSection(report, ia, at);
+        report = attachValuationSection(report, ia, at, new Date().getFullYear());
+      }
+    }
+    await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: job.id });
+    await writeFile(join(plateDir(p.placa), 'reporte.json'), JSON.stringify({ plate: p.placa, generatedAt: new Date().toISOString(), results: job.results }, null, 2), 'utf8');
+  } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
+  await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
+  await notifyReady(p, job.tier);
+}
+
+/**
+ * Atiende un LOTE de pedidos (≥2) juntos: historial en 2 hilos SPRL + fuentes ligeras
+ * transpuestas (reúso de navegador), con tope de carriles por RAM. Entrega cada reporte apenas
+ * su pedido tiene TODAS sus fuentes (ASAP), sin esperar al resto del lote. Aplica reúso (dedup)
+ * por placa antes de correr. `engineBusy` sigue serializando: un lote a la vez.
+ */
+async function processBatch(pedidos: Pedido[]): Promise<void> {
+  console.log(`[motor-lote] ${pedidos.length} pedidos: ${pedidos.map((p) => p.placa).join(', ')}`);
+  const pedidoById = new Map<string, Pedido>();
+  const orchJobs: OrchJob[] = [];
+  for (const p of pedidos) {
+    const tier = (p.tier as string) ?? 'PRO';
+    pedidoById.set(String(p.id), p);
+    const force = forceReprocess.delete(String(p.id));
+    if (!force) {
+      try {
+        if (await tryReuseReport(p, tier)) { console.log(`[motor-lote] ${p.placa} reutilizado (sin re-correr)`); await notifyReady(p, tier); continue; }
+      } catch (e) { console.warn('[dedup] verificación falló, regenero:', (e as Error).message); }
+    }
+    const sources = tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
+    orchJobs.push({ id: String(p.id), plate: p.placa, tier, sources: [...sources], outDir: plateDir(p.placa), results: [], percent: 0, done: false });
+  }
+  if (!orchJobs.length) return; // todos reutilizados
+  for (const j of orchJobs) { batchJobs.set(j.id, j); await mkdir(plateDir(j.plate), { recursive: true }).catch(() => {}); }
+  try {
+    await orchestrateBatch(orchJobs, {
+      laneConcurrency: LANE_CONCURRENCY,
+      lanes: buildBatchLanes({ captchaApiKey: KEY, captchaProvider: PROVIDER, headless: true }),
+      onJobDone: async (job) => {
+        const p = pedidoById.get(job.id)!;
+        console.log(`[motor-lote] ${p.placa} LISTO (${job.results.length}/${job.sources.length} fuentes)`);
+        await finalizeJob(p, job);
+      },
+    });
+  } catch (e) { console.warn('[motor-lote] orquestación falló:', (e as Error).message); }
+  finally {
+    for (const j of orchJobs) setTimeout(() => batchJobs.delete(j.id), 60000);
+    killEngineChrome(); // libera RAM al final del lote (el pool de historial cierra sus propios Chrome)
+  }
+}
+
+/**
+ * Bucle del motor automático: si está encendido y libre, reclama un LOTE (FIFO, atómico). 1 pedido
+ * → ruta single de siempre; ≥2 → motor por lotes (2 hilos historial + ligeras transpuestas).
+ */
 function startRunner(): void {
   setInterval(() => {
     if (!autoEngine || engineBusy) return;
     engineBusy = true; // toma el lock sincrónicamente para evitar carreras con /api/run
     void (async () => {
       try {
-        const p = await queue.next();
-        if (p) await processPedido(p);
+        const batch = await queue.claimBatch(BATCH_MAX);
+        if (batch.length === 0) return;
+        if (batch.length === 1) await processPedido(batch[0]!); // ya está 'procesando' (claim)
+        else await processBatch(batch);
       } catch (e) { console.warn('[motor-auto] ciclo:', (e as Error).message); }
       finally { engineBusy = false; }
     })();
