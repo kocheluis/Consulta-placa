@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import {
-  pedidoCreate, pedidoGet, pedidoNext, pedidoBoard, pedidoHistory,
+  pedidoCreate, pedidoGet, pedidoNext, pedidoClaimBatch, pedidoBoard, pedidoHistory,
   pedidoRequeue, pedidoRequeueStuck,
   pedidoSetProcessing, pedidoSetDone, pedidoSetError, pedidoSetDelivered,
 } from '../db/repo.js';
@@ -37,6 +37,8 @@ export interface PedidoQueue {
   kind: 'sqlite' | 'supabase';
   enqueue(p: { placa: string; whatsapp?: string; email?: string; tier?: string; origin?: string }): Promise<Pedido>;
   next(): Promise<Pedido | null>;
+  /** Reclama atómicamente hasta N pedidos pendientes (los marca 'procesando') para un lote. */
+  claimBatch(n: number): Promise<Pedido[]>;
   board(): Promise<Pedido[]>;
   /** Historial completo (todos los estados), más recientes primero. */
   history(limit?: number): Promise<Pedido[]>;
@@ -60,6 +62,7 @@ const sqliteQueue: PedidoQueue = {
     return pedidoGet(id) as Pedido;
   },
   async next() { return (pedidoNext() as Pedido) ?? null; },
+  async claimBatch(n) { return pedidoClaimBatch(n) as Pedido[]; },
   async board() { return pedidoBoard() as Pedido[]; },
   async history(limit = 100) { return pedidoHistory(limit) as Pedido[]; },
   async requeue(id) { pedidoRequeue(Number(id)); },
@@ -99,6 +102,16 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
       if (!r.ok) throw new Error(`supabase GET ${r.status}`);
       const rows = (await r.json()) as Record<string, unknown>[];
       return rows[0] ? map(rows[0]) : null;
+    },
+    async claimBatch(n) {
+      // Claim atómico en el servidor: PATCH con order+limit marca hasta N pendientes como
+      // 'procesando' y los devuelve (PostgREST permite UPDATE limitado con order+limit).
+      const r = await fetch(`${base}?estado=eq.pendiente&order=created_at.asc&limit=${Math.max(1, n)}`, {
+        method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' },
+        body: JSON.stringify({ estado: 'procesando', started_at: now() }),
+      });
+      if (!r.ok) throw new Error(`supabase claimBatch ${r.status}: ${await r.text()}`);
+      return ((await r.json()) as Record<string, unknown>[]).map(map);
     },
     async board() {
       const r = await fetch(`${base}?estado=in.(pendiente,procesando)&order=created_at.asc`, { headers });

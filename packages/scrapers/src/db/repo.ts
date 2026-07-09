@@ -86,11 +86,41 @@ export function pedidosPendientes(): PedidoRow[] {
   return getDb().select().from(schema.pedidos)
     .where(eq(schema.pedidos.estado, 'pendiente')).all();
 }
-/** El pedido pendiente más antiguo (FIFO) — lo que el motor debe atender ahora. */
+/** El pedido pendiente más antiguo (FIFO) — lo que el motor debe atender ahora.
+ *  Desempata por `id` (autoincrement) para un FIFO estable cuando dos pedidos comparten
+ *  `createdAt` (mismo milisegundo). */
 export function pedidoNext(): PedidoRow | undefined {
   return getDb().select().from(schema.pedidos)
     .where(eq(schema.pedidos.estado, 'pendiente'))
-    .orderBy(asc(schema.pedidos.createdAt)).limit(1).get();
+    .orderBy(asc(schema.pedidos.createdAt), asc(schema.pedidos.id)).limit(1).get();
+}
+/**
+ * Reclama ATÓMICAMENTE el pedido pendiente más antiguo: lo marca 'procesando' y lo
+ * devuelve. better-sqlite3 es síncrono, y el UPDATE es condicional (`WHERE estado=
+ * 'pendiente'`): si no afecta filas, otro consumidor lo tomó → reintenta con el siguiente.
+ * Devuelve undefined si no quedan pendientes. Base del claim del lote (2 hilos de historial).
+ */
+export function pedidoClaimNext(): PedidoRow | undefined {
+  const db = getDb();
+  for (;;) {
+    const row = pedidoNext();
+    if (!row) return undefined;
+    const r = db.update(schema.pedidos)
+      .set({ estado: 'procesando', startedAt: now() })
+      .where(and(eq(schema.pedidos.id, row.id!), eq(schema.pedidos.estado, 'pendiente'))).run();
+    if (Number((r as { changes?: number }).changes ?? 0) > 0) return { ...row, estado: 'procesando', startedAt: now() };
+    // 0 filas → otro consumidor lo reclamó entre el SELECT y el UPDATE: reintenta con el siguiente.
+  }
+}
+/** Reclama hasta N pedidos pendientes (FIFO) marcándolos 'procesando' — para procesarlos como lote. */
+export function pedidoClaimBatch(n: number): PedidoRow[] {
+  const out: PedidoRow[] = [];
+  for (let i = 0; i < Math.max(1, n); i++) {
+    const p = pedidoClaimNext();
+    if (!p) break;
+    out.push(p);
+  }
+  return out;
 }
 /** Tablero (marquesina): pendientes + en proceso, por orden de llegada. */
 export function pedidoBoard(): PedidoRow[] {
