@@ -46,8 +46,19 @@ export interface HistorialPoolOpts {
   runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void) => Promise<HistorialResult>;
 }
 
-/** Abre el Chrome CDP real de un slot SPRL (spawn + connectOverCDP). */
+/**
+ * Obtiene el Chrome CDP de un slot SPRL. CONECTAR-PRIMERO: si ya hay un Chrome en el puerto
+ * (p. ej. el keep-alive del VPS con la sesión SPRL CALIENTE), se conecta y NO lo cierra (matarlo
+ * perdería la sesión y forzaría re-login → lockout). Solo si nadie escucha, hace spawn propio (y
+ * sí lo cierra al terminar el lote). Evita chocar con el keep-alive por el mismo perfil/puerto.
+ */
 async function openSprl(slot: SprlSlot): Promise<{ browser: Browser | null; close: () => Promise<void> }> {
+  const url = `http://localhost:${slot.port}`;
+  try {
+    const browser = await chromium.connectOverCDP(url);
+    return { browser, close: async () => { /* no cerrar: la sesión la mantiene el keep-alive */ } };
+  } catch { /* nadie escuchando en el puerto → lo abrimos nosotros */ }
+
   const chrome = findChrome();
   if (!chrome) return { browser: null, close: async () => {} };
   const proc: ChildProcess = spawn(
@@ -58,7 +69,7 @@ async function openSprl(slot: SprlSlot): Promise<{ browser: Browser | null; clos
   let browser: Browser | null = null;
   for (let i = 0; i < 25 && !browser; i++) {
     await sleep(700);
-    try { browser = await chromium.connectOverCDP(`http://localhost:${slot.port}`); } catch { /* retry */ }
+    try { browser = await chromium.connectOverCDP(url); } catch { /* retry */ }
   }
   return {
     browser,
