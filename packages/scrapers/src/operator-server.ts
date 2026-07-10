@@ -122,6 +122,10 @@ const BASIC_CONCURRENCY = Math.max(1, Number(process.env.BASIC_CONCURRENCY ?? 3)
 // lote; LANE_CONCURRENCY = cuántos carriles (navegadores) corren a la vez (tope de RAM: 4 GB).
 const BATCH_MAX = Math.max(1, Number(process.env.BATCH_MAX ?? 8));
 const LANE_CONCURRENCY = Math.max(1, Number(process.env.BATCH_LANE_CONCURRENCY ?? 2));
+// Ventana de agrupación: al liberarse el motor, ESPERA este tiempo para que los pedidos que llegan
+// casi juntos entren al MISMO lote (y corran en paralelo) en vez de que el primero arranque solo.
+// 0 = desactivado. (Para un lote deliberado también sirve: apaga el motor, encola todo, prende.)
+const BATCH_WINDOW_MS = Math.max(0, Number(process.env.BATCH_WINDOW_MS ?? 6000));
 const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
@@ -439,6 +443,11 @@ function startRunner(): void {
     engineBusy = true; // toma el lock sincrónicamente para evitar carreras con /api/run
     void (async () => {
       try {
+        // ¿Hay algo pendiente? (lectura, no reclama todavía).
+        if (!(await queue.next())) return;
+        // Ventana de agrupación: deja que los pedidos casi-simultáneos se acumulen antes de reclamar
+        // → entran al MISMO lote y corren en paralelo (en vez de que el primero arranque solo).
+        if (BATCH_WINDOW_MS > 0) await new Promise((r) => setTimeout(r, BATCH_WINDOW_MS));
         const batch = await queue.claimBatch(BATCH_MAX);
         if (batch.length === 0) return;
         if (batch.length === 1) await processPedido(batch[0]!); // ya está 'procesando' (claim)
