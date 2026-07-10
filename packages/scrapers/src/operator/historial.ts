@@ -270,7 +270,9 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     };
     async function searchSiguelo(pg: Page, anioT: string, numeroT: string): Promise<string | null> {
       await pg.goto(SIGUELO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-      await wait(1800);
+      // En vez de wait(1800) ciego: espera a que el formulario esté en el DOM (señal de que el JS
+      // de la página ya cargó). 'attached' (no 'visible') porque el modal de T&C puede taparlo.
+      await pg.locator('#cboOficina').waitFor({ state: 'attached', timeout: 6000 }).catch(() => {});
       await aceptarTC(pg);
       await pg.locator('input[name="optradio"]').first().check().catch(() => {});
       await pg.selectOption('#cboOficina', { label: oficina }).catch(() => {});
@@ -285,16 +287,20 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (!(await buscar.isEnabled().catch(() => false))) return null;
       const respP = pg.waitForResponse((r) => /listarAsientos/i.test(r.url()), { timeout: 70000 }).catch(() => null);
       await buscar.click().catch(() => {});
-      await wait(4000);
-      // Clic en la pestaña/botón del asiento → dispara listarAsientos. ⚠️ SOLO estos selectores:
-      // los links "Ver anotación"/"Acceder al asiento/TIVE" NAVEGAN y rompen la captura (regresión).
+      // En vez de wait(4000) ciego: espera a que aparezca la pestaña/botón del asiento (el resultado
+      // real de Buscar). ⚠️ SOLO estos selectores: los links "Ver anotación"/"Acceder al asiento/TIVE"
+      // NAVEGAN y rompen la captura (regresión).
+      const asientoSel = 'button:has-text("Asiento de inscripción"), button:has-text("Asiento de inscripcion"), a:has-text("Asiento de inscripción"), a:has-text("Asiento de inscripcion"), [role="tab"]:has-text("Asiento")';
+      await pg.locator(asientoSel).first().waitFor({ state: 'visible', timeout: 6000 }).catch(() => {});
       for (const txt of ['Asiento de inscripción', 'Asiento de inscripcion', 'Asiento']) {
         const el = pg.locator(`button:has-text("${txt}"), a:has-text("${txt}"), [role="tab"]:has-text("${txt}")`).first();
-        if (await el.isVisible().catch(() => false)) { await el.click().catch(() => {}); await wait(3000); break; }
+        if (await el.isVisible().catch(() => false)) { await el.click().catch(() => {}); break; }
       }
+      // El "ojo" abre el asiento y dispara listarAsientos → espéralo (hasta 3s) en vez de wait(3000) fijo.
       const ojo = pg.locator('button:has(i.fa-eye), a:has(i.fa-eye), .fa-eye, button.btn-success, [title*="ver" i], [title*="asiento" i]').first();
+      await ojo.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
       if (await ojo.isVisible().catch(() => false)) { await ojo.click().catch(() => {}); }
-      const resp = await respP;
+      const resp = await respP; // la respuesta listarAsientos ES la señal real de "listo"
       if (!resp) return null;
       const body = (await resp.json().catch(() => null)) as { cmVzcG9uc2U?: string } | null;
       const dec = body?.cmVzcG9uc2U ? sgDecrypt(body.cmVzcG9uc2U) : null;
