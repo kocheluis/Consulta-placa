@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { createCaptchaSolver, type CaptchaSolver } from '../captcha/index.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { scrapeAtuViaCdp } from './atu-cdp.js';
+import { scrapeSigmViaCdp } from './sigm-cdp.js';
 import { runHistorialRegistral } from './historial.js';
 import { runHistorialPool, type HistorialResult } from './historial-pool.js';
 import { runLightLane } from './source-lane.js';
@@ -51,6 +52,7 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'sbs-soat', label: 'SBS · siniestralidad + CAT taxis (SOAT congelado may-2024)', default: true },
   { id: 'apeseg-soat', label: 'APESEG · SOAT vigente (tiempo real)', default: true },
   { id: 'atu', label: 'ATU · Taxi/transporte (Lima/Callao)', default: true },
+  { id: 'sigm', label: 'SIGM · Gravámenes / garantías mobiliarias (CDP)', default: true },
   { id: 'sunarp', label: 'SUNARP · Identidad y titular (CDP · Chrome)', default: false },
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },
@@ -122,7 +124,8 @@ export async function runOperatorReport(
   const wantSuperbid = wanted.includes('superbid');
   // 'atu' va por CDP (Chrome real, reCAPTCHA v3 nativo), NO por el burst headless de Playwright.
   const wantAtu = wanted.includes('atu');
-  const browserSources = wanted.filter((s) => !['sunarp', 'historial', 'superbid', 'atu'].includes(s) && SOURCE_RUNNERS[s]);
+  const wantSigm = wanted.includes('sigm');
+  const browserSources = wanted.filter((s) => !['sunarp', 'historial', 'superbid', 'atu', 'sigm'].includes(s) && SOURCE_RUNNERS[s]);
 
   let results: OperatorSourceResult[] = [];
   // Solo lanzamos el Chromium "burst" (Playwright bundled, headless) si hay fuentes
@@ -151,6 +154,7 @@ export async function runOperatorReport(
 
   if (wantSunarp) results.push(await runSunarpSource(plate, solver, shot('sunarp'), opts));
   if (wantAtu) results.push(await runAtuSource(plate, shot('atu'), opts));
+  if (wantSigm) results.push(await runSigmSource(plate, shot('sigm'), opts));
   if (wantHistorial) results.push(await runHistorialSource(plate, shot('historial'), opts));
   if (wantSuperbid) results.push(await runSuperbidSource(plate, shot('superbid'), opts));
 
@@ -173,6 +177,7 @@ export async function runSingleSource(
   startLog(opts.outDir, sourceId, plate);
   if (sourceId === 'sunarp') return await runSunarpSource(plate, solver, shot, opts);
   if (sourceId === 'atu') return await runAtuSource(plate, shot, opts);
+  if (sourceId === 'sigm') return await runSigmSource(plate, shot, opts);
   if (sourceId === 'historial') return await runHistorialSource(plate, shot, opts);
   if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
   const runner = SOURCE_RUNNERS[sourceId];
@@ -253,6 +258,37 @@ async function runAtuSource(
     return { ...base, status: 'ERROR', summary: r.error ?? 'ATU no disponible', ms: Date.now() - t0 };
   } catch (e) {
     logLine(outDir, 'atu', `ERROR ${(e as Error).message}`);
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+/**
+ * SIGM (garantías mobiliarias / gravámenes) por CDP: Turnstile pasivo + consulta "Por Bien"→Placa,
+ * captura y descifra /gratuita/busqueda. Devuelve `source: 'SIGM'` → report-transform lo mapea a
+ * GRAVAMENES (reemplaza el heurístico de asientos cuando está disponible).
+ */
+async function runSigmSource(
+  plate: string,
+  shotPath: string,
+  _opts: OperatorReportOptions,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SIGM', label: 'SIGM · Gravámenes / garantías mobiliarias', category: 'REGISTRAL' };
+  const outDir = shotPath.replace(/[/\\][^/\\]+$/, '');
+  startLog(outDir, 'sigm', plate);
+  logLine(outDir, 'sigm', 'CDP híbrido (Turnstile pasivo) → /gratuita/busqueda (AES)');
+  try {
+    const r = await scrapeSigmViaCdp(plate, { shotPath, log: (m) => logLine(outDir, 'sigm', m) });
+    if (r.ok) {
+      const n = r.data?.total ?? 0;
+      const summary = n > 0 ? `${n} garantía(s) mobiliaria(s) vigente(s)` : 'Sin garantías mobiliarias vigentes';
+      logLine(outDir, 'sigm', `RESULTADO ${r.status} · ${summary} · ${Date.now() - t0}ms`);
+      return { ...base, status: r.status, summary, data: r.data, screenshot: shotPath, ms: Date.now() - t0 };
+    }
+    logLine(outDir, 'sigm', `ERROR ${r.error ?? 'no disponible'}`);
+    return { ...base, status: 'ERROR', summary: r.error ?? 'SIGM no disponible', ms: Date.now() - t0 };
+  } catch (e) {
+    logLine(outDir, 'sigm', `ERROR ${(e as Error).message}`);
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
 }
@@ -367,6 +403,10 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
   // ATU: por placa (CDP reCAPTCHA v3 nativo).
   lanes.push({ sources: ['atu'], run: async (plates, report) => {
     for (const p of plates) report(p.plate, await runAtuSource(p.plate, join(p.outDir, 'atu.png'), baseOpts(p.outDir)));
+  } });
+  // SIGM: por placa (CDP Turnstile pasivo → /gratuita/busqueda descifrado).
+  lanes.push({ sources: ['sigm'], run: async (plates, report) => {
+    for (const p of plates) report(p.plate, await runSigmSource(p.plate, join(p.outDir, 'sigm.png'), baseOpts(p.outDir)));
   } });
   // Superbid: lookup en DB (instantáneo).
   lanes.push({ sources: ['superbid'], run: async (plates, report) => {

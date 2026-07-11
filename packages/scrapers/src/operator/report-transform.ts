@@ -59,6 +59,24 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const at = generatedAt;
   const src: SourceResult[] = [];
 
+  // GRAVAMENES: SIGM (garantías mobiliarias VIGENTES) es la fuente autoritativa. Si respondió,
+  // reemplaza al heurístico de asientos (más abajo). SIGM cubre prendas/garantías, NO embargos
+  // judiciales. El acreedor/monto no vienen en la lista (están en el "Detalle" → fase 2).
+  const sigmRes = by('SIGM');
+  const sigmOk = !!sigmRes && (sigmRes.status === 'ENCONTRADO' || sigmRes.status === 'SIN_REGISTRO');
+  if (sigmOk) {
+    const sd = data(sigmRes);
+    const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => ({
+      type: 'Garantía mobiliaria',
+      creditor: null,
+      amount: null,
+      date: (f.fechaInscripcion as string) || null,
+      status: String(f.ultimaOperacion ?? '').toUpperCase() || 'VIGENTE',
+    } as GravamenItem));
+    const sigmPayload: GravamenesPayload = { hasLiens: Boolean(sd.hasLiens) || sigmItems.length > 0, total: sigmItems.length, items: sigmItems };
+    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SIGM, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: sigmPayload });
+  }
+
   // ── REGISTRAL + vehículo + titular (SUNARP) ──
   const sunarp = by('SUNARP');
   if (sunarp) {
@@ -303,7 +321,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       total: gravItems.length,
       items: gravItems,
     };
-    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: grav });
+    if (!sigmOk) src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: grav }); // SIGM manda si respondió
     const titulos = (hd.titulos ?? []) as unknown[];
     // Un mismo asiento (título AAAA-NNNNNN) puede traer VARIAS acciones (dos compra-ventas en
     // tracto sucesivo, o cancelación + compra-venta). Se agrupan por asiento: el reporte cuenta
@@ -348,7 +366,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // omitían estas secciones → la web las pintaba como "Próximamente" (engañoso: sí las
     // ofrecemos, solo que esta consulta falló). Emitirlas como UNAVAILABLE hace que la web
     // muestre "no disponible / reintentar" en su lugar. Ver riesgo de UX de fuente fallida.
-    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    if (!sigmOk) src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at }); // SIGM ya la cubrió
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   }

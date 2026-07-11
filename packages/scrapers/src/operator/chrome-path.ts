@@ -67,6 +67,8 @@ export function killEngineChrome(): void {
     // Superbid en el reporte es lookup en DB (sin navegador); puerto propio 9226 SOLO para no
     // aliasar el 9225 de la 2ª cuenta SPRL (si algún día vuelve a abrir Chrome, no la mata).
     Number(process.env.CDP_SUPERBID_PORT ?? 9226),
+    Number(process.env.CDP_ATU_PORT ?? 9226), // ATU (CDP reCAPTCHA v3)
+    Number(process.env.CDP_SIGM_PORT ?? 9227), // SIGM (CDP Turnstile)
   ])];
   for (const p of ports) {
     try { execFile('pkill', ['-f', `remote-debugging-port=${p}`], () => {}); } catch { /* noop */ }
