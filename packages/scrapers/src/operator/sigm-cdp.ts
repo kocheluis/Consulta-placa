@@ -3,6 +3,9 @@ import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
 import { chromium, type Browser, type Page } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
+import { pdfBytesToText } from './asiento-parser.js';
+
+const SIGM_DEBUG = !!process.env.SIGM_DEBUG;
 
 /**
  * SIGM (Sistema Informativo de Garantías Mobiliarias, SUNARP) por HÍBRIDO CDP — la misma vía
@@ -40,6 +43,10 @@ export interface SigmFolio {
   fechaInscripcion: string | null;
   ultimaOperacion: string | null;
   partida: string | null;
+  /** Acreedor (del Detalle §3): denominación/RUC. Solo cuando se pudo abrir el Detalle. */
+  acreedor?: string | null;
+  /** Descripción del incumplimiento (del Detalle §5), cuando está EN EJECUCIÓN. */
+  incumplimiento?: string | null;
 }
 export interface CdpSigmOptions {
   /** Puerto CDP (default 9227 / env CDP_SIGM_PORT). Distinto de ATU (:9226) para no chocar. */
@@ -118,6 +125,79 @@ async function cerrarModal(page: Page, log: (m: string) => void): Promise<void> 
   }
 }
 
+const isPdf = (b: Buffer): boolean => b.length > 4 && b.subarray(0, 5).toString('latin1') === '%PDF-';
+
+/** Busca recursivamente un array de bytes de PDF (empieza en %PDF = 0x25 0x50 0x44 0x46) en un objeto. */
+function findPdfBytes(o: unknown): number[] | null {
+  if (Array.isArray(o)) {
+    if (o.length > 4 && o[0] === 0x25 && o[1] === 0x50 && o[2] === 0x44 && o[3] === 0x46) return o as number[];
+    return null;
+  }
+  if (o && typeof o === 'object') {
+    for (const v of Object.values(o as Record<string, unknown>)) { const r = findPdfBytes(v); if (r) return r; }
+  }
+  return null;
+}
+
+/** Extrae acreedor (§3) + descripción del incumplimiento (§5) del texto plano del PDF del Detalle.
+ *  Best-effort sobre el texto aplanado; se afina con el dump SIGM_DEBUG contra el formato real. */
+function extraerAcreedorIncumplimiento(text: string): { acreedor: string | null; incumplimiento: string | null } {
+  const flat = text.replace(/\s+/g, ' ');
+  let acreedor: string | null = null;
+  const accBlock = /ACREEDOR([\s\S]{0,700}?)(REPRESENTANTE|INCUMPLIMIENTO|DESCRIPCI[ÓO]N)/i.exec(flat)?.[1] ?? '';
+  const denom = /([A-ZÁÉÍÓÚÑ0-9&.,\- ]{6,90}?(?:S\.?R\.?L|S\.?A\.?C?|E\.?I\.?R\.?L|SOCIEDAD|ASOCIADOS)\.?[A-ZÁÉÍÓÚÑ0-9&.,\- ]{0,25})/.exec(accBlock)?.[1]?.replace(/\s+/g, ' ').trim() ?? null;
+  const ruc = /\b(20\d{9})\b/.exec(accBlock)?.[1] ?? null;
+  if (denom || ruc) acreedor = [denom, ruc ? `RUC ${ruc}` : null].filter(Boolean).join(' · ');
+  let incumplimiento: string | null = null;
+  const inc = /INCUMPLIMIENTO\s*([\s\S]{0,900}?)(DESCRIPCI[ÓO]N DE LOS BIENES|BIENES A EJECUTAR|\bN?\d\.\s*DESCRIPCI)/i.exec(flat)?.[1];
+  if (inc) { const t = inc.replace(/\s+/g, ' ').trim(); if (t.length > 15) incumplimiento = t.slice(0, 500); }
+  return { acreedor, incumplimiento };
+}
+
+/**
+ * Abre el "Detalle" del 1er folio (ícono de la última columna → visor PDF) y captura el PDF para
+ * extraer ACREEDOR (§3) + DESCRIPCIÓN DEL INCUMPLIMIENTO (§5). NO extrae el deudor/garante (§2):
+ * es PII de tercero (riesgo L-01). No fatal: si falla, el resultado de la lista igual sirve.
+ */
+async function capturarDetalle(page: Page, log: (m: string) => void): Promise<{ acreedor: string | null; incumplimiento: string | null } | null> {
+  const bufs: Buffer[] = [];
+  const grabbed: Array<{ ct: string; size: number }> = [];
+  const onResp = (resp: import('playwright').Response): void => {
+    const u = resp.url();
+    const ct = resp.headers()['content-type'] ?? '';
+    if (/\.(js|css|png|svg|woff2?|ttf|otf|eot|gif|ico|map)(\?|$)/i.test(u)) return;
+    if (!(/pdf/i.test(ct) || /json/i.test(ct) || /detalle|formulario|documento|pdf|reporte|visor|garantia/i.test(u))) return;
+    void resp.body().then((b) => { bufs.push(b); grabbed.push({ ct, size: b.length }); }).catch(() => {});
+  };
+  page.on('response', onResp);
+  try {
+    const icon = page.locator('table tbody td:last-child button, table tbody td:last-child a, table tbody td:last-child .anticon, table tbody td:last-child [nz-icon], table tbody td:last-child svg').last();
+    await icon.click({ force: true, timeout: 5000 }).catch((e) => log(`detalle click: ${(e as Error).message}`));
+    for (let i = 0; i < 15 && !bufs.some(isPdf); i++) await wait(1000);
+  } finally {
+    page.off('response', onResp);
+  }
+
+  let text = '';
+  for (const b of bufs) {
+    if (isPdf(b)) { try { text += ' ' + pdfBytesToText(Array.from(b)); } catch { /* */ } continue; }
+    try {
+      const j = JSON.parse(b.toString('utf8')) as { cmVzcG9uc2U?: string };
+      const dec = j.cmVzcG9uc2U ? sigmDecrypt(j.cmVzcG9uc2U) : null;
+      if (dec) {
+        const o = (() => { try { return JSON.parse(dec); } catch { return null; } })();
+        const bytes = findPdfBytes(o);
+        if (bytes) { try { text += ' ' + pdfBytesToText(bytes); } catch { /* */ } }
+        else text += ' ' + dec;
+      }
+    } catch { /* no era JSON */ }
+  }
+  if (SIGM_DEBUG) log(`[DETALLE] respuestas: ${grabbed.map((g) => `${(g.ct.split(';')[0] || '?')}:${g.size}`).join(', ') || '(ninguna)'} · texto ${text.length} chars`);
+  if (SIGM_DEBUG && text) log(`[DETALLE-TEXT] ${text.slice(0, 3500)} [/DETALLE-TEXT]`);
+  if (!text.trim()) return null;
+  return extraerAcreedorIncumplimiento(text);
+}
+
 export async function scrapeSigmViaCdp(plateRaw: string, opts: CdpSigmOptions = {}): Promise<CdpSigmResult> {
   const log = opts.log ?? (() => {});
   const plate = plateRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -171,6 +251,14 @@ export async function scrapeSigmViaCdp(plateRaw: string, opts: CdpSigmOptions = 
       partida: str(f.numPartida),
     }));
     const hasLiens = items.length > 0;
+    // Detalle (acreedor §3 + incumplimiento §5) del 1er folio — solo si hay garantía.
+    if (hasLiens) {
+      try {
+        const det = await capturarDetalle(page, log);
+        if (det && items[0]) { items[0].acreedor = det.acreedor; items[0].incumplimiento = det.incumplimiento; }
+        if (det?.acreedor) log(`acreedor: ${det.acreedor}`);
+      } catch (e) { log(`detalle: ${(e as Error).message}`); }
+    }
     log(`RESULTADO ${hasLiens ? `${items.length} garantía(s) vigente(s)` : 'sin garantías vigentes'}`);
     return { ok: true, status: hasLiens ? 'ENCONTRADO' : 'SIN_REGISTRO', data: { hasLiens, total: items.length, items } };
   } catch (e) {

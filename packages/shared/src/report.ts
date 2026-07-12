@@ -238,6 +238,10 @@ export interface GravamenItem {
   date: string | null;
   /** VIGENTE / LEVANTADO. */
   status: string;
+  /** Motivo/descripción del incumplimiento (SIGM, cuando la garantía está EN EJECUCIÓN). */
+  detail?: string | null;
+  /** Folio causal electrónico (SIGM), para trazabilidad. */
+  folio?: string | null;
 }
 
 /** Payload de la sección GRAVAMENES (SIGM — garantías mobiliarias + cargas SUNARP). */

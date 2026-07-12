@@ -68,10 +68,12 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const sd = data(sigmRes);
     const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => ({
       type: 'Garantía mobiliaria',
-      creditor: null,
+      creditor: (f.acreedor as string) || null, // del Detalle §3 (acreedor); el deudor §2 NO se expone (PII/L-01)
       amount: null,
       date: (f.fechaInscripcion as string) || null,
       status: String(f.ultimaOperacion ?? '').toUpperCase() || 'VIGENTE',
+      detail: (f.incumplimiento as string) || null, // del Detalle §5 (descripción del incumplimiento)
+      folio: (f.folio as string) || null,
     } as GravamenItem));
     const sigmPayload: GravamenesPayload = { hasLiens: Boolean(sd.hasLiens) || sigmItems.length > 0, total: sigmItems.length, items: sigmItems };
     src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SIGM, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: sigmPayload });
