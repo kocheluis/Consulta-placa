@@ -69,7 +69,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => ({
       type: 'Garantía mobiliaria',
       creditor: (f.acreedor as string) || null, // del Detalle §3 (acreedor); el deudor §2 NO se expone (PII/L-01)
-      amount: null,
+      amount: (f.amount as number) ?? null, // monto de ejecución (Detalle)
       date: (f.fechaInscripcion as string) || null,
       status: String(f.ultimaOperacion ?? '').toUpperCase() || 'VIGENTE',
       detail: (f.incumplimiento as string) || null, // del Detalle §5 (descripción del incumplimiento)

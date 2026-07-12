@@ -23,6 +23,7 @@
     "drizzle-orm": "^0.36.0",
     "node-html-parser": "^6.1.13",
     "patchright": "^1.61.0",
+    "pdfjs-dist": "^6.1.200",
     "playwright": "^1.49.1",
     "tesseract.js": "^5.1.1"
   },
