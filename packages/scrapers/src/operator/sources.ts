@@ -49,7 +49,7 @@ export async function runSatCaptura(
   const t0 = Date.now();
   const base = { source: 'SAT_CAPTURA', label: 'SAT Lima · Orden de captura', category: 'CAPTURA' };
   try {
-    await page.goto('https://www.sat.gob.pe/VirtualSAT/modulos/Capturas.aspx', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto('https://www.sat.gob.pe/VirtualSAT/modulos/Capturas.aspx', { waitUntil: 'domcontentloaded', timeout: 60000 });
     const img = page.locator('img.captcha_class').first();
     const plateInput = page.locator('#ctl00_cplPrincipal_txtPlaca');
     const capInput = page.locator('#ctl00_cplPrincipal_txtCaptcha');
@@ -59,11 +59,11 @@ export async function runSatCaptura(
     let cap = '';
 
     for (let i = 1; i <= 3; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(800); }
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(800); }
       await plateInput.fill(plate);
       cap = await readCaptcha(solver, img);
       await capInput.fill(cap);
-      await Promise.all([page.waitForLoadState('networkidle').catch(() => {}), submit.click()]);
+      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), submit.click()]);
       let body = '';
       for (let k = 0; k < 10; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (RESULT.test(body) || ERR.test(body)) break; }
       if (RESULT.test(body)) {
@@ -92,7 +92,7 @@ export async function runCallao(
   try {
     let dialog = '';
     page.on('dialog', (d) => { dialog = d.message(); d.accept().catch(() => {}); });
-    await page.goto('https://pagopapeletascallao.pe/', { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto('https://pagopapeletascallao.pe/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(1500);
     const tipo = page.locator('#tipo_busqueda');
     const selectPlaca = async () => {
@@ -112,7 +112,7 @@ export async function runCallao(
     let cap = '';
 
     for (let i = 1; i <= 5; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); }
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1500); }
       await selectPlaca();
       await valor.fill(plate);
       dialog = '';
@@ -268,7 +268,9 @@ export async function runApeseg(
   const base = { source: 'APESEG_SOAT', label: 'APESEG · SOAT (tiempo real)', category: 'SEGUROS' };
   const toTs = (d?: string): number => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d ?? ''); return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0; };
   try {
-    await page.goto('https://www.soat.com.pe/servicios-soat/', { waitUntil: 'networkidle', timeout: 60000 });
+    // 'domcontentloaded' (NO 'networkidle'): soat.com.pe tiene tráfico de fondo perpetuo (analytics/chat)
+    // → 'networkidle' se cuelga 60s aunque la página cargó. Abajo se espera el formulario real (placaInput).
+    await page.goto('https://www.soat.com.pe/servicios-soat/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(2500);
     // frameLocator re-resuelve el iframe en cada uso (resiliente a recargas para pedir un captcha nuevo).
     const fl = page.frameLocator('iframe[src*="consulta-soat"], iframe[src*="webapp.apeseg"]');
@@ -278,7 +280,7 @@ export async function runApeseg(
 
     let certs: Array<Record<string, unknown>> | null = null;
     for (let i = 1; i <= 4 && !certs; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }).catch(() => {}); await wait(2000); } // captcha nuevo
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(2000); } // captcha nuevo
       await placaInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       await wait(500);
@@ -356,7 +358,7 @@ export async function runSbs(
   const toTs = (d?: string): number => { const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(d ?? ''); return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : 0; };
   type Pol = { tipo: string; compania: string; clase: string; uso: string; accidentes: number; poliza: string; certificado: string; inicio: string; fin: string };
   try {
-    await page.goto(URL, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     // Los 3 tipos del portal. Se consultan TODOS (los siniestros pueden ir bajo cualquiera).
     const TIPOS = [
       { key: 'SOAT', radio: '#ctl00_MainBodyContent_rblOpcionesSeguros_0' },
@@ -374,8 +376,8 @@ export async function runSbs(
         // inicializado, botón habilitado, sin overlay; un goto re-inicializa reCAPTCHA y bloquea el botón).
         if (attemptNo > 0) {
           const nueva = page.locator('a:has-text("Nueva consulta")').first();
-          if (await nueva.count()) { await nueva.click().catch(() => {}); await page.waitForLoadState('networkidle').catch(() => {}); await wait(800); }
-          else { await page.goto(URL, { waitUntil: 'networkidle' }); await wait(800); }
+          if (await nueva.count()) { await nueva.click().catch(() => {}); await page.waitForLoadState('domcontentloaded').catch(() => {}); await wait(800); }
+          else { await page.goto(URL, { waitUntil: 'domcontentloaded' }); await wait(800); }
         }
         attemptNo++;
         await page.locator(tipo.radio).check().catch(() => {});
@@ -386,7 +388,7 @@ export async function runSbs(
         );
         await page.evaluate("(function(){var b=document.querySelector('#ctl00_MainBodyContent_btnIngresarPla');if(b){b.classList.remove('disabled');b.click();}})()");
         await wait(5000);
-        await page.waitForLoadState('networkidle').catch(() => {});
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
         const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
         if (!OK.test(body)) continue; // reCAPTCHA rechazado / sin respuesta → reintenta este tipo
         respondedAny = true;
@@ -438,7 +440,7 @@ export async function runSatPapeletas(
   const base = { source: 'SAT_PAPELETAS', label: 'SAT Lima · Papeletas', category: 'PAPELETAS' };
   const PAGE_URL = 'https://www.sat.gob.pe/VirtualSAT/modulos/papeletas.aspx';
   try {
-    await page.goto(PAGE_URL, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(2000);
     const menuFrame = page.frames().find((f) => /bienvenida/i.test(f.url())) ?? page.mainFrame();
     const link = menuFrame.locator('a[href*="papeletas.aspx"]').first();
@@ -495,7 +497,7 @@ export async function runAtu(
   const base = { source: 'ATU', label: 'ATU · Taxi/transporte', category: 'TRANSPORTE' };
   const ATU_URL = 'https://soluciones.atu.gob.pe/ConsultaVehiculo';
   try {
-    await page.goto(ATU_URL, { waitUntil: 'networkidle', timeout: 60000 });
+    await page.goto(ATU_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(1500);
     // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
     const acceptCookies = async (): Promise<void> => {
@@ -517,7 +519,7 @@ export async function runAtu(
     };
 
     for (let i = 1; i <= 3; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'networkidle' }); await wait(1500); await acceptCookies(); await wait(400); }
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1500); await acceptCookies(); await wait(400); }
       await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await plateInput.fill(plate);
       const rc = await getRc();
