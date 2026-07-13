@@ -1232,10 +1232,15 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
   const vigentes = g.items.filter((it) => it.status !== 'LEVANTADO');
   const levantados = g.items.filter((it) => it.status === 'LEVANTADO');
   const list = vigentes.length > 0 ? vigentes : g.items;
+  const enEjecucion = list.some((it) => /EJECUCI/i.test(it.status ?? ''));
   const MAX = 6;
   return (
     <div className="flex flex-col gap-3">
-      {g.hasLiens ? (
+      {enEjecucion ? (
+        <StatusLine tone="danger" icon="gavel">
+          Garantía mobiliaria EN EJECUCIÓN — el acreedor inició la ejecución de la prenda por falta de pago (el vehículo está siendo recuperado). No concretes la compra sin cancelar y levantar la carga.
+        </StatusLine>
+      ) : g.hasLiens ? (
         <StatusLine tone="warning" icon="account_balance">
           Registra gravamen/carga — el vehículo podría estar en garantía de un crédito
         </StatusLine>
@@ -1255,19 +1260,26 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
         <div key={i} className="rounded-lg border border-border bg-surface p-3">
           <div className="flex items-center justify-between gap-2">
             <span className="font-body text-[14px] font-semibold text-foreground">{it.type}</span>
-            {it.status === 'LEVANTADO' && (
-              <Badge tone="neutral" size="sm" icon={null}>
-                Levantado
-              </Badge>
-            )}
+            {/EJECUCI/i.test(it.status ?? '') ? (
+              <Badge tone="danger" size="sm" icon={null}>En ejecución</Badge>
+            ) : it.status === 'LEVANTADO' ? (
+              <Badge tone="neutral" size="sm" icon={null}>Levantado</Badge>
+            ) : null}
           </div>
           <DefGrid
             items={[
               ['Acreedor', it.creditor],
               ['Monto', it.amount != null ? `S/ ${it.amount.toFixed(2)}` : null],
               ['Fecha', it.date],
+              ['Folio', it.folio ?? null],
             ]}
           />
+          {it.detail && (
+            <p className="mt-2 rounded-md border border-border bg-muted/5 p-2 font-body text-[13px] text-muted">
+              <span className="font-semibold text-foreground">Motivo del incumplimiento: </span>
+              {it.detail}
+            </p>
+          )}
         </div>
       ))}
       {list.length > MAX && (
