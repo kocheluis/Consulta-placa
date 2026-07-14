@@ -13,7 +13,7 @@ import { publishReport, fetchReport, fetchReportsMeta } from './operator/report-
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
-import type { Report } from '@app/shared';
+import { SectionKind, SectionStatus, type Report } from '@app/shared';
 
 // Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, CapSolver…), sin hornearlos
 // en pm2. Es la FUENTE DE VERDAD: el archivo GANA sobre el entorno de pm2 (así un valor
@@ -470,6 +470,37 @@ const sendJson = (res: import('node:http').ServerResponse, code: number, obj: un
   res.end(JSON.stringify(obj));
 };
 
+/**
+ * Persiste un RETRY exitoso: reemplaza el resultado de esa fuente en el `reporte.json` de la placa
+ * y RE-PUBLICA el reporte del usuario, preservando IA/valorización ya calculadas (para no re-correr
+ * la IA). Así el reintento "pisa" el error tanto en la consola (al refrescar) como en el reporte del cliente.
+ */
+async function mergeRetryIntoReport(plate: string, result: OperatorSourceResult): Promise<void> {
+  const norm = (s: string) => s.toLowerCase().replace(/_/g, '-');
+  const file = join(plateDir(plate), 'reporte.json');
+  let raw: { generatedAt?: string; results?: OperatorSourceResult[] } = {};
+  try { raw = JSON.parse(await readFile(file, 'utf8')) as typeof raw; } catch { /* reporte.json nuevo */ }
+  const results = raw.results ?? [];
+  const i = results.findIndex((r) => norm(r.source) === norm(result.source));
+  if (i >= 0) results[i] = result; else results.push(result);
+  const generatedAt = raw.generatedAt ?? new Date().toISOString();
+  await mkdir(plateDir(plate), { recursive: true }).catch(() => {});
+  await writeFile(file, JSON.stringify({ plate, generatedAt, results }, null, 2), 'utf8');
+
+  // Re-publica: reconstruye desde los resultados y CONSERVA IA/VALORIZACION del reporte vivo.
+  const existing = await fetchReport(plate);
+  let report = toWebReport(plate, results, generatedAt, existing?.pedidoId ?? String(Date.now()));
+  if (existing?.report) {
+    const keep = (k: unknown) => k === SectionKind.IA || k === SectionKind.VALORIZACION;
+    const preserved = existing.report.sections.filter((s) => keep(s.kind) && s.status === SectionStatus.AVAILABLE);
+    if (preserved.length) {
+      const kinds = new Set(preserved.map((s) => s.kind));
+      report = { ...report, sections: [...report.sections.filter((s) => !kinds.has(s.kind)), ...preserved] };
+    }
+  }
+  await publishReport(plate, report, { userId: existing?.userId ?? null, pedidoId: existing?.pedidoId ?? null });
+}
+
 const server = createServer(async (req, res) => {
   try {
     const url = new URL(req.url ?? '/', `http://localhost:${PORT}`);
@@ -629,6 +660,12 @@ const server = createServer(async (req, res) => {
       if (!plate || !source) return sendJson(res, 400, { error: 'falta placa o source' });
       console.log(`[operador] retry ${plate} · ${source}`);
       const result = await runSingleSource(plate, source, baseOpts(plate, source));
+      // Persiste el retry EXITOSO: pisa el error en reporte.json + RE-PUBLICA el reporte del usuario
+      // (así el reintento "chanca" el error tanto en la consola como en el reporte del cliente).
+      if (result.status === 'ENCONTRADO' || result.status === 'SIN_REGISTRO') {
+        try { await mergeRetryIntoReport(plate, result); console.log(`[retry] ${plate}/${source} persistido + republicado`); }
+        catch (e) { console.warn('[retry] persistencia falló:', (e as Error).message); }
+      }
       return sendJson(res, 200, result);
     }
 

@@ -13,21 +13,26 @@ const norm = (p: string): string => p.toUpperCase().replace(/[^A-Z0-9]/g, '');
  * decidir el REÚSO: si es reciente y del mismo dueño, no hace falta re-correr las fuentes.
  * Devuelve null si Supabase no está configurado o no hay reporte.
  */
-export async function fetchReport(placa: string): Promise<{ report: Report; updatedAt: string } | null> {
+export async function fetchReport(placa: string): Promise<{ report: Report; updatedAt: string; userId: string | null; pedidoId: string | null } | null> {
   const url = process.env.SUPABASE_URL;
   const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!url || !key) return null;
   const headers = { apikey: key, Authorization: `Bearer ${key}` };
   try {
     const r = await fetch(
-      `${url.replace(/\/$/, '')}/rest/v1/reportes?placa=eq.${encodeURIComponent(norm(placa))}&select=report,updated_at&limit=1`,
+      `${url.replace(/\/$/, '')}/rest/v1/reportes?placa=eq.${encodeURIComponent(norm(placa))}&select=report,updated_at,user_id,pedido_id&limit=1`,
       { headers },
     );
     if (!r.ok) return null;
-    const rows = (await r.json()) as Array<{ report?: Report; updated_at?: string }>;
+    const rows = (await r.json()) as Array<{ report?: Report; updated_at?: string; user_id?: string | null; pedido_id?: string | number | null }>;
     const row = rows[0];
     if (!row?.report) return null;
-    return { report: row.report, updatedAt: row.updated_at ?? new Date().toISOString() };
+    return {
+      report: row.report,
+      updatedAt: row.updated_at ?? new Date().toISOString(),
+      userId: row.user_id ?? null,
+      pedidoId: row.pedido_id != null ? String(row.pedido_id) : null,
+    };
   } catch (e) {
     console.warn('[reportes] fetch falló:', (e as Error).message);
     return null;
