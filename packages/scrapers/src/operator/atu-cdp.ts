@@ -53,7 +53,14 @@ async function connectOrLaunch(port: number, profileDir: string, chrome: string,
     return b;
   } catch {
     log(`lanzando Chrome limpio (CDP :${port})…`);
-    const proc = spawn(chrome, [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, ...chromeFlags(), URL], { detached: false, stdio: 'ignore' });
+    // Proxy RESIDENCIAL opcional (env ATU_PROXY / CDP_PROXY, formato host:puerto): el reCAPTCHA v3
+    // de ATU puntúa por reputación de IP → desde el VPS (datacenter) el score es bajo y rechaza.
+    // Con un proxy residencial (auth por WHITELIST de la IP del VPS; Chrome no acepta user:pass
+    // inline en --proxy-server) el v3 pasa. Sin proxy → sin cambio (comportamiento actual).
+    const proxy = process.env.ATU_PROXY ?? process.env.CDP_PROXY ?? '';
+    if (proxy) log(`vía proxy residencial ${proxy}`);
+    const flags = [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, ...chromeFlags(), ...(proxy ? [`--proxy-server=${proxy}`] : []), URL];
+    const proc = spawn(chrome, flags, { detached: false, stdio: 'ignore' });
     proc.on('error', (e) => log(`spawn chrome: ${e.message}`));
     for (let i = 0; i < 20; i++) {
       await wait(700);
@@ -165,7 +172,7 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       };
     }
     if (opts.shotPath) await page.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
-    return { ok: false, status: 'ERROR', error: `reCAPTCHA v3 rechazado tras ${retries + 1} intento(s) (¿IP no residencial?)` };
+    return { ok: false, status: 'ERROR', error: `reCAPTCHA v3 rechazó la IP tras ${retries + 1} intento(s) — el score de la IP del VPS (datacenter) es bajo. Requiere IP residencial: configura ATU_PROXY (proxy residencial con IP whitelisteada) o corre esta fuente desde la PC.` };
   } catch (e) {
     return { ok: false, status: 'ERROR', error: (e as Error).message };
   } finally {
