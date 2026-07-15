@@ -620,7 +620,7 @@ const server = createServer(async (req, res) => {
       // path single (si hay). Una barra por cada uno.
       const currentJobs = [
         ...[...batchJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '')),
-        ...[...contJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '', undefined, true)),
+        ...[...contJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '', j.id, true)),
         ...(cj ? [cardOf(cj.plate, cj.sources, cj.results, cj.percent, cj.current, cj.id)] : []),
       ];
       const busy = ENGINE_CONTINUOUS ? (pipeline?.inFlight() ?? 0) > 0 : engineBusy;
@@ -733,10 +733,20 @@ const server = createServer(async (req, res) => {
       return;
     }
 
-    // Cancela un job: marca cancelado y mata el Chrome del motor → la fuente en curso aborta.
+    // Cancela un pedido en proceso. Single/lote: marca cancelado + mata el Chrome del motor.
+    // CONTINUO: lo saca del pipeline SIN matar el Chrome (para no tumbar los demás pedidos ni la
+    // sesión SPRL caliente) y lo marca 'error' en la cola. Las fuentes en curso terminan solas.
     if (path.startsWith('/api/cancel/') && req.method === 'POST') {
-      const job = jobs.get(path.split('/').pop() ?? '');
+      const id = path.split('/').pop() ?? '';
+      const job = jobs.get(id);
       if (job && !job.done) { job.cancelled = true; killEngineChrome(); console.log(`[operador] cancel job=${job.id}`); }
+      const cj = contJobs.get(id);
+      if (cj && !cj.done && pipeline) {
+        pipeline.cancel(cj.plate);
+        contJobs.delete(id); contPedidoById.delete(id);
+        try { await queue.setError(id, 'cancelado por el operador'); } catch { /* noop */ }
+        console.log(`[motor-cont] cancelado por el operador: ${cj.plate} (#${id})`);
+      }
       return sendJson(res, 200, { cancelled: true });
     }
 
@@ -1077,7 +1087,8 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
         return '<span class="chip">'+m+esc(x.source)+'</span>';
       }).join('');
       var pct=c.percent||0;
-      return '<div class="prog2"><div class="top"><span class="pl">⚙ '+esc(c.placa)+'</span><span class="pc">'+pct+'%</span></div>'+
+      var cancel=c.jobId?' <button onclick="cancelAuto(\''+esc(c.jobId)+'\')" title="Cancelar este pedido" style="margin-left:10px;border:1px solid #FCA5A5;background:#FEF2F2;color:#B91C1C;border-radius:8px;padding:2px 9px;font:600 11px system-ui;cursor:pointer">✕ Cancelar</button>':'';
+      return '<div class="prog2"><div class="top"><span class="pl">⚙ '+esc(c.placa)+'</span><span class="pc">'+pct+'%'+cancel+'</span></div>'+
         '<div class="st">'+(chips||'procesando…')+'</div>'+
         '<div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>';
     }).join('');
@@ -1088,7 +1099,7 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
 }).catch(function(){});}
 function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
   log(s.enabled?'⚙ motor automático ENCENDIDO':'⚙ motor automático APAGADO');loadEngine();});}
-function cancelAuto(jid){if(!confirm('¿Cancelar el reporte en proceso? Se guardará lo que ya se obtuvo.'))return;
+function cancelAuto(jid){if(!confirm('¿Cancelar el pedido en proceso? Quedará marcado como error y podrás re-generarlo.'))return;
   log('⏹ cancelando job '+jid+' …');
   fetch('/api/cancel/'+jid,{method:'POST'}).then(function(){log('⏹ cancelado');loadEngine();loadHistory();}).catch(function(e){log('✖ '+e)});}
 function fmtTime(iso){if(!iso)return'—';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}

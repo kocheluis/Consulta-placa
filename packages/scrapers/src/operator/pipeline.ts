@@ -81,6 +81,19 @@ export class Pipeline {
   inFlight(): number { return this.byPlate.size; }
   isInFlight(plate: string): boolean { return this.byPlate.has(plate); }
 
+  /** Cancela un pedido en vuelo: lo deja de rastrear SIN entregarlo (el caller marca la cola). Las
+   *  fuentes que sigan corriendo para esa placa terminan solas y sus reportes se ignoran (onReport ve
+   *  el job ya fuera). Libera cupo (inFlight baja) → el dispatcher admite el siguiente. */
+  cancel(plate: string): PipelineJob | null {
+    const job = this.byPlate.get(plate);
+    if (!job) return null;
+    job.done = true;
+    this.byPlate.delete(plate);
+    const timer = this.timers.get(plate);
+    if (timer) { clearTimeout(timer); this.timers.delete(plate); }
+    return job;
+  }
+
   /** Admite un pedido: lo empuja a los carriles que cubren sus fuentes. Devuelve false si esa placa
    *  ya está en vuelo (dedup: evita correr la misma placa dos veces a la vez). */
   submit(job: PipelineJob): boolean {
