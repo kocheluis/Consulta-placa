@@ -1115,7 +1115,7 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
         return '<span class="chip">'+m+esc(x.source)+'</span>';
       }).join('');
       var pct=c.percent||0;
-      var cancel=c.jobId?' <button onclick="cancelAuto(\''+esc(c.jobId)+'\')" title="Cancelar este pedido" style="margin-left:10px;border:1px solid #FCA5A5;background:#FEF2F2;color:#B91C1C;border-radius:8px;padding:2px 9px;font:600 11px system-ui;cursor:pointer">✕ Cancelar</button>':'';
+      var cancel=c.jobId?' <button onclick="cancelAuto(\\''+esc(c.jobId)+'\\')" title="Cancelar este pedido" style="margin-left:10px;border:1px solid #FCA5A5;background:#FEF2F2;color:#B91C1C;border-radius:8px;padding:2px 9px;font:600 11px system-ui;cursor:pointer">✕ Cancelar</button>':'';
       return '<div class="prog2"><div class="top"><span class="pl">⚙ '+esc(c.placa)+'</span><span class="pc">'+pct+'%'+cancel+'</span></div>'+
         '<div class="st">'+(chips||'procesando…')+'</div>'+
         '<div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>';
