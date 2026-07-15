@@ -65,7 +65,7 @@ export async function runSatCaptura(
       await capInput.fill(cap);
       await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), submit.click()]);
       let body = '';
-      for (let k = 0; k < 10; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (RESULT.test(body) || ERR.test(body)) break; }
+      for (let k = 0; k < 25; k++) { await wait(400); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (RESULT.test(body) || ERR.test(body)) break; } // poll 400ms (antes 1000ms), mismo tope ~10s
       if (RESULT.test(body)) {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
         const line = body.match(RESULT)![0].replace(/\s+/g, ' ').trim();
@@ -93,7 +93,7 @@ export async function runCallao(
     let dialog = '';
     page.on('dialog', (d) => { dialog = d.message(); d.accept().catch(() => {}); });
     await page.goto('https://pagopapeletascallao.pe/', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await wait(1500);
+    await page.locator('#valor_busqueda').waitFor({ state: 'visible', timeout: 1500 }).catch(() => {}); // en vez de wait(1500) ciego
     const tipo = page.locator('#tipo_busqueda');
     const selectPlaca = async () => {
       if (await tipo.count()) {
@@ -121,7 +121,10 @@ export async function runCallao(
       cap = cleanCallaoCaptcha(await readCaptcha(solver, capImg)); // 3 dígitos: solo dígitos
       await capInput.fill(cap);
       await page.locator('button:has-text("Buscar"), input[value*="Buscar" i]').first().click().catch(() => {});
-      await wait(4500);
+      // En vez de wait(4500) ciego: sondea hasta el resultado (error, sin datos, o la tabla "Total"); cap 4500ms
+      // + settle (Callao pinta la tabla por JS → asegura que la fila "Total" ya está antes de parsear).
+      for (let k = 0; k < 14; k++) { const b = (await page.locator('body').innerText().catch(() => '')); if (ERR.test(b) || NODATA.test(b) || /Total\s*:/i.test(b) || /captcha|seguridad/i.test(dialog)) break; await wait(300); }
+      await wait(300);
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
       if (ERR.test(body) || /captcha|seguridad/i.test(dialog)) continue;
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
@@ -164,8 +167,8 @@ export async function runMtcCitv(
     // #imgCaptcha, #texCaptcha, #btnBuscar) y el MISMO formato de certificado; los errores de captcha
     // llegan por alert (dialog "El Código ingresado no es válido"). Validado en vivo (ADY067, jul-2026).
     await page.goto('https://rec.mtc.gob.pe/Citv/ArConsultaCitv', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    await wait(1200);
     const sel = page.locator('#selBUS_Filtro');
+    await sel.waitFor({ state: 'visible', timeout: 1200 }).catch(() => {}); // en vez de wait(1200) ciego
     const selectPlaca = async () => { if (await sel.count()) await sel.selectOption({ label: 'Placa' }).catch(() => {}); await wait(500); };
     const img = page.locator('#imgCaptcha');
     const capInput = page.locator('#texCaptcha');
@@ -192,7 +195,7 @@ export async function runMtcCitv(
       await capInput.fill(cap);
       await buscar.click();
       let body = '';
-      for (let k = 0; k < 12; k++) { await wait(1000); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; }
+      for (let k = 0; k < 30; k++) { await wait(400); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); if (OK.test(body) || dialog) break; } // poll 400ms (antes 1000ms), mismo tope ~12s
       // "No se encontró información" = sin CITV (auto nuevo / aún no obligatorio) → SIN_REGISTRO.
       if (NO_INFO.test(dialog)) {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
@@ -387,8 +390,12 @@ export async function runSbs(
           `(function(tok){function set(s){document.querySelectorAll(s).forEach(function(e){e.value=tok;});}set('#ctl00_MainBodyContent_hdnReCaptchaV3');set('[name="g-recaptcha-response"]');set('#g-recaptcha-response');})(${JSON.stringify(token)})`,
         );
         await page.evaluate("(function(){var b=document.querySelector('#ctl00_MainBodyContent_btnIngresarPla');if(b){b.classList.remove('disabled');b.click();}})()");
-        await wait(5000);
+        // En vez de wait(5000) ciego (corre ×3 tipos → 15s fijos): la SBS es ASP.NET (postback renderiza
+        // la tabla completa server-side), así que sondeamos la señal OK y salimos apenas llega; cap ~5s +
+        // settle para asegurar la tabla pintada antes del SBS_TABLE_PARSER.
         await page.waitForLoadState('domcontentloaded').catch(() => {});
+        for (let k = 0; k < 16; k++) { const b = (await page.locator('body').innerText().catch(() => '')); if (OK.test(b)) break; await wait(300); }
+        await wait(400);
         const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
         if (!OK.test(body)) continue; // reCAPTCHA rechazado / sin respuesta → reintenta este tipo
         respondedAny = true;
@@ -444,7 +451,7 @@ export async function runSatPapeletas(
     await wait(2000);
     const menuFrame = page.frames().find((f) => /bienvenida/i.test(f.url())) ?? page.mainFrame();
     const link = menuFrame.locator('a[href*="papeletas.aspx"]').first();
-    if (await link.count()) { await link.click(); await wait(3500); }
+    if (await link.count()) { await link.click(); for (let k = 0; k < 12; k++) { if (await findFrameWith(page, '#tipoBusquedaPapeletas')) break; await wait(300); } } // en vez de wait(3500): sale al aparecer el form
     const formFrame = await findFrameWith(page, '#tipoBusquedaPapeletas');
     if (!formFrame) return { ...base, status: 'ERROR', summary: 'No se encontró el formulario de papeletas', ms: Date.now() - t0 };
     await formFrame.selectOption('#tipoBusquedaPapeletas', 'busqPlaca').catch(() => {});
@@ -455,7 +462,15 @@ export async function runSatPapeletas(
       `(function(){var els=document.querySelectorAll('#g-recaptcha-response,[name=g-recaptcha-response]');els.forEach(function(e){e.value=${JSON.stringify(token)};e.style.display='block';});})()`,
     );
     await formFrame.locator('#ctl00_cplPrincipal_CaptchaContinue').click();
-    await wait(6000);
+    // En vez de wait(6000) ciego: sondea el frame de resultado hasta que aparezca la respuesta (SAT es
+    // ASP.NET, postback server-side); cap 6000ms + settle antes de parsear las papeletas.
+    for (let k = 0; k < 19; k++) {
+      const rf = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
+      const b = (await rf.locator('body').innerText().catch(() => ''));
+      if (/no se encontraron papeletas|papeleta|infracci[oó]n|S\/\s*[0-9]/i.test(b)) break;
+      await wait(300);
+    }
+    await wait(400);
     const resultFrame = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
     const body = (await resultFrame.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});

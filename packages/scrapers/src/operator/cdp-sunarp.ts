@@ -164,13 +164,14 @@ export async function scrapeSunarpViaCdp(
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       }
       log(`esperando Turnstile pasivo (Chrome limpio, intento ${a + 1}/${attempts})…`);
-      const tries = Math.ceil(perAttemptMs / 1000);
+      const tries = Math.ceil(perAttemptMs / 400); // poll 400ms (antes 1000ms): mismo tope, salida más rápida
       for (let i = 0; i < tries && !token; i++) {
-        await wait(1000);
         // OJO: inputValue SIEMPRE con timeout. Sin él, si el input del Turnstile no existe
         // (página en mal estado / colisión de perfil), Playwright espera su timeout por
         // defecto (30s) POR LLAMADA → el loop se dispara a minutos y revienta el tope del job.
-        token = await page.locator(turnstileSel).first().inputValue({ timeout: 1000 }).catch(() => '');
+        token = await page.locator(turnstileSel).first().inputValue({ timeout: 400 }).catch(() => '');
+        if (token) break; // clearance caliente: el token ya puede estar → sale sin esperar
+        await wait(400);
       }
     }
 
@@ -183,8 +184,8 @@ export async function scrapeSunarpViaCdp(
       log(`Turnstile NO pasó pasivo tras ${attempts} intento(s) → resuélvelo en la ventana (placa ${plate} + verificación + Buscar)`);
     }
 
-    const dataTries = Math.ceil((opts.dataWaitMs ?? 180000) / 1000);
-    for (let i = 0; i < dataTries && !dataImage; i++) await wait(1000);
+    const dataTries = Math.ceil((opts.dataWaitMs ?? 180000) / 500); // poll 500ms (antes 1000ms): captura la imagen ~0.5s antes
+    for (let i = 0; i < dataTries && !dataImage; i++) await wait(500);
 
     if (!dataImage) {
       return { ok: false, status: SectionStatus.UNAVAILABLE, error: 'No se capturó la imagen de datos (¿no se hizo la búsqueda?).' };

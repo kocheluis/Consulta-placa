@@ -205,7 +205,9 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // Esperar a que la sesión activa se renderice. El re-auth OAuth puede tardar >25s en
     // VPS lento; si nos rendimos antes, autoLogin dispara un force-clear innecesario que
     // destruye una sesión que estaba por aparecer (fue el bug de M4S859) → 45s de margen.
-    let logged = false;
+    // Comprueba PRIMERO (sesión caliente del keep-alive → sale al toque, sin gastar 1s); solo si
+    // no está logueada entra al bucle de espera (re-auth OAuth puede tardar en VPS lento).
+    let logged = await isLogged();
     for (let i = 0; i < 45 && !logged; i++) { await wait(1000); logged = await isLogged(); }
     // Si sigue sin sesión (logout/expirada), login automático (autoLogin consigue el
     // form solo vía force-clear; un re-login sobre sesión válida también es inocuo).
@@ -236,14 +238,22 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const num = page.locator('#numero');
       await num.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
       for (let i = 0; i < 3; i++) { await num.click().catch(() => {}); await num.fill('').catch(() => {}); await num.type(plate, { delay: 60 }).catch(() => {}); await wait(400); if ((await num.inputValue({ timeout: 1000 }).catch(() => '')) === plate) break; }
-      for (let i = 0; i < 30; i++) { if (await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 1000 }).catch(() => '')) break; await wait(1000); }
+      // Poll del Turnstile a 400ms (antes 1000ms): mismo tope (~30s) pero sale ~600ms antes en promedio.
+      for (let i = 0; i < 75; i++) { if (await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')) break; await wait(400); }
       const respP = page.waitForResponse((r) => /mostrar-resultado-partida-veh/i.test(r.url()), { timeout: 30000 }).catch(() => null);
       const buscarBtns = page.locator('button:has-text("Buscar")');
       for (let i = 0; i < (await buscarBtns.count().catch(() => 0)); i++) { const b = buscarBtns.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); break; } }
       await respP;
-      await wait(2500);
+      // En vez de wait(2500) ciego: espera a que pinte la fila de resultados (sale al toque cuando ya
+      // está; cap 2500ms como antes, así el caso "sin resultado" no se hace más lento).
       const rowBtns = page.locator('.ant-table-tbody tr button, table tbody tr button');
-      if ((await rowBtns.count().catch(() => 0)) >= 2) { await rowBtns.nth(1).click().catch(() => {}); await wait(4000); }
+      await rowBtns.first().waitFor({ state: 'visible', timeout: 2500 }).catch(() => {});
+      if ((await rowBtns.count().catch(() => 0)) >= 2) {
+        await rowBtns.nth(1).click().catch(() => {});
+        // En vez de wait(4000) ciego: sale apenas aparecen los títulos (AAAA-NNNNNN) en el body (cap ~4s).
+        const rxTit = /\b20\d{2}\s*-\s*\d{6,8}\b/;
+        for (let i = 0; i < 13; i++) { if (rxTit.test(await page.locator('body').innerText().catch(() => ''))) break; await wait(300); }
+      }
       const bodyText = await page.locator('body').innerText().catch(() => '');
       return [...new Set((bodyText.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
     }
@@ -281,7 +291,9 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await pg.locator('#cboAnio').evaluate(fire).catch(() => {});
       await pg.locator('input[name="numeroTitulo"]').fill(numeroT).catch(() => {});
       await pg.locator('input[name="numeroTitulo"]').evaluate(fire).catch(() => {});
-      for (let i = 0; i < 20; i++) { if (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 800 }).catch(() => '')) break; await wait(1000); }
+      // Poll del Turnstile a 400ms (antes 1000ms): mismo tope (~20s) pero exit más rápido. Se repite
+      // por CADA título → en autos con varios títulos el ahorro se multiplica.
+      for (let i = 0; i < 50; i++) { if (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')) break; await wait(400); }
       const buscar = pg.locator('button:has-text("BUSCAR")').first();
       if (!(await buscar.isEnabled().catch(() => false))) { await aceptarTC(pg); await wait(500); }
       if (!(await buscar.isEnabled().catch(() => false))) return null;

@@ -165,10 +165,10 @@ async function acquirePortLock(port: number): Promise<() => void> {
 async function esperarTurnstile(page: Page, log: (m: string) => void): Promise<boolean> {
   for (let a = 0; a < 3; a++) {
     if (a > 0) { log(`Turnstile no pasó → recarga ${a}/2`); await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {}); }
-    for (let i = 0; i < 20; i++) {
-      await wait(1000);
-      const tok = await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 1000 }).catch(() => '');
+    for (let i = 0; i < 50; i++) { // poll 400ms (antes 1000ms): mismo tope ~20s, salida más rápida
+      const tok = await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '');
       if (tok) { log(`Turnstile pasó (${tok.length})`); return true; }
+      await wait(400);
     }
   }
   return false;
