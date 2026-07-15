@@ -25,8 +25,14 @@ import { SectionKind, SectionStatus, type Report } from '@app/shared';
   const f = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
   try {
     for (const line of readFileSync(f, 'utf8').split('\n')) {
-      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*?)\s*$/);
-      if (m && m[1]) process.env[m[1]] = (m[2] ?? '').replace(/^["']|["']$/g, '');
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+      if (!m || !m[1]) continue;
+      let v = m[2] ?? '';
+      // Comentario inline (" # …") SOLO si el valor NO está entrecomillado: un '#' pegado (p. ej.
+      // un password "pa#ss") se conserva; uno tras espacio se trata como comentario (estilo dotenv).
+      // Evita el footgun de "ENGINE_CONTINUOUS=1   # …" quedando como valor "1   # …" (≠ "1").
+      if (!/^["']/.test(v)) v = v.replace(/\s+#.*$/, '');
+      process.env[m[1]] = v.trim().replace(/^["']|["']$/g, '');
     }
   } catch { /* sin archivo → nada */ }
 })();
