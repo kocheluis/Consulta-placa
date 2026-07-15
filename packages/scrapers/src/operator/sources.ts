@@ -47,6 +47,10 @@ async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string>
       if (loaded && buf.length > 500) break;
       await wait(300);
     }
+    // Si tras los reintentos la imagen sigue vacía/mínima, NO la mandes a CapSolver (daría un 400
+    // engañoso "HTTP 400"): lanza un error CLARO que dice que el portal no sirvió la imagen. Así el
+    // log distingue "imagen no cargó" (lado nuestro/portal) de "CapSolver rechazó una imagen válida".
+    if (buf.length <= 500) throw new Error(`imagen de captcha vacía/no cargó (${buf.length} bytes) — el portal no la sirvió`);
     return (await solver.solveImage(Buffer.from(buf).toString('base64'))).trim();
   } finally {
     release();

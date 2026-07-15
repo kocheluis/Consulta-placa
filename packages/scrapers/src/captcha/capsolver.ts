@@ -25,7 +25,12 @@ async function post<T>(path: string, body: unknown): Promise<T> {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`CapSolver HTTP ${res.status}`);
+  if (!res.ok) {
+    // Incluye el CUERPO de la respuesta: CapSolver detalla el motivo (imagen inválida, módulo
+    // requerido, saldo, etc.) ahí. Sin esto solo se veía "HTTP 400" y había que adivinar.
+    const detail = await res.text().catch(() => '');
+    throw new Error(`CapSolver HTTP ${res.status}${detail ? `: ${detail.replace(/\s+/g, ' ').slice(0, 300)}` : ''}`);
+  }
   return (await res.json()) as T;
 }
 
