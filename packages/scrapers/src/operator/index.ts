@@ -11,6 +11,7 @@ import { runHistorialPool, runHistorialPoolLive, type HistorialResult } from './
 import { runLightLane } from './source-lane.js';
 import type { Lane } from './batch.js';
 import type { PipelineLane } from './pipeline.js';
+import { AsyncQueue } from './async-queue.js';
 import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
@@ -457,22 +458,33 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
     },
   };
 
-  // Carril ligero: K workers; cada uno corre, por placa, sus fuentes NO-historial (secuencial por
-  // placa para acotar RAM; K placas en paralelo). Un error de fuente no tumba al resto.
+  // Carril ligero: POOL DE TAREAS en PARALELO. Cada placa se EXPANDE en tareas por-fuente (todas sus
+  // fuentes NO-historial) que van a una cola interna; K workers globales las jalan y corren EN PARALELO
+  // → las fuentes de una misma placa NO se serializan (antes sí, y eso disparaba tiempos de 12 min y que
+  // los reintentos de una fuente fallida bloquearan al resto). El historial corre aparte en su pool,
+  // arrancando de inmediato. K acota la RAM/CPU global (no por placa). Un error de fuente no tumba al resto.
   const lightLane: PipelineLane = {
     sources: NON_HISTORIAL_SOURCES,
     run: async (take, report) => {
-      const worker = async (): Promise<void> => {
+      const taskQ = new AsyncQueue<{ plate: string; src: string; outDir: string }>();
+      // Alimentador: por cada placa que llega, encola una tarea por cada fuente no-historial del pedido.
+      const feeder = (async (): Promise<void> => {
         for (;;) {
           const it = await take();
-          if (!it) break;
-          for (const src of it.sources.filter((s) => s !== 'historial')) {
-            try { report(it.plate, await runSingleSource(it.plate, src, baseOpts(it.outDir))); }
-            catch (e) { report(it.plate, { source: src.toUpperCase(), label: src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
-          }
+          if (!it) { taskQ.close(); break; }
+          for (const src of it.sources.filter((s) => s !== 'historial')) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
+        }
+      })();
+      // Pool de K workers: corren fuentes de CUALQUIER placa en paralelo (reparto natural del trabajo).
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          const t = await taskQ.take();
+          if (!t) break;
+          try { report(t.plate, await runSingleSource(t.plate, t.src, baseOpts(t.outDir))); }
+          catch (e) { report(t.plate, { source: t.src.toUpperCase(), label: t.src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
         }
       };
-      await Promise.all(Array.from({ length: K }, worker));
+      await Promise.all([feeder, ...Array.from({ length: K }, worker)]);
     },
   };
 

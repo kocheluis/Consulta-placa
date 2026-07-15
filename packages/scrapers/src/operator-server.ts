@@ -140,7 +140,9 @@ const BATCH_WINDOW_MS = Math.max(0, Number(process.env.BATCH_WINDOW_MS ?? 6000))
 // anterior. El motor por lotes queda como fallback (flag off) para revertir sin tocar código.
 const ENGINE_CONTINUOUS = process.env.ENGINE_CONTINUOUS === '1';
 const ENGINE_MAX_INFLIGHT = Math.max(1, Number(process.env.ENGINE_MAX_INFLIGHT ?? 4));
-const ENGINE_LIGHT_CONCURRENCY = Math.max(1, Number(process.env.ENGINE_LIGHT_CONCURRENCY ?? 2));
+// Workers globales del carril ligero (fuentes NO-historial en paralelo). Son I/O-bound (esperan
+// CapSolver + portales), así que 4 corren bien aun en 2 vCPU. Baja si el VPS aprieta RAM / CapSolver 400.
+const ENGINE_LIGHT_CONCURRENCY = Math.max(1, Number(process.env.ENGINE_LIGHT_CONCURRENCY ?? 4));
 const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
@@ -605,18 +607,20 @@ const server = createServer(async (req, res) => {
             }) }
         : null;
       // Tarjeta por pedido para la consola multi-barra: estado por fuente (✓ hecha / ⟳ corriendo / en cola).
-      const cardOf = (plate: string, srcs: string[], results: OperatorSourceResult[], percent: number, running: string, jobId?: string) => ({
+      const cardOf = (plate: string, srcs: string[], results: OperatorSourceResult[], percent: number, running: string, jobId?: string, contMode = false) => ({
         jobId, placa: plate, percent,
         sources: srcs.map((s) => {
           const r = results.find((x) => x.source.toLowerCase().replace(/_/g, '-') === s);
-          return { source: s, status: r ? r.status : (s === running ? 'RUNNING' : 'PENDING') };
+          // Continuo: las fuentes aún sin resultado están corriendo/en-cola en el pool PARALELO → se
+          // marcan RUNNING (muestran actividad en las barras). Batch/single: solo la 'current' corre.
+          return { source: s, status: r ? r.status : ((contMode || s === running) ? 'RUNNING' : 'PENDING') };
         }),
       });
       // Pedidos EN PROCESO: los del lote (batchJobs) + los del motor continuo (contJobs) + el del
       // path single (si hay). Una barra por cada uno.
       const currentJobs = [
         ...[...batchJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '')),
-        ...[...contJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '')),
+        ...[...contJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '', undefined, true)),
         ...(cj ? [cardOf(cj.plate, cj.sources, cj.results, cj.percent, cj.current, cj.id)] : []),
       ];
       const busy = ENGINE_CONTINUOUS ? (pipeline?.inFlight() ?? 0) > 0 : engineBusy;
@@ -1241,15 +1245,18 @@ function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!b
   }).catch(function(e){box.innerHTML='<div class="meta">✖ '+esc(e)+'</div>';});}
 function showLiveLogs(pl){var d=document.getElementById('pdetail');
   fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
-    var proc=s.current&&s.current.placa===pl;var srcs=s.autoSources||[];
-    var pct=proc?(s.current.percent||0):0;
+    // Busca ESTA placa entre los pedidos en proceso (currentJobs cubre lote, continuo y single) → así
+    // el detalle en vivo funciona también en modo CONTINUO (donde current singular queda null).
+    var cj=(s.currentJobs||[]).filter(function(c){return c.placa===pl;})[0];
+    var proc=!!cj;var srcs=s.autoSources||[];
+    var pct=proc?(cj.percent||0):0;
     var links=srcs.map(function(x){return '<a href="/log/'+encodeURIComponent(pl)+'/'+x+'" target="_blank" style="margin:0 12px 6px 0;display:inline-block;color:#0C6F64">'+esc(x)+'</a>';}).join('');
     // Barra de % de carga de la tarea → se ve el avance en vivo (no parece "colgado").
     var bar=proc
-      ?'<div class="prog2"><div class="top"><span class="pl">⏳ '+esc(pl)+'</span><span class="pc">'+pct+'%</span></div><div class="st">'+esc(s.current.source||'procesando fuentes…')+'</div><div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>'
+      ?'<div class="prog2"><div class="top"><span class="pl">⏳ '+esc(pl)+'</span><span class="pc">'+pct+'%</span></div><div class="st">procesando fuentes…</div><div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>'
       :'<div class="prog2 idle"><div class="top"><span class="pl">'+esc(pl)+'</span><span class="pc">—</span></div><div class="st">⚠ aún sin reporte.json (¿en proceso en otra máquina o pedido viejo?)</div></div>';
     // % de carga POR FUENTE: hecha=100% (verde/rojo según status), corriendo=parcial (azul), en cola=0%.
-    var ss=(proc&&s.current.sources)||[];
+    var ss=(proc&&cj.sources)||[];
     var perSrc=ss.length?('<div style="margin:12px 0 4px">'+ss.map(function(x){
       var st=x.status||'PENDING', done=(st!=='PENDING'&&st!=='RUNNING');
       var col=(st==='ENCONTRADO'||st==='SIN_REGISTRO')?'#15803D':((st==='RUNNING')?'#2563EB':(done?'#B91C1C':'#94A3B8'));
