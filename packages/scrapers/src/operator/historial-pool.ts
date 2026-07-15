@@ -150,6 +150,8 @@ export interface HistorialPoolLiveOpts {
   /** Callback por placa terminada (para entregar apenas lista). */
   onResult?: (r: PoolResult) => void;
   log?: (slot: number, m: string) => void;
+  /** Log POR TAREA (placa) → deja escribir cada línea al archivo `historial.log` de esa placa (logs en vivo). */
+  onLog?: (task: HistorialTask, m: string) => void;
   openBrowser?: (slot: SprlSlot) => Promise<{ browser: Browser | null; close: () => Promise<void> }>;
   runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void) => Promise<HistorialResult>;
 }
@@ -186,7 +188,7 @@ export async function runHistorialPoolLive(
         const task = await take();
         if (!task) break; // canal cerrado → apagado limpio
         const logs: string[] = [];
-        const plog = (m: string): void => { logs.push(m); slog(slot.index, m); };
+        const plog = (m: string): void => { logs.push(m); slog(slot.index, m); opts.onLog?.(task, m); };
         const t0 = Date.now();
         let result: HistorialResult;
         try { result = await runOne(task.plate, slot, browser, plog); }

@@ -450,9 +450,10 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
     run: async (take, report) => {
       await runHistorialPoolLive(async () => {
         const it = await take();
-        if (it) outByPlate.set(it.plate, it.outDir);
+        if (it) { outByPlate.set(it.plate, it.outDir); startLog(it.outDir, 'historial', it.plate); } // crea historial.log
         return it ? { plate: it.plate, outDir: it.outDir } : null;
       }, {
+        onLog: (task, m) => logLine(task.outDir ?? '', 'historial', m), // logs en vivo por placa (los perdía el motor continuo)
         onResult: (pr) => report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png'))),
       });
     },

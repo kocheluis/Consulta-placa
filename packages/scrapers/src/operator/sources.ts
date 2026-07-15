@@ -18,10 +18,19 @@ export interface OperatorSourceResult {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Captura el <img> del captcha como PNG base64 y lo resuelve con CapSolver. */
+/** Captura el <img> del captcha como PNG base64 y lo resuelve con CapSolver.
+ *  ⚠️ Bajo paralelismo/carga la imagen puede estar "visible" pero AÚN sin pintar → el screenshot sale
+ *  vacío y CapSolver responde HTTP 400 (body inválido). Por eso esperamos a que la imagen esté cargada
+ *  (naturalWidth>0) y con bytes reales (>500) antes de mandarla; sale al toque cuando ya está lista. */
 async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string> {
-  const b64 = (await img.screenshot()).toString('base64');
-  return (await solver.solveImage(b64)).trim();
+  let buf: Uint8Array = Buffer.alloc(0);
+  for (let i = 0; i < 12; i++) {
+    const loaded = await img.evaluate((el) => !(el instanceof HTMLImageElement) || (el.complete && el.naturalWidth > 0)).catch(() => true);
+    buf = await img.screenshot().catch(() => Buffer.alloc(0));
+    if (loaded && buf.length > 500) break;
+    await wait(300);
+  }
+  return (await solver.solveImage(Buffer.from(buf).toString('base64'))).trim();
 }
 
 /**
