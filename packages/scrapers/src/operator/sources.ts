@@ -18,19 +18,39 @@ export interface OperatorSourceResult {
 
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** Captura el <img> del captcha como PNG base64 y lo resuelve con CapSolver.
- *  ⚠️ Bajo paralelismo/carga la imagen puede estar "visible" pero AÚN sin pintar → el screenshot sale
- *  vacío y CapSolver responde HTTP 400 (body inválido). Por eso esperamos a que la imagen esté cargada
- *  (naturalWidth>0) y con bytes reales (>500) antes de mandarla; sale al toque cuando ya está lista. */
+// ── Semáforo GLOBAL del captcha-imagen ───────────────────────────────────────────────────────────
+// Bajo paralelismo (motor continuo), varias fuentes leyendo+resolviendo captcha A LA VEZ saturaban:
+// screenshots compitiendo por CPU (imagen sin pintar) + varias llamadas simultáneas a CapSolver →
+// HTTP 400. Serializamos el READ+SOLVE de imagen a CAPTCHA_IMAGE_CONCURRENCY (default 1 = serial; súbelo
+// si el proveedor/VPS aguantan). Está FUERA del critical path: en PRO el historial (~2-3min) domina, así
+// que serializar ~10-15s de captcha no agrega tiempo al reporte; el resto de fuentes siguen en paralelo.
+const IMG_CAP = Math.max(1, Number(process.env.CAPTCHA_IMAGE_CONCURRENCY ?? 1));
+let capActive = 0;
+const capWaiters: Array<() => void> = [];
+async function acquireCap(): Promise<() => void> {
+  if (capActive >= IMG_CAP) await new Promise<void>((r) => capWaiters.push(r)); // esperar → el slot se nos transfiere
+  else capActive++;
+  let released = false;
+  return () => { if (released) return; released = true; const w = capWaiters.shift(); if (w) w(); else capActive--; };
+}
+
+/** Captura el <img> del captcha como PNG base64 y lo resuelve con CapSolver, SERIALIZADO por el semáforo
+ *  global (evita el HTTP 400 por saturación) y esperando a que la imagen esté cargada (naturalWidth>0) y
+ *  con bytes reales (>500) antes de mandarla — sale al toque cuando ya está lista. */
 async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string> {
-  let buf: Uint8Array = Buffer.alloc(0);
-  for (let i = 0; i < 12; i++) {
-    const loaded = await img.evaluate((el) => !(el instanceof HTMLImageElement) || (el.complete && el.naturalWidth > 0)).catch(() => true);
-    buf = await img.screenshot().catch(() => Buffer.alloc(0));
-    if (loaded && buf.length > 500) break;
-    await wait(300);
+  const release = await acquireCap();
+  try {
+    let buf: Uint8Array = Buffer.alloc(0);
+    for (let i = 0; i < 12; i++) {
+      const loaded = await img.evaluate((el) => !(el instanceof HTMLImageElement) || (el.complete && el.naturalWidth > 0)).catch(() => true);
+      buf = await img.screenshot().catch(() => Buffer.alloc(0));
+      if (loaded && buf.length > 500) break;
+      await wait(300);
+    }
+    return (await solver.solveImage(Buffer.from(buf).toString('base64'))).trim();
+  } finally {
+    release();
   }
-  return (await solver.solveImage(Buffer.from(buf).toString('base64'))).trim();
 }
 
 /**
