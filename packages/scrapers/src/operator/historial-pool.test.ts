@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from 'vitest';
-import { runHistorialPool, type HistorialResult } from './historial-pool.js';
+import { runHistorialPool, runHistorialPoolLive, type HistorialResult, type HistorialTask } from './historial-pool.js';
+import { AsyncQueue } from './async-queue.js';
 import type { SprlSlot } from './sprl-slots.js';
 
 // 2 slots con credenciales → sprlSlots() (leído al ejecutar) devuelve 2 workers.
@@ -45,5 +46,41 @@ describe('runHistorialPool', () => {
     const res = await runHistorialPool(['P1'], { openBrowser: fakeOpen, runOne: async () => ok() });
     expect(res.size).toBe(0);
     [process.env.SPRL_USER, process.env.SPRL_PASS, process.env.SPRL_USER_2, process.env.SPRL_PASS_2] = saved;
+  });
+});
+
+describe('runHistorialPoolLive (pool continuo)', () => {
+  it('jala del canal en caliente, reúsa el browser por slot y admite placas nuevas', async () => {
+    const opens: number[] = [];
+    const seen: string[] = [];
+    const chan = new AsyncQueue<HistorialTask>();
+    const done = runHistorialPoolLive(() => chan.take(), {
+      concurrency: 2,
+      openBrowser: async (slot: SprlSlot) => { opens.push(slot.index); return fakeOpen(); },
+      runOne: async (plate) => { seen.push(plate); return ok(); },
+      onResult: () => {},
+    });
+    chan.push({ plate: 'P1' }); chan.push({ plate: 'P2' });
+    await new Promise((r) => setTimeout(r, 10));
+    chan.push({ plate: 'P3' }); // llega DESPUÉS de arrancar → el pool continuo lo toma igual
+    await new Promise((r) => setTimeout(r, 10));
+    chan.close();
+    await done;
+    expect(opens.length).toBe(2); // 1 apertura por slot, no una por placa
+    expect(seen.sort()).toEqual(['P1', 'P2', 'P3']);
+  });
+
+  it('reporta cada placa vía onResult apenas termina', async () => {
+    const reported: string[] = [];
+    const chan = new AsyncQueue<HistorialTask>();
+    const done = runHistorialPoolLive(() => chan.take(), {
+      concurrency: 2, openBrowser: fakeOpen, runOne: async () => ok(),
+      onResult: (r) => reported.push(r.plate),
+    });
+    chan.push({ plate: 'P1' }); chan.push({ plate: 'P2' });
+    await new Promise((r) => setTimeout(r, 10));
+    chan.close();
+    await done;
+    expect(reported.sort()).toEqual(['P1', 'P2']);
   });
 });

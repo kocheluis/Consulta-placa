@@ -138,3 +138,68 @@ export async function runHistorialPool(plates: string[], opts: HistorialPoolOpts
   await Promise.all(slots.map(worker));
   return results;
 }
+
+/** Una placa a procesar por el pool continuo (el `outDir` es para el screenshot del historial). */
+export interface HistorialTask { plate: string; outDir?: string }
+
+export interface HistorialPoolLiveOpts {
+  /** Nº de workers (default = nº de slots con credenciales). Tope físico = nº de cuentas SPRL. */
+  concurrency?: number;
+  /** Pausa + jitter (ms) entre placas del MISMO worker. Default sin pausa. */
+  spacingMs?: [number, number];
+  /** Callback por placa terminada (para entregar apenas lista). */
+  onResult?: (r: PoolResult) => void;
+  log?: (slot: number, m: string) => void;
+  openBrowser?: (slot: SprlSlot) => Promise<{ browser: Browser | null; close: () => Promise<void> }>;
+  runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void) => Promise<HistorialResult>;
+}
+
+/**
+ * POOL de historial CONTINUO (motor streaming): idéntico a `runHistorialPool` pero, en vez de un
+ * array FIJO de placas, jala de un canal (`take`) que el dispatcher va llenando en caliente. Cada
+ * worker abre su Chrome SPRL UNA vez y REUSA la sesión entre placas mientras el canal siga vivo →
+ * un login por cuenta para TODO el turno, no por lote (evita el re-login que dispara el lockout).
+ *
+ * `take()` devuelve la siguiente placa o `null` cuando el canal se cierra (apagado) → el worker
+ * cierra su Chrome y termina. Si SUNARP bloquea un slot por IP, ESE worker se detiene (como el pool
+ * por lotes); los demás siguen atendiendo el canal. (Auto-recuperar el slot tras cooldown = Fase 2.)
+ */
+export async function runHistorialPoolLive(
+  take: () => Promise<HistorialTask | null>,
+  opts: HistorialPoolLiveOpts = {},
+): Promise<void> {
+  const withCreds = sprlSlots().filter((s) => s.user && s.pass);
+  const conc = Math.max(1, Math.min(opts.concurrency ?? withCreds.length, withCreds.length));
+  const slots = withCreds.slice(0, conc);
+  if (!slots.length) return;
+
+  const openBrowser = opts.openBrowser ?? openSprl;
+  const runOne = opts.runOne ?? defaultRunOne;
+  const [smin, smax] = opts.spacingMs ?? [0, 0];
+  const slog = opts.log ?? (() => {});
+
+  async function worker(slot: SprlSlot): Promise<void> {
+    slog(slot.index, `abriendo Chrome SPRL :${slot.port} (pool continuo)`);
+    const { browser, close } = await openBrowser(slot);
+    try {
+      for (;;) {
+        const task = await take();
+        if (!task) break; // canal cerrado → apagado limpio
+        const logs: string[] = [];
+        const plog = (m: string): void => { logs.push(m); slog(slot.index, m); };
+        const t0 = Date.now();
+        let result: HistorialResult;
+        try { result = await runOne(task.plate, slot, browser, plog); }
+        catch (e) { result = failResult((e as Error).message); }
+        opts.onResult?.({ plate: task.plate, slot: slot.index, ms: Date.now() - t0, result, logs });
+        if ((result as { locked?: boolean }).locked) { slog(slot.index, `slot ${slot.index} BLOQUEADO por IP → worker se detiene (los demás siguen)`); break; }
+        if (smax > 0) await sleep(Math.round(smin + Math.random() * Math.max(0, smax - smin)));
+      }
+    } finally {
+      await close();
+      slog(slot.index, `worker slot${slot.index} cerrado (pool continuo)`);
+    }
+  }
+
+  await Promise.all(slots.map(worker));
+}

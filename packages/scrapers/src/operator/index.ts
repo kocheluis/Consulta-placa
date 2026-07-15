@@ -7,9 +7,10 @@ import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { scrapeAtuViaCdp } from './atu-cdp.js';
 import { scrapeSigmViaCdp } from './sigm-cdp.js';
 import { runHistorialRegistral } from './historial.js';
-import { runHistorialPool, type HistorialResult } from './historial-pool.js';
+import { runHistorialPool, runHistorialPoolLive, type HistorialResult } from './historial-pool.js';
 import { runLightLane } from './source-lane.js';
 import type { Lane } from './batch.js';
+import type { PipelineLane } from './pipeline.js';
 import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
@@ -414,6 +415,68 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
   } });
 
   return lanes;
+}
+
+/** Todas las fuentes NO-historial (las que corre el carril ligero del motor continuo). */
+const NON_HISTORIAL_SOURCES = [
+  'sunarp', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas',
+  'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm',
+];
+
+export interface ContinuousLaneOpts extends BatchLaneOpts {
+  /** Workers del carril ligero (placas NO-historial en paralelo). Tope de RAM/CPU. Default 2. */
+  lightConcurrency?: number;
+}
+
+/**
+ * Carriles del MOTOR CONTINUO (para `Pipeline`). Dos carriles de vida larga, cada uno con su propio
+ * canal (lo llena el dispatcher en caliente):
+ *  - **historial**: pool persistente de 2 workers SPRL (sesión caliente reusada TODO el turno) que
+ *    jalan placas del canal — la parte lenta, desacoplada, sin frontera de lote.
+ *  - **ligero**: K workers que, por placa, corren TODAS sus fuentes no-historial (SUNARP/SAT/MTC/…)
+ *    vía `runSingleSource`, con tope de concurrencia por RAM.
+ * A diferencia de `buildBatchLanes` (un carril por fuente sobre un conjunto FIJO), estos carriles no
+ * terminan: viven mientras el canal siga abierto y admiten placas nuevas continuamente.
+ */
+export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
+  const baseOpts = (outDir: string): OperatorReportOptions => ({ outDir, captchaProvider: opts.captchaProvider, captchaApiKey: opts.captchaApiKey, headless: opts.headless ?? true });
+  const K = Math.max(1, opts.lightConcurrency ?? 2);
+
+  // Carril historial: pool continuo de 2 hilos SPRL sobre el canal del pipeline.
+  const outByPlate = new Map<string, string>();
+  const historialLane: PipelineLane = {
+    sources: ['historial'],
+    run: async (take, report) => {
+      await runHistorialPoolLive(async () => {
+        const it = await take();
+        if (it) outByPlate.set(it.plate, it.outDir);
+        return it ? { plate: it.plate, outDir: it.outDir } : null;
+      }, {
+        onResult: (pr) => report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png'))),
+      });
+    },
+  };
+
+  // Carril ligero: K workers; cada uno corre, por placa, sus fuentes NO-historial (secuencial por
+  // placa para acotar RAM; K placas en paralelo). Un error de fuente no tumba al resto.
+  const lightLane: PipelineLane = {
+    sources: NON_HISTORIAL_SOURCES,
+    run: async (take, report) => {
+      const worker = async (): Promise<void> => {
+        for (;;) {
+          const it = await take();
+          if (!it) break;
+          for (const src of it.sources.filter((s) => s !== 'historial')) {
+            try { report(it.plate, await runSingleSource(it.plate, src, baseOpts(it.outDir))); }
+            catch (e) { report(it.plate, { source: src.toUpperCase(), label: src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
+          }
+        }
+      };
+      await Promise.all(Array.from({ length: K }, worker));
+    },
+  };
+
+  return [historialLane, lightLane];
 }
 
 async function runSuperbidSource(

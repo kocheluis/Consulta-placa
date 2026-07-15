@@ -4,8 +4,9 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
-import { runSingleSource, OPERATOR_SOURCES, buildBatchLanes, type OperatorSourceResult } from './operator/index.js';
+import { runSingleSource, OPERATOR_SOURCES, buildBatchLanes, buildContinuousLanes, type OperatorSourceResult } from './operator/index.js';
 import { orchestrateBatch, type OrchJob } from './operator/batch.js';
+import { Pipeline, type PipelineJob } from './operator/pipeline.js';
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
@@ -126,6 +127,14 @@ const LANE_CONCURRENCY = Math.max(1, Number(process.env.BATCH_LANE_CONCURRENCY ?
 // casi juntos entren al MISMO lote (y corran en paralelo) en vez de que el primero arranque solo.
 // 0 = desactivado. (Para un lote deliberado también sirve: apaga el motor, encola todo, prende.)
 const BATCH_WINDOW_MS = Math.max(0, Number(process.env.BATCH_WINDOW_MS ?? 6000));
+// ── MOTOR CONTINUO (streaming, opt-in ENGINE_CONTINUOUS=1) ────────────────────────────────────
+// En vez del lote cerrado (reclama N, corre a completitud, libera el lock), el dispatcher reclama
+// pedidos DE A UNO en bucle mientras haya cupo (ENGINE_MAX_INFLIGHT) y los inyecta a carriles de
+// vida larga (pool de historial + carril ligero) → un pedido nuevo NO espera a que termine el
+// anterior. El motor por lotes queda como fallback (flag off) para revertir sin tocar código.
+const ENGINE_CONTINUOUS = process.env.ENGINE_CONTINUOUS === '1';
+const ENGINE_MAX_INFLIGHT = Math.max(1, Number(process.env.ENGINE_MAX_INFLIGHT ?? 4));
+const ENGINE_LIGHT_CONCURRENCY = Math.max(1, Number(process.env.ENGINE_LIGHT_CONCURRENCY ?? 2));
 const srcDone = (job: Job, src: string) => job.results.some((r) => r.source.toLowerCase().replace(/_/g, '-') === src);
 
 interface Job {
@@ -458,6 +467,71 @@ function startRunner(): void {
   }, 5000);
 }
 
+// ── MOTOR CONTINUO: pipeline de vida larga + dispatcher que reclama sin frontera de lote ─────────
+let pipeline: Pipeline | null = null;
+let dispatching = false; // evita solapar dos bucles de claim (como engineBusy, pero solo para el claim)
+const contJobs = new Map<string, PipelineJob>();     // pedidos en vuelo (para la consola multi-barra)
+const contPedidoById = new Map<string, Pedido>();    // id → Pedido (para finalizeJob)
+
+/** Construye (perezoso) el pipeline continuo: pool de historial persistente + carril ligero. Se
+ *  arma la 1ª vez que el motor está encendido y hay trabajo; los Chrome SPRL quedan calientes. */
+function getPipeline(): Pipeline {
+  if (pipeline) return pipeline;
+  pipeline = new Pipeline({
+    lanes: buildContinuousLanes({ captchaApiKey: KEY, captchaProvider: PROVIDER, headless: true, lightConcurrency: ENGINE_LIGHT_CONCURRENCY }),
+    jobTimeoutMs: JOB_TIMEOUT_MS, // historial colgado / ambos slots bloqueados → cierre parcial
+    onProgress: (job) => { const j = contJobs.get(job.id); if (j) { j.results = job.results; j.percent = job.percent; } },
+    onJobDone: async (job) => {
+      const p = contPedidoById.get(job.id);
+      try {
+        if (p) { console.log(`[motor-cont] ${p.placa} LISTO (${job.results.length}/${job.sources.length} fuentes)`); await finalizeJob(p, job); }
+      } finally {
+        contPedidoById.delete(job.id);
+        setTimeout(() => contJobs.delete(job.id), 60000);
+      }
+    },
+  });
+  console.log(`[motor-cont] pipeline continuo iniciado · maxInflight=${ENGINE_MAX_INFLIGHT} · light=${ENGINE_LIGHT_CONCURRENCY}`);
+  return pipeline;
+}
+
+/**
+ * Bucle del MOTOR CONTINUO: mientras haya cupo (inFlight < MAX), reclama pedidos DE A UNO y los
+ * inyecta al pipeline SIN esperar a que terminen los anteriores. Aplica reúso (dedup) por placa.
+ * Un pedido nuevo entra al pipeline apenas hay cupo → "encolar y atender casi de inmediato".
+ */
+function startContinuousRunner(): void {
+  setInterval(() => {
+    if (!autoEngine || dispatching) return;
+    dispatching = true;
+    void (async () => {
+      const pl = getPipeline();
+      while (autoEngine && pl.inFlight() < ENGINE_MAX_INFLIGHT) {
+        const [p] = await queue.claimBatch(1); // claim atómico → ya queda 'procesando'
+        if (!p) break;
+        const tier = (p.tier as string) ?? 'PRO';
+        const force = forceReprocess.delete(String(p.id));
+        if (!force) {
+          try {
+            if (await tryReuseReport(p, tier)) { console.log(`[motor-cont] ${p.placa} reutilizado (sin re-correr)`); await notifyReady(p, tier); continue; }
+          } catch (e) { console.warn('[dedup] verificación falló, regenero:', (e as Error).message); }
+        }
+        const sources = tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
+        const job: PipelineJob = { id: String(p.id), plate: p.placa, tier, sources: [...sources], outDir: plateDir(p.placa), results: [], percent: 0, done: false };
+        await mkdir(plateDir(p.placa), { recursive: true }).catch(() => {});
+        contPedidoById.set(job.id, p);
+        contJobs.set(job.id, job);
+        if (!pl.submit(job)) {
+          // Esa placa ya está en vuelo (otra corrida en curso) → suelto el claim y la re-encolo.
+          console.log(`[motor-cont] ${p.placa} ya en vuelo → re-encolo`);
+          contPedidoById.delete(job.id); contJobs.delete(job.id);
+          await queue.requeue(p.id);
+        }
+      }
+    })().catch((e) => console.warn('[motor-cont] ciclo:', (e as Error).message)).finally(() => { dispatching = false; });
+  }, 2000);
+}
+
 function readBody(req: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let b = '';
@@ -532,14 +606,17 @@ const server = createServer(async (req, res) => {
           return { source: s, status: r ? r.status : (s === running ? 'RUNNING' : 'PENDING') };
         }),
       });
-      // Pedidos EN PROCESO: los del lote (batchJobs) + el del path single (si hay). Una barra por cada uno.
+      // Pedidos EN PROCESO: los del lote (batchJobs) + los del motor continuo (contJobs) + el del
+      // path single (si hay). Una barra por cada uno.
       const currentJobs = [
         ...[...batchJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '')),
+        ...[...contJobs.values()].filter((j) => !j.done).map((j) => cardOf(j.plate, j.sources, j.results, j.percent, '')),
         ...(cj ? [cardOf(cj.plate, cj.sources, cj.results, cj.percent, cj.current, cj.id)] : []),
       ];
+      const busy = ENGINE_CONTINUOUS ? (pipeline?.inFlight() ?? 0) > 0 : engineBusy;
       // Ya NO se envía el token crudo al navegador (opción B): solo si hay secreto configurado.
       // El preview se firma por placa y bajo demanda en /api/preview-token.
-      return sendJson(res, 200, { enabled: autoEngine, busy: engineBusy, queue: queue.kind, autoSources: AUTO_SOURCES, current, currentJobs, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
+      return sendJson(res, 200, { enabled: autoEngine, busy, queue: queue.kind, autoSources: AUTO_SOURCES, current, currentJobs, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
     }
     if (path === '/api/engine/toggle' && req.method === 'POST') {
       autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
@@ -736,6 +813,7 @@ function shutdown(sig: string): void {
   if (shuttingDown) return;
   shuttingDown = true;
   console.log(`[operador] ${sig} recibido → cerrando servidor y Chrome…`);
+  try { void pipeline?.close(); } catch { /* noop */ } // motor continuo: cierra canales → workers salen
   try { killEngineChrome(); } catch { /* noop */ }
   server.close(() => process.exit(0));
   setTimeout(() => process.exit(0), 3000).unref(); // forzar salida si close() se cuelga
@@ -748,8 +826,8 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 server.listen(PORT, '127.0.0.1', () => {
   console.log(`\n🛠  Panel del operador PlacaPe → http://localhost:${PORT}`);
   console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}`);
-  console.log(`   Cola: ${queue.kind} · motor automático: ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} · fuentes auto: ${AUTO_SOURCES.join(',')}\n`);
-  startRunner();
+  console.log(`   Cola: ${queue.kind} · motor automático: ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} · modo: ${ENGINE_CONTINUOUS ? `CONTINUO (maxInflight=${ENGINE_MAX_INFLIGHT})` : 'LOTES'} · fuentes auto: ${AUTO_SOURCES.join(',')}\n`);
+  if (ENGINE_CONTINUOUS) startContinuousRunner(); else startRunner();
 });
 
 const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
