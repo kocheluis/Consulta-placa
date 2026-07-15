@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 import { createServer } from 'node:http';
+import { execSync } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync } from 'node:fs';
 import { createHmac } from 'node:crypto';
@@ -843,12 +844,39 @@ process.on('SIGTERM', () => shutdown('SIGTERM'));
 
 // Escucha SOLO en loopback: el panel no tiene auth propia, su seguridad ES el túnel SSH /
 // el reverse proxy. (Acceso: ssh -L 3010:localhost:3010 root@VPS). No exponer al internet.
-server.listen(PORT, '127.0.0.1', () => {
+/** Libera el puerto matando el proceso HUÉRFANO que lo tenga (p. ej. un Node que `tsx` no cerró al
+ *  reiniciar a mitad de pedido). Evita el crash-loop EADDRINUSE sin intervención manual. Best-effort:
+ *  usa `ss` para hallar el PID y lo mata; si no hay `ss`, cae a `fuser`. Nunca se mata a sí mismo. */
+function freePort(port: number): void {
+  try {
+    const out = execSync(`ss -ltnp 'sport = :${port}'`, { encoding: 'utf8' });
+    const pids = [...new Set([...out.matchAll(/pid=(\d+)/g)].map((m) => Number(m[1])))].filter((p) => p && p !== process.pid);
+    for (const pid of pids) { console.warn(`[operador] puerto ${port} tomado por huérfano pid=${pid} → lo mato`); try { process.kill(pid, 'SIGKILL'); } catch { /* ya murió */ } }
+  } catch { try { execSync(`fuser -k ${port}/tcp`); } catch { /* sin ss/fuser */ } }
+}
+
+let listenTries = 0;
+const onListen = (): void => {
   console.log(`\n🛠  Panel del operador PlacaPe → http://localhost:${PORT}`);
   console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}`);
   console.log(`   Cola: ${queue.kind} · motor automático: ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} · modo: ${ENGINE_CONTINUOUS ? `CONTINUO (maxInflight=${ENGINE_MAX_INFLIGHT})` : 'LOTES'} · fuentes auto: ${AUTO_SOURCES.join(',')}\n`);
   if (ENGINE_CONTINUOUS) startContinuousRunner(); else startRunner();
+};
+// Auto-arreglo del EADDRINUSE: si el puerto quedó tomado por un huérfano (reinicio a mitad de pedido),
+// lo libera y reintenta hasta 3 veces en vez de crash-loopear indefinidamente.
+server.on('error', (e: NodeJS.ErrnoException) => {
+  if (e.code === 'EADDRINUSE' && listenTries < 3) {
+    listenTries++;
+    console.error(`[operador] EADDRINUSE en :${PORT} (intento ${listenTries}/3) → libero el puerto y reintento…`);
+    freePort(PORT);
+    setTimeout(() => server.listen(PORT, '127.0.0.1'), 1500);
+  } else {
+    console.error(`[operador] no pude escuchar en :${PORT}: ${e.message}`);
+    process.exit(1);
+  }
 });
+server.once('listening', onListen);
+server.listen(PORT, '127.0.0.1');
 
 const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Consola del operador · PlacaPe</title>
