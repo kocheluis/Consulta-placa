@@ -83,4 +83,24 @@ describe('runHistorialPoolLive (pool continuo)', () => {
     await done;
     expect(reported.sort()).toEqual(['P1', 'P2']);
   });
+
+  it('failover (conc 1): si el slot caliente se bloquea, REINTENTA la placa en el siguiente slot', async () => {
+    const opens: number[] = [];
+    const seenBy: Array<[string, number]> = [];
+    const chan = new AsyncQueue<HistorialTask>();
+    const done = runHistorialPoolLive(() => chan.take(), {
+      concurrency: 1, // 1 slot caliente + failover
+      openBrowser: async (slot: SprlSlot) => { opens.push(slot.index); return fakeOpen(); },
+      // slot 1 (el "caliente") siempre lockea; slot 2 (failover) funciona.
+      runOne: async (plate, slot) => { seenBy.push([plate, slot.index]); return slot.index === 1 ? lockedRes() : ok(); },
+      onResult: () => {},
+    });
+    chan.push({ plate: 'P1' });
+    await new Promise((r) => setTimeout(r, 20));
+    chan.close();
+    await done;
+    expect(opens).toEqual([1, 2]);                 // abrió slot 1 (lockea) → failover abrió slot 2
+    expect(seenBy).toContainEqual(['P1', 1]);       // intentada en slot 1
+    expect(seenBy).toContainEqual(['P1', 2]);       // REINTENTADA en slot 2 (failover)
+  });
 });

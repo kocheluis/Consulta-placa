@@ -453,6 +453,9 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
         if (it) { outByPlate.set(it.plate, it.outDir); startLog(it.outDir, 'historial', it.plate); } // crea historial.log
         return it ? { plate: it.plate, outDir: it.outDir } : null;
       }, {
+        // Default 1: 1 historial a la vez sobre el slot caliente + failover (evita el cold-login de la
+        // 2ª cuenta en cada pedido → lockout). Sube HISTORIAL_CONCURRENCY solo si cada cuenta tiene keep-alive.
+        concurrency: Math.max(1, Number(process.env.HISTORIAL_CONCURRENCY ?? 1)),
         onLog: (task, m) => logLine(task.outDir ?? '', 'historial', m), // logs en vivo por placa (los perdía el motor continuo)
         onResult: (pr) => report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png'))),
       });
