@@ -912,11 +912,13 @@ server.listen(PORT, '127.0.0.1');
 const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Consola del operador · PlacaPe</title>
 <style>
-  :root{--azul:#1E3A8A;--teal:#0C6F64;--bg:#F1F5F9;--card:#fff;--bd:#E2E8F0;--mut:#64748B;--ok:#15803D;--err:#B91C1C;--warn:#B45309}
-  *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#0F172A}
-  header{background:var(--azul);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px}
-  header b{font-size:18px} header span{opacity:.8;font-size:13px}
+  :root{--azul:#2563EB;--teal:#0D9488;--bg:#EEF1F6;--card:#fff;--bd:#DCE2EC;--mut:#5D6B7E;--ok:#15803D;--err:#B91C1C;--warn:#B45309;--ink:#1F2733;--shadow:0 1px 2px rgba(24,39,75,.05),0 6px 18px rgba(24,39,75,.06)}
+  *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:var(--ink)}
+  header{background:#fff;color:var(--ink);border-bottom:1px solid var(--bd);padding:12px 24px;display:flex;align-items:center;gap:11px;box-shadow:var(--shadow)}
+  header .logo{width:28px;height:28px;border-radius:8px;background:linear-gradient(135deg,var(--teal),var(--azul));display:grid;place-items:center;font-size:15px;flex:0 0 auto}
+  header b{font-size:16px;color:var(--ink)} header .sub{color:var(--mut);font-size:12.5px}
   main{max-width:1340px;margin:0 auto;padding:20px}
+  .card,.ctlbar,.hleft,.hpanel,.panel,.mcard,.kpi,.schip,.ftbar,.mtbar{box-shadow:var(--shadow)}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   input,textarea{font:inherit;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:#fff}
   input#placa{font:600 18px ui-monospace,monospace;letter-spacing:2px;text-transform:uppercase;width:160px}
@@ -930,7 +932,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .b-ENCONTRADO{background:#DCFCE7;color:var(--ok)} .b-SIN_REGISTRO{background:#E2E8F0;color:#475569}
   .b-ERROR{background:#FEE2E2;color:var(--err)} .b-REQUIERE_DNI{background:#FEF3C7;color:var(--warn)}
   .sum{font-size:13px;color:#334155;margin:6px 0} .meta{font-size:12px;color:var(--mut)}
-  .card img{width:100%;border:1px solid var(--bd);border-radius:8px;margin-top:8px;cursor:zoom-in}
+  .card img{width:100%;max-height:150px;object-fit:cover;object-position:top;border:1px solid var(--bd);border-radius:8px;margin-top:8px;cursor:zoom-in}
+  .hpanel .card img{max-height:130px}
   .panel{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:16px;margin-top:18px}
   .panel h2{margin:0 0 10px;font-size:16px} textarea{width:100%;min-height:90px;font:13px ui-monospace,monospace}
   #log{font:12px ui-monospace,monospace;background:#0F172A;color:#cbd5e1;border-radius:10px;padding:10px;max-height:160px;overflow:auto;margin-top:14px;white-space:pre-wrap}
@@ -1071,7 +1074,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .heatleg{display:flex;align-items:center;gap:5px;margin-top:11px} .heatleg .hsw{width:17px;height:11px;border-radius:3px;border:1px solid var(--bd)}
   .recwrap{overflow-x:auto} .fchip{font:600 10px ui-monospace,monospace;background:rgba(185,28,28,.12);color:var(--err);padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;display:inline-block} .cchip{font:600 10px ui-monospace,monospace;background:rgba(21,128,61,.13);color:var(--ok);padding:1px 6px;border-radius:5px}
 </style></head><body>
-<header><b>🛠 Consola del operador · PlacaPe</b><span>scraping · VPS Perú</span></header>
+<header><span class="logo">🛠</span><b>Consola del operador · PlacaPe</b><span class="sub">scraping · VPS Perú</span></header>
 <main>
   <div class="ctlbar">
     <div class="row" style="justify-content:space-between">

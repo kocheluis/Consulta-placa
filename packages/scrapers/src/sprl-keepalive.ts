@@ -6,11 +6,27 @@
 //
 // Uso (cron pm2 cada ~8 min):  DISPLAY=:99 npx tsx packages/scrapers/src/sprl-keepalive.ts
 import { spawn, execSync } from 'node:child_process';
-import { appendFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './operator/chrome-path.js';
 import { sprlSlots } from './operator/sprl-slots.js';
 import { peruStamp } from './operator/time.js';
+
+// Carga secretos del VPS desde /root/placape.env (igual que operator-server) ANTES de leer los slots
+// SPRL: pm2 lanza este proceso sin esas variables, así que sin esto sprlSlots() no vería SPRL_USER_2/3
+// → el keep-alive solo refrescaría la cuenta 1. El archivo GANA sobre el entorno de pm2.
+(function loadEnvFile() {
+  const f = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
+  try {
+    for (const line of readFileSync(f, 'utf8').split('\n')) {
+      const m = line.match(/^\s*([A-Za-z0-9_]+)\s*=\s*(.*)$/);
+      if (!m || !m[1]) continue;
+      let v = m[2] ?? '';
+      if (!/^["']/.test(v)) v = v.replace(/\s+#.*$/, ''); // comentario inline solo si no está entrecomillado
+      process.env[m[1]] = v.trim().replace(/^["']|["']$/g, '');
+    }
+  } catch { /* sin archivo (dev/Windows) → no-op */ }
+})();
 
 const CHROME = findChrome();
 const PARTIDA = 'https://sprl.sunarp.gob.pe/sprl/main/partidas-base-grafica-registral';
