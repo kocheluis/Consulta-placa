@@ -1633,32 +1633,31 @@ function renderFuentes(pl,rep,results,cj,expected,oldGen){var d=document.getElem
 function loadWebReport(){var pl=SELECTED,d=document.getElementById('pdetail');
   d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando reporte…</div>';
   fetch('/api/pedido-webreport?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
-    var webBtn=WEB_BASE?'<button class="sec" onclick="toggleClientWeb()">Ver como lo ve el cliente (web) ↗</button>':'';
+    var webBtn=WEB_BASE?'<button class="sec" onclick="openClientWeb()">Ver como lo ve el cliente (web) ↗</button>':'';
     d.innerHTML=hHeader(pl)+detailTabs()+
       '<div class="row" style="justify-content:space-between;align-items:center;margin-bottom:10px">'+
         '<span class="meta">Vista nativa · datos del VPS, sin candado (no depende de Vercel ni del token).</span>'+webBtn+'</div>'+
       ((rep&&!rep.missing)?renderWebReport(rep):'<div class="pmeta">Aún sin reporte consolidado (el pedido no ha terminado).</div>')+
       '<div id="clientWebBox"></div>';
   }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
-// Muestra/oculta el iframe con la web REAL del cliente (?preview=TOKEN). Si falta el token, avisa
-// (se vería con candado, que fue justo el bug: token del VPS ≠ token de Vercel → secciones vacías).
-function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!box)return;
-  if(box.innerHTML){box.innerHTML='';return;}
-  var pl=SELECTED;
-  box.innerHTML='<div class="meta" style="margin:14px 0 8px">Generando enlace firmado…</div>';
+// Abre DIRECTO la web REAL del cliente (?preview=TOKEN) en una pestaña nueva. La pestaña se abre
+// SÍNCRONA dentro del clic (si esperáramos al fetch del token, el bloqueador de popups la mataría)
+// y le inyectamos la URL firmada cuando llega el token. No se embebe en iframe: la web pone
+// X-Frame-Options: DENY / CSP frame-ancestors 'none' (anti-clickjacking) → pestaña nueva, no iframe.
+function openClientWeb(){var pl=SELECTED;if(!pl)return;
+  var w=window.open('about:blank','_blank');       // abre YA, dentro del gesto de clic
+  if(w){try{w.opener=null;}catch(e){}}             // corta el opener (anti reverse-tabnabbing)
   // Pide un token de preview FIRMADO y efímero (opción B): el secreto no viaja en la URL, solo la
-  // firma con expiración. Un enlace filtrado muere pronto y solo abre esta placa. NO se embebe en
-  // iframe: la web pone X-Frame-Options: DENY / CSP frame-ancestors 'none' (anti-clickjacking, a
-  // propósito) → un iframe siempre daría "rechazó la conexión". Se abre en una pestaña nueva.
+  // firma con expiración → un enlace filtrado muere pronto y solo abre esta placa.
   fetch('/api/preview-token?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(o){
-    var tok=o&&o.token, mins=Math.round(((o&&o.ttl)||600)/60);
+    var tok=o&&o.token;
     var url=WEB_BASE+'/reporte/'+encodeURIComponent(pl)+(tok?'?preview='+encodeURIComponent(tok):'');
-    box.innerHTML='<div class="card wide" style="margin-top:14px">'+
-      '<div class="sum">La web se abre en una <b>pestaña nueva</b> (no embebida): placape.pe bloquea el iframe por seguridad anti-clickjacking (X-Frame-Options / CSP). El enlace es el reporte tal como lo ve el cliente.</div>'+
-      '<div style="margin-top:10px"><a href="'+url+'" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:var(--teal);color:#fff;font-weight:600;padding:10px 16px;border-radius:10px;text-decoration:none">Abrir el reporte del cliente ↗</a></div>'+
-      '<div class="meta" style="margin-top:8px">'+(tok?('Enlace firmado · expira en '+mins+' min · válido solo para esta placa'):'<b style="color:#B45309">⚠ sin OPERATOR_PREVIEW_TOKEN: se verá con candado</b>')+'</div>'+
-    '</div>';
-  }).catch(function(e){box.innerHTML='<div class="meta">✖ '+esc(e)+'</div>';});}
+    if(w){w.location.href=url;return;}
+    // El popup fue bloqueado → dejamos el enlace a mano en la caja (fallback, un solo clic).
+    var box=document.getElementById('clientWebBox');
+    if(box)box.innerHTML='<div class="card wide" style="margin-top:14px"><a href="'+url+'" target="_blank" rel="noopener noreferrer" style="display:inline-block;background:var(--teal);color:#fff;font-weight:600;padding:10px 16px;border-radius:10px;text-decoration:none">Abrir el reporte del cliente ↗</a>'+
+      '<div class="meta" style="margin-top:8px">'+(tok?'Enlace firmado · válido solo para esta placa':'<b style="color:#B45309">⚠ sin OPERATOR_PREVIEW_TOKEN: se verá con candado</b>')+'</div></div>';
+  }).catch(function(e){if(w){try{w.close();}catch(x){}}var box=document.getElementById('clientWebBox');if(box)box.innerHTML='<div class="meta">✖ '+esc(e)+'</div>';});}
 // (showLiveLogs se fusionó en loadFuentes/renderFuentes: barras persistentes por fuente en vivo y al terminar.)
 // Render compacto del reporte normalizado (lo que recibe el cliente).
 var KIND_LABEL={REGISTRAL:'Identidad',IDENTIDAD_ESPECIFICA:'Identidad específica y características',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de registros',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
