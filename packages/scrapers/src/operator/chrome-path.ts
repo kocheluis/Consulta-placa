@@ -64,6 +64,7 @@ export function killEngineChrome(): void {
     ...(keepSunarpWarm ? [] : [Number(process.env.CDP_SUNARP_PORT ?? 9222)]),
     Number(process.env.CDP_SPRL_PORT ?? 9224),
     Number(process.env.CDP_SPRL_PORT_2 ?? 9225), // 2ª cuenta SPRL (si no, su Chrome quedaría huérfano)
+    Number(process.env.CDP_SPRL_PORT_3 ?? 9228), // 3ª cuenta SPRL (backup). 9228: 9226/9227 = Superbid/ATU/SIGM
     // Superbid en el reporte es lookup en DB (sin navegador); puerto propio 9226 SOLO para no
     // aliasar el 9225 de la 2ª cuenta SPRL (si algún día vuelve a abrir Chrome, no la mata).
     Number(process.env.CDP_SUPERBID_PORT ?? 9226),

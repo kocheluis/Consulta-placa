@@ -63,8 +63,10 @@ async function refreshSlot(port: number, profile: string, label: string): Promis
 }
 
 (async () => {
-  // Refresca CADA slot configurado (cuenta 1 y, si existe, cuenta 2) en secuencia:
-  // cada uno tiene su perfil/puerto propio, así ambas sesiones se mantienen vivas.
+  // Refresca CADA slot configurado (cuentas 1, 2 y 3 si existen) EN SECUENCIA: cada uno tiene su
+  // perfil/puerto propio, así TODAS las sesiones se mantienen vivas → habilitar una cuenta nueva es
+  // solo poner sus env (SPRL_USER_N/SPRL_PASS_N); este keep-alive la cubre automáticamente. Sin
+  // sesiones calientes en paralelo NO se debe subir HISTORIAL_CONCURRENCY (cold-login → lockout).
   const slots = sprlSlots();
   for (const s of slots) {
     await refreshSlot(s.port, s.profile, `slot${s.index}`);
