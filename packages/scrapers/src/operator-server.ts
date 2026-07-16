@@ -94,6 +94,10 @@ const queue = getQueue();
 // Cache del endpoint de métricas (escanea reporte.json por placa → costoso). TTL corto.
 let metricsCache: { at: number; data: unknown } | null = null;
 let autoEngine = metaGet<boolean>('auto_engine_enabled') ?? false; // persistido: sobrevive reinicios
+// Fuentes activas del motor automático, elegibles desde la consola. Si hay override, reemplaza
+// AUTO_SOURCES para los pedidos PRO/ULTRA nuevos (BASIC sigue con BASIC_SOURCES). Persistido.
+let autoSourcesOverride: string[] | null = metaGet<string[]>('auto_sources_override') ?? null;
+const activeAuto = (): string[] => (autoSourcesOverride && autoSourcesOverride.length ? autoSourcesOverride : AUTO_SOURCES);
 let engineBusy = false; // un solo reporte a la vez (lo que aguanta el VPS); serializa auto + manual
 let currentAutoJobId: string | null = null; // job del pedido que el motor automático atiende ahora
 
@@ -320,7 +324,7 @@ async function notifyReady(p: Pedido, tier: string): Promise<void> {
 
 /** Atiende un pedido de la cola: corre el reporte completo y actualiza su estado. */
 async function processPedido(p: Pedido): Promise<void> {
-  const sources = p.tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
+  const sources = p.tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
   const tier = (p.tier as string) ?? 'PRO';
   const force = forceReprocess.delete(String(p.id));
   console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa} · tier=${tier}${force ? ' · FORCE' : ''} · ${sources.length} fuentes`);
@@ -431,7 +435,7 @@ async function processBatch(pedidos: Pedido[]): Promise<void> {
         if (await tryReuseReport(p, tier)) { console.log(`[motor-lote] ${p.placa} reutilizado (sin re-correr)`); await notifyReady(p, tier); continue; }
       } catch (e) { console.warn('[dedup] verificación falló, regenero:', (e as Error).message); }
     }
-    const sources = tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
+    const sources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
     orchJobs.push({ id: String(p.id), plate: p.placa, tier, sources: [...sources], outDir: plateDir(p.placa), results: [], percent: 0, done: false });
   }
   if (!orchJobs.length) return; // todos reutilizados
@@ -527,7 +531,7 @@ function startContinuousRunner(): void {
             if (await tryReuseReport(p, tier)) { console.log(`[motor-cont] ${p.placa} reutilizado (sin re-correr)`); await notifyReady(p, tier); continue; }
           } catch (e) { console.warn('[dedup] verificación falló, regenero:', (e as Error).message); }
         }
-        const sources = tier === 'BASIC' ? BASIC_SOURCES : AUTO_SOURCES;
+        const sources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
         const job: PipelineJob = { id: String(p.id), plate: p.placa, tier, sources: [...sources], outDir: plateDir(p.placa), results: [], percent: 0, done: false };
         await mkdir(plateDir(p.placa), { recursive: true }).catch(() => {});
         contPedidoById.set(job.id, p);
@@ -596,6 +600,19 @@ const server = createServer(async (req, res) => {
       return res.end(HTML);
     }
     if (path === '/api/sources' && req.method === 'GET') return sendJson(res, 200, OPERATOR_SOURCES);
+    // Fuentes activas del motor automático (elegibles desde la consola). GET → catálogo + activas;
+    // POST {sources:[ids]} → fija el override (vacío = volver al default AUTO_SOURCES). Solo afecta PRO/ULTRA.
+    if (path === '/api/auto-sources' && req.method === 'GET') {
+      return sendJson(res, 200, { all: OPERATOR_SOURCES, active: activeAuto(), default: AUTO_SOURCES, overridden: !!autoSourcesOverride });
+    }
+    if (path === '/api/auto-sources' && req.method === 'POST') {
+      const body = await readBody(req);
+      const arr = Array.isArray(body.sources) ? [...new Set((body.sources as unknown[]).map((s) => String(s)))].filter(Boolean) : [];
+      autoSourcesOverride = arr.length ? arr : null;
+      metaSet('auto_sources_override', autoSourcesOverride);
+      console.log(`[motor] fuentes activas → ${autoSourcesOverride ? autoSourcesOverride.join(',') : '(default) ' + AUTO_SOURCES.join(',')}`);
+      return sendJson(res, 200, { active: activeAuto(), overridden: !!autoSourcesOverride });
+    }
 
     // Motor automático: estado + encender/apagar (persistido en meta).
     if (path === '/api/engine' && req.method === 'GET') {
@@ -629,7 +646,7 @@ const server = createServer(async (req, res) => {
       const busy = ENGINE_CONTINUOUS ? (pipeline?.inFlight() ?? 0) > 0 : engineBusy;
       // Ya NO se envía el token crudo al navegador (opción B): solo si hay secreto configurado.
       // El preview se firma por placa y bajo demanda en /api/preview-token.
-      return sendJson(res, 200, { enabled: autoEngine, busy, queue: queue.kind, autoSources: AUTO_SOURCES, current, currentJobs, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
+      return sendJson(res, 200, { enabled: autoEngine, busy, queue: queue.kind, autoSources: activeAuto(), current, currentJobs, web: { base: WEB_REPORT_URL, hasToken: !!OPERATOR_PREVIEW_TOKEN } });
     }
     if (path === '/api/engine/toggle' && req.method === 'POST') {
       autoEngine = !autoEngine; metaSet('auto_engine_enabled', autoEngine);
@@ -1095,6 +1112,11 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
         <button class="sec" onclick="enqueue()">Encolar pedido</button>
       </div>
     </div>
+    <div class="row" style="margin-top:10px;gap:8px;align-items:center">
+      <button class="sec" onclick="toggleAutoSrc()" style="font-size:13px;padding:7px 12px">⚙ Fuentes del motor ▾</button>
+      <span class="meta" id="autoSrcSummary"></span>
+    </div>
+    <div id="autoSrcBox" style="display:none;margin-top:8px;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card2)"></div>
     <div id="engBars"><div class="prog2 idle"><div class="top"><span class="pl">Motor libre</span><span class="pc"></span></div><div class="st">Sin pedidos en proceso</div><div class="bw"><div class="bf"></div></div></div></div>
   </div>
 
@@ -1562,6 +1584,21 @@ function enqueue(){var p=document.getElementById('qplaca').value.toUpperCase().r
   var tier=document.getElementById('qtier').value;
   fetch('/api/pedido',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:p,tier:tier,whatsapp:document.getElementById('qwa').value,email:document.getElementById('qmail').value})})
    .then(function(r){return r.json()}).then(function(x){log('＋ pedido '+esc(x.tier||tier)+' encolado: '+esc(x.placa)+' (#'+esc(x.id)+')');document.getElementById('qplaca').value='';loadHistory();}).catch(function(e){log('✖ '+e)});}
+// ── Fuentes activas del motor automático (elegibles desde la consola) ──
+var AUTOSRC_TOTAL=0;
+function updAutoSummary(active,total,ovr){var s=document.getElementById('autoSrcSummary');if(s)s.textContent=active+' de '+total+' fuentes activas · '+(ovr?'personalizado':'por defecto');}
+function loadAutoSources(){fetch('/api/auto-sources').then(function(r){return r.json()}).then(function(o){
+  var active=o.active||[],all=o.all||[];AUTOSRC_TOTAL=all.length;
+  document.getElementById('autoSrcBox').innerHTML=all.map(function(x){var on=active.indexOf(x.id)>=0;
+    return '<label class="src" style="margin:0 12px 6px 0"><input type="checkbox" '+(on?'checked':'')+' value="'+esc(x.id)+'" onchange="saveAutoSources()"> '+esc(x.label)+'</label>';}).join('')+
+    '<div class="meta" style="margin-top:4px">Aplica a pedidos <b>PRO/ULTRA</b> nuevos (BASIC usa su combo fijo). Desmarca una fuente para que el motor no la corra.</div>';
+  updAutoSummary(active.length,all.length,o.overridden);
+}).catch(function(){});}
+function toggleAutoSrc(){var b=document.getElementById('autoSrcBox');b.style.display=(b.style.display==='none')?'block':'none';if(b.style.display==='block')loadAutoSources();}
+function saveAutoSources(){var c=[].slice.call(document.querySelectorAll('#autoSrcBox input:checked')).map(function(i){return i.value});
+  fetch('/api/auto-sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sources:c})})
+   .then(function(r){return r.json()}).then(function(o){var a=o.active||[];log('⚙ fuentes del motor: '+a.length+' activas ('+a.join(', ')+')');updAutoSummary(a.length,AUTOSRC_TOTAL,o.overridden);}).catch(function(e){log('✖ '+e)});}
+
 // ── Lightbox de capturas ──
 function lbOpenImg(src,title){document.getElementById('lbTitle').textContent=title||'captura';document.getElementById('lbImg').src=src;document.getElementById('lbFoot').textContent=(src||'').split('?')[0];document.getElementById('lightbox').classList.add('on');}
 function lbClose(ev){if(ev&&ev.target&&ev.target.id&&ev.target.id!=='lightbox')return;document.getElementById('lightbox').classList.remove('on');}
@@ -1680,5 +1717,5 @@ function renderMDerived(){
     return '<tr><td><span class="meta" style="font-family:ui-monospace,monospace">'+mfDT(e.ts)+'</span></td><td><b style="font:700 12px ui-monospace,monospace">'+esc(e.placa)+'</b></td><td>'+otier(e.tier)+'</td><td>'+oorigen(e.origin)+'</td><td>'+pestado(e.estado)+'</td><td>'+fl+'</td><td><span style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+(e.dur?((m?m+'m ':'')+(e.dur%60)+'s'):'—')+'</span></td></tr>';}).join(''):'<tr><td colspan="7" style="color:#64748B;padding:20px;text-align:center">Sin reportes en el ámbito.</td></tr>';
   document.getElementById('recNote').innerHTML=recs.length>cap?'<span style="margin-left:auto">mostrando '+cap+' de '+recs.length+' (más recientes)</span>':'';
 }
-showTab('hist');loadEngine();loadHistory();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
+showTab('hist');loadEngine();loadHistory();loadAutoSources();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
 </script></body></html>`;
