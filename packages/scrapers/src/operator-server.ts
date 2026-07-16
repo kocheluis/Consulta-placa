@@ -443,7 +443,12 @@ async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
       }
     }
     await publishReport(p.placa, report, { userId: p.userId ?? null, pedidoId: job.id });
-    await writeFile(join(plateDir(p.placa), 'reporte.json'), JSON.stringify({ plate: p.placa, generatedAt: new Date().toISOString(), results: job.results }, null, 2), 'utf8');
+    const payload = JSON.stringify({ plate: p.placa, generatedAt: new Date().toISOString(), results: job.results }, null, 2);
+    await writeFile(join(plateDir(p.placa), 'reporte.json'), payload, 'utf8'); // "vivo" = la última generación
+    // SNAPSHOT por pedido: congela las fuentes de ESTA generación → la consola puede mostrar las fuentes
+    // de una generación anterior al seleccionarla (antes solo se veía la más reciente, compartían reporte.json).
+    const snap = String(job.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (snap) await writeFile(join(plateDir(p.placa), `reporte-${snap}.json`), payload, 'utf8').catch(() => {});
   } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
   await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
   await notifyReady(p, job.tier);
@@ -757,13 +762,19 @@ const server = createServer(async (req, res) => {
       metricsCache = { at: Date.now(), data: { events, generatedAt: new Date().toISOString() } };
       return sendJson(res, 200, metricsCache.data);
     }
-    // Resultados crudos de un pedido (reporte.json de su placa) para ver fuentes + logs.
+    // Resultados crudos de un pedido (reporte.json de su placa) para ver fuentes + logs. Con `id` →
+    // el SNAPSHOT de esa generación (reporte-<id>.json); sin id → el reporte.json vivo (última generación).
     if (path === '/api/pedido-report' && req.method === 'GET') {
       const placa = (url.searchParams.get('placa') ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
       if (!placa) return sendJson(res, 400, { error: 'falta placa' });
+      const id = (url.searchParams.get('id') ?? '').replace(/[^a-zA-Z0-9_-]/g, '');
+      if (id) {
+        try { const t = await readFile(join(plateDir(placa), `reporte-${id}.json`), 'utf8'); return sendJson(res, 200, JSON.parse(t)); }
+        catch { /* generación anterior a esta feature (sin snapshot) → cae al vivo, marcado stale */ }
+      }
       try {
         const txt = await readFile(join(plateDir(placa), 'reporte.json'), 'utf8');
-        return sendJson(res, 200, JSON.parse(txt));
+        return sendJson(res, 200, id ? { ...JSON.parse(txt), stale: true } : JSON.parse(txt));
       } catch { return sendJson(res, 200, { plate: placa, results: [], missing: true }); }
     }
     // Reporte NORMALIZADO (lo que ve el cliente): aplica toWebReport a los resultados crudos.
@@ -1559,24 +1570,28 @@ function retryFailed(){var pl=SELECTED,list=(FAILEDSRC||[]).slice();if(!pl||!lis
 // para que las fuentes aún en curso muestren su barra; así las barras nunca desaparecen.
 function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');if(!d)return;
   if(!d.querySelector('.fsr')&&!d.querySelector('.shotgrid'))d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando…</div>';
+  // ¿Generación MÁS RECIENTE de la placa? HISTLIST viene desc por creado → el primero de la placa es el último.
+  // Si es una generación ANTERIOR, se pide su SNAPSHOT (reporte-<id>.json) → muestra SUS fuentes, no las de la última.
+  var latest=null;for(var m=0;m<HISTLIST.length;m++){if(HISTLIST[m].placa===pl){latest=HISTLIST[m];break;}}
+  var oldGen=!!(latest&&String(latest.id)!==String(SELECTED_ID));
+  var repUrl='/api/pedido-report?placa='+encodeURIComponent(pl)+(oldGen?'&id='+encodeURIComponent(SELECTED_ID):'');
   Promise.all([
-    fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).catch(function(){return {results:[]};}),
+    fetch(repUrl).then(function(r){return r.json()}).catch(function(){return {results:[]};}),
     fetch('/api/engine').then(function(r){return r.json()}).catch(function(){return {};})
   ]).then(function(a){
     if(SELECTED!==pl||DTAB!=='fuentes')return;
     var rep=a[0]||{},s=a[1]||{},results=rep.results||[];
-    var cj=((s.currentJobs)||[]).filter(function(c){return c.placa===pl;})[0];
-    // Fuentes ESPERADAS del pedido: para PRO/ULTRA = las activas del motor. Así una fuente que se
-    // DESCARTÓ (p.ej. historial que excedió el timeout del job) igual aparece —como "sin resultado",
-    // con su log y botón de reintento— en vez de desaparecer. BASIC no incluye historial.
+    // El job en curso es de la ÚLTIMA generación → no aplica a una generación anterior seleccionada.
+    var cj=oldGen?null:(((s.currentJobs)||[]).filter(function(c){return c.placa===pl;})[0]);
+    // Fuentes ESPERADAS (para marcar "sin resultado" las descartadas) solo aplican a la ÚLTIMA corrida.
     var cur=null;for(var k=0;k<HISTLIST.length;k++){if(String(HISTLIST[k].id)===String(SELECTED_ID)){cur=HISTLIST[k];break;}}
     var tier=(cur&&cur.tier)||'PRO';
-    var expected=(tier!=='BASIC')?(s.autoSources||[]):[];
-    renderFuentes(pl,rep,results,cj,expected);
+    var expected=(!oldGen&&tier!=='BASIC')?(s.autoSources||[]):[];
+    renderFuentes(pl,rep,results,cj,expected,oldGen);
     if(cj&&DTAB==='fuentes'&&SELECTED===pl)setTimeout(function(){if(DTAB==='fuentes'&&SELECTED===pl)loadFuentes();},4000);
   });}
 function fbarCls(status){return (status==='ERROR')?'err':((status==='RUNNING')?'run':((status==='PENDING')?'pend':((status==='MISSING')?'miss':'ok')));}
-function renderFuentes(pl,rep,results,cj,expected){var d=document.getElementById('pdetail');if(!d)return;expected=expected||[];
+function renderFuentes(pl,rep,results,cj,expected,oldGen){var d=document.getElementById('pdetail');if(!d)return;expected=expected||[];
   var byId={};results.forEach(function(r){byId[srcId(r.source)]=r;});
   var cjById={};if(cj&&cj.sources)cj.sources.forEach(function(x){cjById[srcId(x.source)]=x;});
   var order=[],seen={};function add(id){id=srcId(id);if(!seen[id]){seen[id]=1;order.push(id);}}
@@ -1592,21 +1607,23 @@ function renderFuentes(pl,rep,results,cj,expected){var d=document.getElementById
     if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;else if(cls==='miss'){missN++;failed.push(id);}
     var t=(!cj&&r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
     var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':((cls==='miss')?'sin resultado':esc(status)));
-    var rbtn=(cls==='err'||cls==='miss')?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
+    var rbtn=(!oldGen&&(cls==='err'||cls==='miss'))?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
     return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span>'+rbtn+'</div>';
   }).join('');
-  FAILEDSRC=failed;
-  var shots=order.filter(function(id){if(cj){var lv=cjById[id];return lv&&lv.status!=='PENDING'&&lv.status!=='RUNNING';}var r=byId[id];return r&&r.screenshot;}).map(function(id){
+  FAILEDSRC=oldGen?[]:failed;
+  // Capturas y logs son POR PLACA (se sobrescriben cada corrida) → solo tienen sentido en la última generación.
+  var shots=(oldGen?[]:order.filter(function(id){if(cj){var lv=cjById[id];return lv&&lv.status!=='PENDING'&&lv.status!=='RUNNING';}var r=byId[id];return r&&r.screenshot;})).map(function(id){
     var st=cj?((cjById[id]||{}).status):((byId[id]||{}).status),cls=fbarCls(st);
     var col=(cls==='err')?'var(--err)':((cls==='run')?'var(--run)':'var(--ok)'),u='/shot/'+encodeURIComponent(pl)+'/'+id+'.png?t='+Date.now();
     return '<div class="shotc" onclick="lbOpenImg(\\''+u+'\\',\\''+id+' · '+esc(pl)+'\\')"><img src="'+u+'" onerror="this.parentNode.style.display=\\'none\\'"><div class="cc"><span>'+esc(id)+'</span><span class="dd" style="background:'+col+'"></span></div></div>';
   }).join('');
   var shotBlock=shots?('<div class="lh" style="margin-top:16px">📸 Capturas por fuente · clic para ampliar</div><div class="shotgrid">'+shots+'</div>'):'';
-  var logs=order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('');
+  var logsBlock=oldGen?'':('<div class="lh" style="margin-top:16px">Logs por fuente</div><div class="loglinks2">'+order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('')+'</div>');
+  var note=oldGen?('<div class="webnote" style="margin-bottom:10px">📌 <b>Generación anterior</b>'+(rep.generatedAt?(' · '+esc(fmtTime(rep.generatedAt))):'')+' — estas son sus fuentes. Las capturas y logs solo se guardan de la corrida <b>más reciente</b> de la placa.'+(rep.stale?' <b style="color:var(--warn)">(snapshot no disponible; se muestra la última)</b>':'')+'</div>'):'';
   var pct=cj?(cj.percent||0):100;
   var probN=errN+missN;
-  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(missN?' · <span style="color:var(--warn)">'+missN+' sin resultado</span>':'')+(probN?' <button class="reintall" onclick="retryFailed()">↻ Reintentar '+probN+'</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
-  var body=order.length?(meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+'<div class="lh" style="margin-top:16px">Logs por fuente</div><div class="loglinks2">'+logs+'</div>'):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
+  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(missN?' · <span style="color:var(--warn)">'+missN+' sin resultado</span>':'')+((probN&&!oldGen)?' <button class="reintall" onclick="retryFailed()">↻ Reintentar '+probN+'</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
+  var body=order.length?(note+meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+logsBlock):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
   d.innerHTML=hHeader(pl)+detailTabs()+body;}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
 // Render NATIVO local por defecto: lee el reporte.json del propio VPS (/api/pedido-webreport)
