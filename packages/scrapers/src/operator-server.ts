@@ -1034,8 +1034,17 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .hl-ttl{font-weight:700;font-size:13.5px} .perpage-top{font-size:12px;color:var(--mut)}
   .perpage-top select{font:inherit;font-size:12.5px;padding:4px 6px;border:1px solid var(--bd);border-radius:7px}
   .tbl-scroll{overflow-x:auto} .hleft table.ped{border:0;border-radius:0}
-  .hpanel{position:sticky;top:12px} .hpanel .dempty{padding:40px 18px;text-align:center;color:var(--faint);font-size:13px}
-  .hpanel .pdetail,.hpanel>div{padding:0}
+  .hpanel{position:sticky;top:12px;padding:4px 15px 15px} .hpanel .dempty{padding:40px 18px;text-align:center;color:var(--faint);font-size:13px}
+  .hpanel h2{font-size:16px;margin:10px 0 2px}
+  .fsr{display:flex;align-items:center;gap:10px;margin:7px 0}
+  .fsr .sn{width:118px;font:600 11.5px ui-monospace,monospace;flex:0 0 auto;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .fsr .tk{flex:1;height:8px;background:#E5E9F0;border-radius:999px;overflow:hidden}
+  .fsr .fl{height:100%;border-radius:999px;transition:width .5s ease}
+  .fsr .fl-ok{background:var(--ok)} .fsr .fl-run{background:var(--run)} .fsr .fl-err{background:var(--err)} .fsr .fl-pend{background:#CBD5E1}
+  .fsr .st2{flex:0 0 auto;min-width:104px;text-align:right;font:600 10px ui-monospace,monospace;display:flex;gap:6px;align-items:center;justify-content:flex-end}
+  .fsr .tm{color:var(--mut);font-weight:700}
+  .st2.ok{color:var(--ok)} .st2.run{color:var(--run)} .st2.err{color:var(--err)} .st2.pend{color:var(--faint)}
+  .loglinks2{display:flex;flex-wrap:wrap;gap:6px} .loglinks2 a{font:600 11px ui-monospace,monospace;color:var(--teal);text-decoration:none;border:1px solid var(--bd);border-radius:7px;padding:3px 8px;background:var(--card2)}
   .shotgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin:8px 0}
   .shotc{border:1px solid var(--bd);border-radius:8px;overflow:hidden;cursor:zoom-in;background:var(--card2)}
   .shotc img{width:100%;height:66px;object-fit:cover;display:block}
@@ -1100,16 +1109,13 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
         <button id="engBtn" class="sw off" onclick="toggleEngine()">…</button>
         <span id="engInfo" class="meta"></span>
       </div>
-      <div class="row">
-        <input id="qplaca" placeholder="placa" maxlength="8" style="width:120px;text-transform:uppercase">
-        <select id="qtier" title="Nivel del reporte" style="padding:8px 10px;border:1px solid var(--bd);border-radius:10px;background:#fff;font:inherit">
-          <option value="BASIC">BASIC (gratis)</option>
-          <option value="PRO" selected>PRO</option>
-          <option value="ULTRA">ULTRA (con IA)</option>
-        </select>
-        <input id="qwa" placeholder="WhatsApp" style="width:130px">
-        <input id="qmail" placeholder="correo" style="width:160px">
-        <button class="sec" onclick="enqueue()">Encolar pedido</button>
+      <div class="row" style="align-items:flex-end;gap:10px">
+        <div class="ffld"><label>Placa</label><input id="qplaca" class="pl" placeholder="ABC123" maxlength="8"></div>
+        <div class="ffld"><label>Nivel</label>
+          <select id="qtier"><option value="BASIC">BASIC (gratis)</option><option value="PRO" selected>PRO</option><option value="ULTRA">ULTRA (IA)</option></select></div>
+        <div class="ffld"><label>WhatsApp</label><input id="qwa" placeholder="+51…" style="width:120px"></div>
+        <div class="ffld"><label>Correo</label><input id="qmail" placeholder="cliente@…" style="width:150px"></div>
+        <button class="ok" onclick="enqueue()">Encolar pedido</button>
       </div>
     </div>
     <div class="row" style="margin-top:10px;gap:8px;align-items:center">
@@ -1466,19 +1472,46 @@ function detailTabs(){return '<div class="tabs" style="margin:10px 0 12px">'+
   '<button class="tab'+(DTAB==='reporte'?' active':'')+'" onclick="showDetailTab(\\'reporte\\')">Reporte al usuario</button></div>';}
 function selectPedido(pl,id){SELECTED=pl;SELECTED_ID=id;DTAB='fuentes';markSel();showDetailTab('fuentes');}
 function showDetailTab(t){DTAB=t;if(t==='reporte')loadWebReport();else loadFuentes();}
-// ── Pestaña FUENTES: tarjetas crudas por fuente (debug) ──
-function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');
-  d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando…</div>';
-  fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).then(function(rep){
-    var results=rep.results||[];
-    if(!results.length){return showLiveLogs(pl,rep);}
-    var ok=results.filter(function(x){return x.status==='ENCONTRADO'||x.status==='SIN_REGISTRO'}).length;
-    var err=results.filter(function(x){return x.status==='ERROR'}).length;
-    d.innerHTML=hHeader(pl)+detailTabs()+
-      '<div class="pmeta"><span>'+results.length+' fuentes</span><span style="color:#15803D">'+ok+' ok</span>'+(err?'<span style="color:#B91C1C">'+err+' con error</span>':'')+(rep.generatedAt?'<span>generado '+esc(fmtTime(rep.generatedAt))+'</span>':'')+'</div>'+
-      '<div id="hcards" class="cards"></div>';
-    renderCards(results, pl, 'hcards', true, 'h');
-  }).catch(function(e){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">✖ '+esc(e)+'</div>';});}
+// ── Pestaña FUENTES: barras PERSISTENTES por fuente (color + tiempo) + capturas miniatura + logs ──
+// Fusiona el reporte.json (resultados finales con ms + capturas) con el estado EN VIVO (/api/engine)
+// para que las fuentes aún en curso muestren su barra; así las barras nunca desaparecen.
+function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');if(!d)return;
+  if(!d.querySelector('.fsr')&&!d.querySelector('.shotgrid'))d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">Cargando…</div>';
+  Promise.all([
+    fetch('/api/pedido-report?placa='+encodeURIComponent(pl)).then(function(r){return r.json()}).catch(function(){return {results:[]};}),
+    fetch('/api/engine').then(function(r){return r.json()}).catch(function(){return {};})
+  ]).then(function(a){
+    if(SELECTED!==pl||DTAB!=='fuentes')return;
+    var rep=a[0]||{},s=a[1]||{},results=rep.results||[];
+    var cj=((s.currentJobs)||[]).filter(function(c){return c.placa===pl;})[0];
+    renderFuentes(pl,rep,results,cj);
+    if(cj&&DTAB==='fuentes'&&SELECTED===pl)setTimeout(function(){if(DTAB==='fuentes'&&SELECTED===pl)loadFuentes();},4000);
+  });}
+function fbarCls(status){return (status==='ERROR')?'err':((status==='RUNNING')?'run':((status==='PENDING')?'pend':'ok'));}
+function renderFuentes(pl,rep,results,cj){var d=document.getElementById('pdetail');if(!d)return;
+  var byId={};results.forEach(function(r){byId[srcId(r.source)]=r;});
+  var cjById={};if(cj&&cj.sources)cj.sources.forEach(function(x){cjById[srcId(x.source)]=x;});
+  var order=[],seen={};function add(id){id=srcId(id);if(!seen[id]){seen[id]=1;order.push(id);}}
+  if(cj&&cj.sources)cj.sources.forEach(function(x){add(x.source);});
+  results.forEach(function(r){add(r.source);});
+  var okN=0,errN=0,runN=0;
+  var bars=order.map(function(id){var r=byId[id],live=cjById[id];
+    var status=r?r.status:(live?live.status:'PENDING'),cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
+    if(cls==='ok')okN++;else if(cls==='err')errN++;else if(cls==='run')runN++;
+    var t=(r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
+    var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':esc(status));
+    return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span></div>';
+  }).join('');
+  var shots=order.filter(function(id){var r=byId[id];return r&&r.screenshot;}).map(function(id){var r=byId[id],cls=fbarCls(r.status);
+    var col=(cls==='err')?'var(--err)':((cls==='run')?'var(--run)':'var(--ok)'),u='/shot/'+encodeURIComponent(pl)+'/'+id+'.png?t='+Date.now();
+    return '<div class="shotc" onclick="lbOpenImg(\\''+u+'\\',\\''+id+' · '+esc(pl)+'\\')"><img src="'+u+'"><div class="cc"><span>'+esc(id)+'</span><span class="dd" style="background:'+col+'"></span></div></div>';
+  }).join('');
+  var shotBlock=shots?('<div class="lh" style="margin-top:16px">📸 Capturas por fuente · clic para ampliar</div><div class="shotgrid">'+shots+'</div>'):'';
+  var logs=order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('');
+  var pct=cj?(cj.percent||0):100;
+  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
+  var body=order.length?(meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+'<div class="lh" style="margin-top:16px">Logs por fuente</div><div class="loglinks2">'+logs+'</div>'):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
+  d.innerHTML=hHeader(pl)+detailTabs()+body;}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
 // Render NATIVO local por defecto: lee el reporte.json del propio VPS (/api/pedido-webreport)
 // con TODOS los payloads, sin candado ni token ni Vercel → nunca se rompe. El iframe con la web
@@ -1513,34 +1546,7 @@ function toggleClientWeb(){var box=document.getElementById('clientWebBox');if(!b
       '<div class="meta" style="margin-top:8px">'+(tok?('Enlace firmado · expira en '+mins+' min · válido solo para esta placa'):'<b style="color:#B45309">⚠ sin OPERATOR_PREVIEW_TOKEN: se verá con candado</b>')+'</div>'+
     '</div>';
   }).catch(function(e){box.innerHTML='<div class="meta">✖ '+esc(e)+'</div>';});}
-function showLiveLogs(pl){var d=document.getElementById('pdetail');
-  fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
-    // Busca ESTA placa entre los pedidos en proceso (currentJobs cubre lote, continuo y single) → así
-    // el detalle en vivo funciona también en modo CONTINUO (donde current singular queda null).
-    var cj=(s.currentJobs||[]).filter(function(c){return c.placa===pl;})[0];
-    var proc=!!cj;var srcs=s.autoSources||[];
-    var pct=proc?(cj.percent||0):0;
-    var links=srcs.map(function(x){return '<a href="/log/'+encodeURIComponent(pl)+'/'+x+'" target="_blank" style="margin:0 12px 6px 0;display:inline-block;color:#0C6F64">'+esc(x)+'</a>';}).join('');
-    // Barra de % de carga de la tarea → se ve el avance en vivo (no parece "colgado").
-    var bar=proc
-      ?'<div class="prog2"><div class="top"><span class="pl">⏳ '+esc(pl)+'</span><span class="pc">'+pct+'%</span></div><div class="st">procesando fuentes…</div><div class="bw"><div class="bf" style="width:'+pct+'%"></div></div></div>'
-      :'<div class="prog2 idle"><div class="top"><span class="pl">'+esc(pl)+'</span><span class="pc">—</span></div><div class="st">⚠ aún sin reporte.json (¿en proceso en otra máquina o pedido viejo?)</div></div>';
-    // % de carga POR FUENTE: hecha=100% (verde/rojo según status), corriendo=parcial (azul), en cola=0%.
-    var ss=(proc&&cj.sources)||[];
-    var perSrc=ss.length?('<div style="margin:12px 0 4px">'+ss.map(function(x){
-      var st=x.status||'PENDING', done=(st!=='PENDING'&&st!=='RUNNING');
-      var col=(st==='ENCONTRADO'||st==='SIN_REGISTRO')?'#15803D':((st==='RUNNING')?'#2563EB':(done?'#B91C1C':'#94A3B8'));
-      var w=done?100:((st==='RUNNING')?55:0), lab=(st==='RUNNING')?'corriendo…':((st==='PENDING')?'en cola':esc(st));
-      return '<div style="display:flex;align-items:center;gap:10px;margin:5px 0">'+
-        '<span style="width:120px;font:600 12px ui-monospace,monospace;color:#334155">'+esc(x.source)+'</span>'+
-        '<div style="flex:1;height:8px;background:#E2E8F0;border-radius:999px;overflow:hidden"><div style="height:100%;width:'+w+'%;background:'+col+';transition:width .5s ease"></div></div>'+
-        '<span style="width:95px;text-align:right;font:600 11px ui-monospace,monospace;color:'+col+'">'+lab+'</span></div>';
-    }).join('')+'</div>'):'';
-    d.innerHTML=hHeader(pl)+detailTabs()+bar+perSrc+
-      '<div class="pmeta" style="display:block;margin-top:12px">Logs en vivo por fuente:<br>'+(links||'—')+'</div>';
-    // Auto-refresco mientras procesa ESTA placa y sigues en la pestaña Fuentes → el % avanza solo.
-    if(proc&&DTAB==='fuentes'&&SELECTED===pl)setTimeout(function(){if(DTAB==='fuentes'&&SELECTED===pl)loadFuentes();},4000);
-  }).catch(function(){d.innerHTML=hHeader(pl)+detailTabs()+'<div class="pmeta">⚠ aún sin reporte.json</div>';});}
+// (showLiveLogs se fusionó en loadFuentes/renderFuentes: barras persistentes por fuente en vivo y al terminar.)
 // Render compacto del reporte normalizado (lo que recibe el cliente).
 var KIND_LABEL={REGISTRAL:'Identidad',IDENTIDAD_ESPECIFICA:'Identidad específica y características',SEGUROS:'SOAT',SINIESTRALIDAD:'Siniestralidad',PAPELETAS:'Papeletas e infracciones',CAPTURA:'Orden de captura',REVISION_TECNICA:'Revisión técnica',TRANSPORTE:'Uso como taxi/transporte',GRAVAMENES:'Gravámenes/prendas',HISTORIAL:'Historial de registros',MULTAS_ELECTORALES:'Multas electorales',IA:'Análisis con IA'};
 // Badge de estado por sección: verde=AVAILABLE, rojo=UNAVAILABLE/ERROR (fuente falló → re-generar), gris=el resto.
