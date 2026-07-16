@@ -98,6 +98,12 @@ let autoEngine = metaGet<boolean>('auto_engine_enabled') ?? false; // persistido
 // AUTO_SOURCES para los pedidos PRO/ULTRA nuevos (BASIC sigue con BASIC_SOURCES). Persistido.
 let autoSourcesOverride: string[] | null = metaGet<string[]>('auto_sources_override') ?? null;
 const activeAuto = (): string[] => (autoSourcesOverride && autoSourcesOverride.length ? autoSourcesOverride : AUTO_SOURCES);
+// MEMORIA (reúso PARCIAL por fuente): si está ON, un pedido de una placa con reporte dentro del TTL
+// NO re-corre las fuentes con resultado bueno (se jalan del reporte guardado); solo re-corre las que
+// fallaron o faltan. Persistido. Distinto del dedup por-dueño (tryReuseReport): este es por-fuente.
+let memoryEnabled = metaGet<boolean>('memory_enabled') ?? false;
+let memoryTtlH = Math.max(1, Number(metaGet<number>('memory_ttl_hours') ?? 24));
+const reuseResults = new Map<string, OperatorSourceResult[]>(); // job.id → fuentes reusadas a fusionar en finalizeJob
 let engineBusy = false; // un solo reporte a la vez (lo que aguanta el VPS); serializa auto + manual
 let currentAutoJobId: string | null = null; // job del pedido que el motor automático atiende ahora
 
@@ -302,6 +308,25 @@ async function tryReuseReport(p: Pedido, tier: string): Promise<boolean> {
   return true;
 }
 
+const normSrc = (s: string): string => s.toLowerCase().replace(/_/g, '-');
+/**
+ * MEMORIA: plan de reúso PARCIAL por fuente. Lee el `reporte.json` de la placa; si está dentro del
+ * TTL, reusa las fuentes con resultado bueno (ENCONTRADO/SIN_REGISTRO) y devuelve solo las que hay que
+ * RE-CORRER (ERROR o faltantes de la lista esperada). null = sin reporte dentro del TTL → correr completo.
+ */
+async function planMemoryReuse(placa: string, sources: string[]): Promise<{ rerun: string[]; reuse: OperatorSourceResult[] } | null> {
+  let raw: { generatedAt?: string; results?: OperatorSourceResult[] };
+  try { raw = JSON.parse(await readFile(join(plateDir(placa), 'reporte.json'), 'utf8')) as typeof raw; } catch { return null; }
+  const gen = raw.generatedAt ? new Date(raw.generatedAt).getTime() : 0;
+  const ageMs = Date.now() - gen;
+  if (!gen || !(ageMs >= 0 && ageMs < memoryTtlH * 3600000)) return null; // sin reporte o fuera de la ventana
+  const expSet = new Set(sources.map(normSrc));
+  const reuse = (raw.results ?? []).filter((r) => (r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO') && expSet.has(normSrc(r.source)));
+  const goodSet = new Set(reuse.map((r) => normSrc(r.source)));
+  const rerun = sources.filter((s) => !goodSet.has(normSrc(s))); // las que fallaron o faltan
+  return { rerun, reuse };
+}
+
 /**
  * ENTREGA: avisa a la web que el reporte de este pedido quedó listo → correo + WhatsApp al
  * cliente (la web resuelve el contacto y las plantillas). Marca el pedido 'entregado' si el
@@ -397,6 +422,14 @@ async function processPedido(p: Pedido): Promise<void> {
 
 /** Publica + entrega un pedido del LOTE (ULTRA agrega IA + valorización). Espejo del cierre de processPedido. */
 async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
+  // MEMORIA: fusiona las fuentes REUSADAS (del reporte anterior, dentro del TTL) con las re-corridas,
+  // para que el reporte final quede completo aunque el job solo haya corrido las fuentes fallidas.
+  const reused = reuseResults.get(job.id);
+  if (reused && reused.length) {
+    const have = new Set(job.results.map((r) => normSrc(r.source)));
+    for (const r of reused) if (!have.has(normSrc(r.source))) job.results.push(r);
+    reuseResults.delete(job.id);
+  }
   const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
   if (ok === 0) { await queue.setError(p.id, 'ninguna fuente respondió'); console.log(`[motor-lote] ${p.placa} ERROR (ninguna fuente respondió)`); return; }
   try {
@@ -526,20 +559,31 @@ function startContinuousRunner(): void {
         if (!p) break;
         const tier = (p.tier as string) ?? 'PRO';
         const force = forceReprocess.delete(String(p.id));
-        if (!force) {
+        const fullSources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
+        let jobSources: string[] = [...fullSources];
+        let reuse: OperatorSourceResult[] = [];
+        if (memoryEnabled) {
+          // MEMORIA ON: reúso parcial por fuente (no corre el motor completo; solo las fallidas/faltantes).
+          const plan = await planMemoryReuse(p.placa, fullSources).catch(() => null);
+          if (plan) {
+            if (!plan.rerun.length) { console.log(`[memoria] ${p.placa}: todo fresco (<${memoryTtlH}h) → reúso completo, 0 re-corridas`); await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue; }
+            jobSources = plan.rerun; reuse = plan.reuse;
+            console.log(`[memoria] ${p.placa}: reuso ${reuse.length} · re-corro [${jobSources.join(',')}]`);
+          }
+        } else if (!force) {
           try {
             if (await tryReuseReport(p, tier)) { console.log(`[motor-cont] ${p.placa} reutilizado (sin re-correr)`); await notifyReady(p, tier); continue; }
           } catch (e) { console.warn('[dedup] verificación falló, regenero:', (e as Error).message); }
         }
-        const sources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
-        const job: PipelineJob = { id: String(p.id), plate: p.placa, tier, sources: [...sources], outDir: plateDir(p.placa), results: [], percent: 0, done: false };
+        const job: PipelineJob = { id: String(p.id), plate: p.placa, tier, sources: [...jobSources], outDir: plateDir(p.placa), results: [], percent: 0, done: false };
+        if (reuse.length) reuseResults.set(job.id, reuse);
         await mkdir(plateDir(p.placa), { recursive: true }).catch(() => {});
         contPedidoById.set(job.id, p);
         contJobs.set(job.id, job);
         if (!pl.submit(job)) {
           // Esa placa ya está en vuelo (otra corrida en curso) → suelto el claim y la re-encolo.
           console.log(`[motor-cont] ${p.placa} ya en vuelo → re-encolo`);
-          contPedidoById.delete(job.id); contJobs.delete(job.id);
+          contPedidoById.delete(job.id); contJobs.delete(job.id); reuseResults.delete(job.id);
           await queue.requeue(p.id);
         }
       }
@@ -612,6 +656,17 @@ const server = createServer(async (req, res) => {
       metaSet('auto_sources_override', autoSourcesOverride);
       console.log(`[motor] fuentes activas → ${autoSourcesOverride ? autoSourcesOverride.join(',') : '(default) ' + AUTO_SOURCES.join(',')}`);
       return sendJson(res, 200, { active: activeAuto(), overridden: !!autoSourcesOverride });
+    }
+    // Memoria (reúso parcial por fuente). GET → estado; POST {enabled,ttlHours} → fija y persiste.
+    if (path === '/api/memory' && req.method === 'GET') {
+      return sendJson(res, 200, { enabled: memoryEnabled, ttlHours: memoryTtlH, options: [24, 36, 48, 60] });
+    }
+    if (path === '/api/memory' && req.method === 'POST') {
+      const body = await readBody(req);
+      if (typeof body.enabled === 'boolean') { memoryEnabled = body.enabled; metaSet('memory_enabled', memoryEnabled); }
+      if (body.ttlHours != null) { memoryTtlH = Math.max(1, Number(body.ttlHours) || 24); metaSet('memory_ttl_hours', memoryTtlH); }
+      console.log(`[memoria] ${memoryEnabled ? 'ON' : 'OFF'} · TTL ${memoryTtlH}h`);
+      return sendJson(res, 200, { enabled: memoryEnabled, ttlHours: memoryTtlH });
     }
 
     // Motor automático: estado + encender/apagar (persistido en meta).
@@ -1111,6 +1166,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .cl{font-weight:700;font-size:13px;color:var(--ink);display:inline-flex;align-items:center;gap:6px;padding-bottom:7px;white-space:nowrap}
   .newtag{font:700 9px ui-monospace,monospace;letter-spacing:.05em;background:var(--teal);color:#fff;padding:1px 5px;border-radius:4px;vertical-align:middle}
   .srcbtn{font-size:12.5px;padding:6px 12px;border-radius:999px}
+  .memlbl{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:600;color:var(--ink);cursor:pointer;background:var(--card2);border:1px solid var(--bd);border-radius:999px;padding:5px 12px} .memlbl input{cursor:pointer;margin:0}
+  #memTtl{font-size:12.5px;padding:5px 9px;border:1px solid var(--bd);border-radius:8px;background:#fff;color:var(--ink)} #memTtl:disabled{opacity:.45}
   .prog2.idle{background:var(--card2);color:var(--mut);border:1px solid var(--bd)} .prog2.idle .bw{background:#E5E9F0} .prog2.idle .pl{color:var(--ink)}
 </style></head><body>
 <header><span class="logo">🛠</span><b>Consola del operador · PlacaPe</b><span class="sub">scraping · VPS Perú</span><span style="flex:1"></span><span class="motorlbl">Motor automático</span><button id="engBtn" class="engpill off" onclick="toggleEngine()">…</button><span id="engInfo" class="engmeta"></span></header>
@@ -1125,9 +1182,12 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
       <div class="ffld"><label>Correo</label><input id="qmail" placeholder="cliente@…" style="width:150px"></div>
       <button class="ok" onclick="enqueue()">Encolar pedido</button>
     </div>
-    <div class="row" style="margin-top:10px;gap:8px;align-items:center">
+    <div class="row" style="margin-top:10px;gap:8px;align-items:center;flex-wrap:wrap">
       <button class="sec srcbtn" onclick="toggleAutoSrc()">⚙ Fuentes del motor ▾</button>
       <span class="meta" id="autoSrcSummary"></span>
+      <span style="flex:1 1 auto"></span>
+      <label class="memlbl" title="Con memoria ON, un pedido de una placa ya consultada dentro del período NO re-corre las fuentes buenas (se jalan del reporte guardado); solo re-corre las que fallaron o faltan."><input type="checkbox" id="memChk" onchange="saveMemory()"> 🧠 Memoria</label>
+      <select id="memTtl" onchange="saveMemory()" disabled title="Período de la memoria"><option value="24">24 h</option><option value="36">36 h</option><option value="48">48 h</option><option value="60">60 h</option></select>
     </div>
     <div id="autoSrcBox" style="display:none;margin-top:8px;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card2)"></div>
     <div id="engBars"><div class="prog2 idle"><div class="top"><span class="pl">Motor libre</span><span class="pc"></span></div><div class="st">Sin pedidos en proceso</div><div class="bw"><div class="bf"></div></div></div></div>
@@ -1525,17 +1585,21 @@ function renderFuentes(pl,rep,results,cj,expected){var d=document.getElementById
   expected.forEach(function(s){add(s);}); // incluye fuentes que NO llegaron al reporte (descartadas)
   var okN=0,errN=0,runN=0,missN=0,failed=[];
   var bars=order.map(function(id){var r=byId[id],live=cjById[id];
-    var status=r?r.status:(live?live.status:(cj?'PENDING':'MISSING')),cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
+    // Si el pedido está EN CURSO (cj), el estado EN VIVO manda sobre el reporte.json guardado (que es de
+    // la consulta ANTERIOR de esta placa) → no se "pega" el resultado viejo. Sin job corriendo = reporte final.
+    var status=cj?(live?live.status:'PENDING'):(r?r.status:'MISSING');
+    var cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
     if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;else if(cls==='miss'){missN++;failed.push(id);}
-    var t=(r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
+    var t=(!cj&&r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
     var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':((cls==='miss')?'sin resultado':esc(status)));
     var rbtn=(cls==='err'||cls==='miss')?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
     return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span>'+rbtn+'</div>';
   }).join('');
   FAILEDSRC=failed;
-  var shots=order.filter(function(id){var r=byId[id];return r&&r.screenshot;}).map(function(id){var r=byId[id],cls=fbarCls(r.status);
+  var shots=order.filter(function(id){if(cj){var lv=cjById[id];return lv&&lv.status!=='PENDING'&&lv.status!=='RUNNING';}var r=byId[id];return r&&r.screenshot;}).map(function(id){
+    var st=cj?((cjById[id]||{}).status):((byId[id]||{}).status),cls=fbarCls(st);
     var col=(cls==='err')?'var(--err)':((cls==='run')?'var(--run)':'var(--ok)'),u='/shot/'+encodeURIComponent(pl)+'/'+id+'.png?t='+Date.now();
-    return '<div class="shotc" onclick="lbOpenImg(\\''+u+'\\',\\''+id+' · '+esc(pl)+'\\')"><img src="'+u+'"><div class="cc"><span>'+esc(id)+'</span><span class="dd" style="background:'+col+'"></span></div></div>';
+    return '<div class="shotc" onclick="lbOpenImg(\\''+u+'\\',\\''+id+' · '+esc(pl)+'\\')"><img src="'+u+'" onerror="this.parentNode.style.display=\\'none\\'"><div class="cc"><span>'+esc(id)+'</span><span class="dd" style="background:'+col+'"></span></div></div>';
   }).join('');
   var shotBlock=shots?('<div class="lh" style="margin-top:16px">📸 Capturas por fuente · clic para ampliar</div><div class="shotgrid">'+shots+'</div>'):'';
   var logs=order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('');
@@ -1636,6 +1700,15 @@ function toggleAutoSrc(){var b=document.getElementById('autoSrcBox');b.style.dis
 function saveAutoSources(){var c=[].slice.call(document.querySelectorAll('#autoSrcBox input:checked')).map(function(i){return i.value});
   fetch('/api/auto-sources',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({sources:c})})
    .then(function(r){return r.json()}).then(function(o){var a=o.active||[];log('⚙ fuentes del motor: '+a.length+' activas ('+a.join(', ')+')');updAutoSummary(a.length,AUTOSRC_TOTAL,o.overridden);}).catch(function(e){log('✖ '+e)});}
+// ── Memoria (reúso parcial por fuente dentro del TTL) ──
+function loadMemory(){fetch('/api/memory').then(function(r){return r.json()}).then(function(o){
+  var chk=document.getElementById('memChk'),ttl=document.getElementById('memTtl');
+  chk.checked=!!o.enabled; ttl.value=String(o.ttlHours||24); ttl.disabled=!o.enabled;
+}).catch(function(){});}
+function saveMemory(){var en=document.getElementById('memChk').checked,ttl=parseInt(document.getElementById('memTtl').value,10)||24;
+  document.getElementById('memTtl').disabled=!en;
+  fetch('/api/memory',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:en,ttlHours:ttl})})
+   .then(function(r){return r.json()}).then(function(o){log('🧠 memoria '+(o.enabled?('ON · reusa fuentes buenas < '+o.ttlHours+'h, re-corre solo las fallidas'):'OFF (corre todas las fuentes)'));}).catch(function(e){log('✖ '+e)});}
 
 // ── Lightbox de capturas ──
 function lbOpenImg(src,title){document.getElementById('lbTitle').textContent=title||'captura';document.getElementById('lbImg').src=src;document.getElementById('lbFoot').textContent=(src||'').split('?')[0];document.getElementById('lightbox').classList.add('on');}
@@ -1755,5 +1828,5 @@ function renderMDerived(){
     return '<tr><td><span class="meta" style="font-family:ui-monospace,monospace">'+mfDT(e.ts)+'</span></td><td><b style="font:700 12px ui-monospace,monospace">'+esc(e.placa)+'</b></td><td>'+otier(e.tier)+'</td><td>'+oorigen(e.origin)+'</td><td>'+pestado(e.estado)+'</td><td>'+fl+'</td><td><span style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+(e.dur?((m?m+'m ':'')+(e.dur%60)+'s'):'—')+'</span></td></tr>';}).join(''):'<tr><td colspan="7" style="color:#64748B;padding:20px;text-align:center">Sin reportes en el ámbito.</td></tr>';
   document.getElementById('recNote').innerHTML=recs.length>cap?'<span style="margin-left:auto">mostrando '+cap+' de '+recs.length+' (más recientes)</span>':'';
 }
-showTab('hist');loadEngine();loadHistory();loadAutoSources();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
+showTab('hist');loadEngine();loadHistory();loadAutoSources();loadMemory();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
 </script></body></html>`;
