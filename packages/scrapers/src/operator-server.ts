@@ -1041,6 +1041,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .fsr .tk{flex:1;height:8px;background:#E5E9F0;border-radius:999px;overflow:hidden}
   .fsr .fl{height:100%;border-radius:999px;transition:width .5s ease}
   .fsr .fl-ok{background:var(--ok)} .fsr .fl-run{background:var(--run)} .fsr .fl-err{background:var(--err)} .fsr .fl-pend{background:#CBD5E1}
+  .fsr .fl-miss{background:repeating-linear-gradient(45deg,#D9C08A,#D9C08A 6px,#E8DBB6 6px,#E8DBB6 12px)} .st2.miss{color:var(--warn)}
   .fsr .st2{flex:0 0 auto;min-width:104px;text-align:right;font:600 10px ui-monospace,monospace;display:flex;gap:6px;align-items:center;justify-content:flex-end}
   .fsr .tm{color:var(--mut);font-weight:700}
   .st2.ok{color:var(--ok)} .st2.run{color:var(--run)} .st2.err{color:var(--err)} .st2.pend{color:var(--faint)}
@@ -1505,23 +1506,30 @@ function loadFuentes(){var pl=SELECTED,d=document.getElementById('pdetail');if(!
     if(SELECTED!==pl||DTAB!=='fuentes')return;
     var rep=a[0]||{},s=a[1]||{},results=rep.results||[];
     var cj=((s.currentJobs)||[]).filter(function(c){return c.placa===pl;})[0];
-    renderFuentes(pl,rep,results,cj);
+    // Fuentes ESPERADAS del pedido: para PRO/ULTRA = las activas del motor. Así una fuente que se
+    // DESCARTÓ (p.ej. historial que excedió el timeout del job) igual aparece —como "sin resultado",
+    // con su log y botón de reintento— en vez de desaparecer. BASIC no incluye historial.
+    var cur=null;for(var k=0;k<HISTLIST.length;k++){if(String(HISTLIST[k].id)===String(SELECTED_ID)){cur=HISTLIST[k];break;}}
+    var tier=(cur&&cur.tier)||'PRO';
+    var expected=(tier!=='BASIC')?(s.autoSources||[]):[];
+    renderFuentes(pl,rep,results,cj,expected);
     if(cj&&DTAB==='fuentes'&&SELECTED===pl)setTimeout(function(){if(DTAB==='fuentes'&&SELECTED===pl)loadFuentes();},4000);
   });}
-function fbarCls(status){return (status==='ERROR')?'err':((status==='RUNNING')?'run':((status==='PENDING')?'pend':'ok'));}
-function renderFuentes(pl,rep,results,cj){var d=document.getElementById('pdetail');if(!d)return;
+function fbarCls(status){return (status==='ERROR')?'err':((status==='RUNNING')?'run':((status==='PENDING')?'pend':((status==='MISSING')?'miss':'ok')));}
+function renderFuentes(pl,rep,results,cj,expected){var d=document.getElementById('pdetail');if(!d)return;expected=expected||[];
   var byId={};results.forEach(function(r){byId[srcId(r.source)]=r;});
   var cjById={};if(cj&&cj.sources)cj.sources.forEach(function(x){cjById[srcId(x.source)]=x;});
   var order=[],seen={};function add(id){id=srcId(id);if(!seen[id]){seen[id]=1;order.push(id);}}
   if(cj&&cj.sources)cj.sources.forEach(function(x){add(x.source);});
   results.forEach(function(r){add(r.source);});
-  var okN=0,errN=0,runN=0,failed=[];
+  expected.forEach(function(s){add(s);}); // incluye fuentes que NO llegaron al reporte (descartadas)
+  var okN=0,errN=0,runN=0,missN=0,failed=[];
   var bars=order.map(function(id){var r=byId[id],live=cjById[id];
-    var status=r?r.status:(live?live.status:'PENDING'),cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
-    if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;
+    var status=r?r.status:(live?live.status:(cj?'PENDING':'MISSING')),cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
+    if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;else if(cls==='miss'){missN++;failed.push(id);}
     var t=(r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
-    var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':esc(status));
-    var rbtn=(cls==='err')?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
+    var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':((cls==='miss')?'sin resultado':esc(status)));
+    var rbtn=(cls==='err'||cls==='miss')?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
     return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span>'+rbtn+'</div>';
   }).join('');
   FAILEDSRC=failed;
@@ -1532,7 +1540,8 @@ function renderFuentes(pl,rep,results,cj){var d=document.getElementById('pdetail
   var shotBlock=shots?('<div class="lh" style="margin-top:16px">📸 Capturas por fuente · clic para ampliar</div><div class="shotgrid">'+shots+'</div>'):'';
   var logs=order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('');
   var pct=cj?(cj.percent||0):100;
-  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span> <button class="reintall" onclick="retryFailed()">↻ Reintentar fallidas</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
+  var probN=errN+missN;
+  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(missN?' · <span style="color:var(--warn)">'+missN+' sin resultado</span>':'')+(probN?' <button class="reintall" onclick="retryFailed()">↻ Reintentar '+probN+'</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
   var body=order.length?(meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+'<div class="lh" style="margin-top:16px">Logs por fuente</div><div class="loglinks2">'+logs+'</div>'):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
   d.innerHTML=hHeader(pl)+detailTabs()+body;}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
