@@ -1045,6 +1045,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .fsr .tm{color:var(--mut);font-weight:700}
   .st2.ok{color:var(--ok)} .st2.run{color:var(--run)} .st2.err{color:var(--err)} .st2.pend{color:var(--faint)}
   .loglinks2{display:flex;flex-wrap:wrap;gap:6px} .loglinks2 a{font:600 11px ui-monospace,monospace;color:var(--teal);text-decoration:none;border:1px solid var(--bd);border-radius:7px;padding:3px 8px;background:var(--card2)}
+  .fsr .reint{flex:0 0 auto;border:1px solid #FCA5A5;background:#FEF2F2;color:var(--err);border-radius:7px;padding:1px 8px;font:700 12px system-ui;cursor:pointer;margin-left:2px} .fsr .reint:hover{background:#FEE2E2} .fsr .reint:disabled{opacity:.5;cursor:default}
+  .reintall{border:1px solid #FCA5A5;background:#FEF2F2;color:var(--err);border-radius:7px;padding:2px 9px;font:700 11px system-ui;cursor:pointer;margin-left:6px} .reintall:hover{background:#FEE2E2} .reintall:disabled{opacity:.5;cursor:default}
   .shotgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin:8px 0}
   .shotc{border:1px solid var(--bd);border-radius:8px;overflow:hidden;cursor:zoom-in;background:var(--card2)}
   .shotc img{width:100%;height:66px;object-fit:cover;display:block}
@@ -1476,6 +1478,21 @@ function detailTabs(){return '<div class="tabs" style="margin:10px 0 12px">'+
   '<button class="tab'+(DTAB==='reporte'?' active':'')+'" onclick="showDetailTab(\\'reporte\\')">Reporte al usuario</button></div>';}
 function selectPedido(pl,id){SELECTED=pl;SELECTED_ID=id;DTAB='fuentes';markSel();showDetailTab('fuentes');}
 function showDetailTab(t){DTAB=t;if(t==='reporte')loadWebReport();else loadFuentes();}
+// ── Reintento por fuente: re-corre SOLO esa fuente (/api/retry persiste el éxito en reporte.json y
+// RE-PUBLICA el reporte del cliente) y recarga la vista → la barra y el "Reporte al usuario" se actualizan.
+var FAILEDSRC=[];
+function retrySource(src,btn){var pl=SELECTED;if(!pl)return;src=srcId(src);
+  if(btn){btn.textContent='…';btn.disabled=true;}
+  log('↻ reintentando '+src+' ('+pl+') …');
+  fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:pl,source:src})})
+   .then(function(r){return r.json()}).then(function(res){log('↻ '+src+' → '+(res.status||res.error||'?'));if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();})
+   .catch(function(e){log('✖ '+e);if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();});}
+function retryFailed(){var pl=SELECTED,list=(FAILEDSRC||[]).slice();if(!pl||!list.length)return;
+  log('↻ reintentando '+list.length+' fuente(s) fallida(s) …');
+  var i=0;(function next(){if(i>=list.length){if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();return;}
+    var s=list[i++];
+    fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:pl,source:s})})
+     .then(function(r){return r.json()}).then(function(res){log('↻ '+s+' → '+(res.status||res.error||'?'));next();}).catch(function(){next();});})();}
 // ── Pestaña FUENTES: barras PERSISTENTES por fuente (color + tiempo) + capturas miniatura + logs ──
 // Fusiona el reporte.json (resultados finales con ms + capturas) con el estado EN VIVO (/api/engine)
 // para que las fuentes aún en curso muestren su barra; así las barras nunca desaparecen.
@@ -1498,14 +1515,16 @@ function renderFuentes(pl,rep,results,cj){var d=document.getElementById('pdetail
   var order=[],seen={};function add(id){id=srcId(id);if(!seen[id]){seen[id]=1;order.push(id);}}
   if(cj&&cj.sources)cj.sources.forEach(function(x){add(x.source);});
   results.forEach(function(r){add(r.source);});
-  var okN=0,errN=0,runN=0;
+  var okN=0,errN=0,runN=0,failed=[];
   var bars=order.map(function(id){var r=byId[id],live=cjById[id];
     var status=r?r.status:(live?live.status:'PENDING'),cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
-    if(cls==='ok')okN++;else if(cls==='err')errN++;else if(cls==='run')runN++;
+    if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;
     var t=(r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
     var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':esc(status));
-    return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span></div>';
+    var rbtn=(cls==='err')?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
+    return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span>'+rbtn+'</div>';
   }).join('');
+  FAILEDSRC=failed;
   var shots=order.filter(function(id){var r=byId[id];return r&&r.screenshot;}).map(function(id){var r=byId[id],cls=fbarCls(r.status);
     var col=(cls==='err')?'var(--err)':((cls==='run')?'var(--run)':'var(--ok)'),u='/shot/'+encodeURIComponent(pl)+'/'+id+'.png?t='+Date.now();
     return '<div class="shotc" onclick="lbOpenImg(\\''+u+'\\',\\''+id+' · '+esc(pl)+'\\')"><img src="'+u+'"><div class="cc"><span>'+esc(id)+'</span><span class="dd" style="background:'+col+'"></span></div></div>';
@@ -1513,7 +1532,7 @@ function renderFuentes(pl,rep,results,cj){var d=document.getElementById('pdetail
   var shotBlock=shots?('<div class="lh" style="margin-top:16px">📸 Capturas por fuente · clic para ampliar</div><div class="shotgrid">'+shots+'</div>'):'';
   var logs=order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('');
   var pct=cj?(cj.percent||0):100;
-  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
+  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span> <button class="reintall" onclick="retryFailed()">↻ Reintentar fallidas</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
   var body=order.length?(meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+'<div class="lh" style="margin-top:16px">Logs por fuente</div><div class="loglinks2">'+logs+'</div>'):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
   d.innerHTML=hHeader(pl)+detailTabs()+body;}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
