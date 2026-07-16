@@ -1099,27 +1099,31 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .heat .hcell{height:18px;border-radius:3px;border:1px solid rgba(226,232,240,.6)} .heat .hcell.pk{outline:2px solid var(--teal);outline-offset:-1px}
   .heatleg{display:flex;align-items:center;gap:5px;margin-top:11px} .heatleg .hsw{width:17px;height:11px;border-radius:3px;border:1px solid var(--bd)}
   .recwrap{overflow-x:auto} .fchip{font:600 10px ui-monospace,monospace;background:rgba(185,28,28,.12);color:var(--err);padding:1px 6px;border-radius:5px;margin:0 3px 3px 0;display:inline-block} .cchip{font:600 10px ui-monospace,monospace;background:rgba(21,128,61,.13);color:var(--ok);padding:1px 6px;border-radius:5px}
+  /* estado del motor en el header + tarjeta de nuevo pedido (look maqueta) */
+  header .motorlbl{color:var(--mut);font-size:12.5px}
+  .engpill{display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--bd);border-radius:999px;padding:5px 14px;font-weight:700;font-size:12.5px;color:var(--ink);cursor:pointer;box-shadow:var(--shadow)}
+  .engpill::before{content:"";width:9px;height:9px;border-radius:50%;background:#94A3B8;flex:0 0 auto}
+  .engpill.on::before{background:var(--ok);box-shadow:0 0 0 3px rgba(21,128,61,.18)}
+  .engmeta{color:var(--mut);font-size:12px}
+  .cl{font-weight:700;font-size:13px;color:var(--ink);display:inline-flex;align-items:center;gap:6px;padding-bottom:7px;white-space:nowrap}
+  .newtag{font:700 9px ui-monospace,monospace;letter-spacing:.05em;background:var(--teal);color:#fff;padding:1px 5px;border-radius:4px;vertical-align:middle}
+  .srcbtn{font-size:12.5px;padding:6px 12px;border-radius:999px}
+  .prog2.idle{background:var(--card2);color:var(--mut);border:1px solid var(--bd)} .prog2.idle .bw{background:#E5E9F0} .prog2.idle .pl{color:var(--ink)}
 </style></head><body>
-<header><span class="logo">🛠</span><b>Consola del operador · PlacaPe</b><span class="sub">scraping · VPS Perú</span></header>
+<header><span class="logo">🛠</span><b>Consola del operador · PlacaPe</b><span class="sub">scraping · VPS Perú</span><span style="flex:1"></span><span class="motorlbl">Motor automático</span><button id="engBtn" class="engpill off" onclick="toggleEngine()">…</button><span id="engInfo" class="engmeta"></span></header>
 <main>
   <div class="ctlbar">
-    <div class="row" style="justify-content:space-between">
-      <div class="row">
-        <span class="ctl-lbl">Motor automático</span>
-        <button id="engBtn" class="sw off" onclick="toggleEngine()">…</button>
-        <span id="engInfo" class="meta"></span>
-      </div>
-      <div class="row" style="align-items:flex-end;gap:10px">
-        <div class="ffld"><label>Placa</label><input id="qplaca" class="pl" placeholder="ABC123" maxlength="8"></div>
-        <div class="ffld"><label>Nivel</label>
-          <select id="qtier"><option value="BASIC">BASIC (gratis)</option><option value="PRO" selected>PRO</option><option value="ULTRA">ULTRA (IA)</option></select></div>
-        <div class="ffld"><label>WhatsApp</label><input id="qwa" placeholder="+51…" style="width:120px"></div>
-        <div class="ffld"><label>Correo</label><input id="qmail" placeholder="cliente@…" style="width:150px"></div>
-        <button class="ok" onclick="enqueue()">Encolar pedido</button>
-      </div>
+    <div class="row" style="align-items:flex-end;gap:10px;flex-wrap:wrap">
+      <span class="cl">＋ Nuevo pedido <span class="newtag">NUEVO</span></span>
+      <div class="ffld"><label>Placa</label><input id="qplaca" class="pl" placeholder="ABC123" maxlength="8"></div>
+      <div class="ffld"><label>Nivel</label>
+        <select id="qtier"><option value="BASIC">BASIC (gratis)</option><option value="PRO" selected>PRO</option><option value="ULTRA">ULTRA (IA)</option></select></div>
+      <div class="ffld"><label>WhatsApp</label><input id="qwa" placeholder="+51…" style="width:120px"></div>
+      <div class="ffld"><label>Correo</label><input id="qmail" placeholder="cliente@…" style="width:150px"></div>
+      <button class="ok" onclick="enqueue()">Encolar pedido</button>
     </div>
     <div class="row" style="margin-top:10px;gap:8px;align-items:center">
-      <button class="sec" onclick="toggleAutoSrc()" style="font-size:13px;padding:7px 12px">⚙ Fuentes del motor ▾</button>
+      <button class="sec srcbtn" onclick="toggleAutoSrc()">⚙ Fuentes del motor ▾</button>
       <span class="meta" id="autoSrcSummary"></span>
     </div>
     <div id="autoSrcBox" style="display:none;margin-top:8px;padding:11px;border:1px solid var(--bd);border-radius:10px;background:var(--card2)"></div>
@@ -1302,7 +1306,7 @@ document.getElementById('placa').addEventListener('keydown',function(e){if(e.key
 function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).then(function(s){
   if(s.web){WEB_BASE=s.web.base||'';WEB_HASTOKEN=!!s.web.hasToken;}
   var b=document.getElementById('engBtn');
-  b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='sw '+(s.enabled?'on':'off');
+  b.textContent=s.enabled?'ENCENDIDO':'APAGADO'; b.className='engpill '+(s.enabled?'on':'off');
   document.getElementById('engInfo').textContent=(s.busy?'· atendiendo un pedido ':'· libre ')+'· cola: '+esc(s.queue);
   // Panel del motor = UNA barra por pedido en proceso (lote o single). Vacío → "Esperando pedidos".
   var wrap=document.getElementById('engBars'); var jobs=s.currentJobs||[];
