@@ -916,7 +916,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   *{box-sizing:border-box} body{margin:0;font:15px/1.5 system-ui,Segoe UI,Roboto,sans-serif;background:var(--bg);color:#0F172A}
   header{background:var(--azul);color:#fff;padding:14px 20px;display:flex;align-items:center;gap:12px}
   header b{font-size:18px} header span{opacity:.8;font-size:13px}
-  main{max-width:1040px;margin:0 auto;padding:20px}
+  main{max-width:1340px;margin:0 auto;padding:20px}
   .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
   input,textarea{font:inherit;padding:10px 12px;border:1px solid var(--bd);border-radius:10px;background:#fff}
   input#placa{font:600 18px ui-monospace,monospace;letter-spacing:2px;text-transform:uppercase;width:160px}
@@ -1007,8 +1007,8 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .fseg button{border:0;background:#fff;color:var(--mut);padding:6px 10px;font:inherit;font-size:12px;font-weight:600;cursor:pointer;border-right:1px solid var(--bd)}
   .fseg button:last-child{border-right:0} .fseg button.on{background:var(--azul);color:#fff}
   .fclr{background:#fff;border:1px solid var(--bd);color:var(--mut);border-radius:8px;padding:6px 11px;font:inherit;font-size:12px;cursor:pointer}
-  .hsplit{display:grid;grid-template-columns:1fr 460px;gap:14px;align-items:start}
-  @media(max-width:1000px){.hsplit{grid-template-columns:1fr}}
+  .hsplit{display:grid;grid-template-columns:minmax(0,1fr) 440px;gap:14px;align-items:start}
+  @media(max-width:1180px){.hsplit{grid-template-columns:minmax(0,1fr)}.hpanel{position:static}}
   .hleft,.hpanel{background:var(--card);border:1px solid var(--bd);border-radius:12px}
   .hleft-hd{display:flex;align-items:center;justify-content:space-between;padding:9px 13px;border-bottom:1px solid var(--bd);flex-wrap:wrap;gap:8px}
   .hl-ttl{font-weight:700;font-size:13.5px} .perpage-top{font-size:12px;color:var(--mut)}
