@@ -23,6 +23,8 @@ import {
   runApeseg,
   runSatPapeletas,
   runSbs,
+  runFiseGnv,
+  runInfogas,
   type OperatorSourceResult,
 } from './sources.js';
 
@@ -38,6 +40,8 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'mtc-citv': runMtcCitv,
   'sbs-soat': runSbs,
   'apeseg-soat': runApeseg, // SOAT en TIEMPO REAL (API JSON de APESEG); la SBS está congelada en may-2024
+  'fise-gnv': runFiseGnv, // deuda del crédito de conversión GNV (FISE, reCAPTCHA v3 → API JSON)
+  'infogas-gnv': runInfogas, // estado GNV + ¿tiene crédito? (Infogas, reCAPTCHA v2). ⚠ Cloudflare delante
   // 'atu' NO va aquí: corre por CDP (Chrome real + reCAPTCHA v3 nativo) vía runAtuSource.
 };
 
@@ -55,6 +59,8 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'apeseg-soat', label: 'APESEG · SOAT vigente (tiempo real)', default: true },
   { id: 'atu', label: 'ATU · Taxi/transporte (Lima/Callao)', default: true },
   { id: 'sigm', label: 'SIGM · Gravámenes / garantías mobiliarias (CDP)', default: true },
+  { id: 'fise-gnv', label: 'FISE · Deuda del crédito de conversión GNV', default: false },
+  { id: 'infogas-gnv', label: 'Infogas · Estado GNV / ¿tiene crédito? (⚠ Cloudflare)', default: false },
   { id: 'sunarp', label: 'SUNARP · Identidad y titular (CDP · Chrome)', default: false },
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },
@@ -421,7 +427,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
 /** Todas las fuentes NO-historial (las que corre el carril ligero del motor continuo). */
 const NON_HISTORIAL_SOURCES = [
   'sunarp', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas',
-  'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm',
+  'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv',
 ];
 
 export interface ContinuousLaneOpts extends BatchLaneOpts {

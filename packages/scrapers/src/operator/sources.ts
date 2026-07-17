@@ -686,3 +686,142 @@ export function parseSatPapeletasItems(bodyRaw: string): PapeletaDetalle[] {
   }
   return rows;
 }
+
+/* ───────────────── FISE · Deuda del crédito de conversión GNV (reCAPTCHA v3, API JSON) ───────────────── */
+// "AhorroGNV/FISE" financia la conversión a GNV (bono S/1000-2000). Su portal "Consulta tus pagos"
+// (fise.minem.gob.pe:23308) revela si el vehículo ARRASTRA DEUDA de ese crédito — dato que SUNARP NO
+// da (SUNARP solo muestra que el vehículo ya es GNV). Endpoint real (visto en consultaTaller.js →
+// buscarSaldos): POST /consulta-taller/pages/consultaTaller/buscarSaldo (JSON)
+//   { placaVehiculo, consultaId, codigoVerificacion:<reCAPTCHA v3 token>, tiempoSession, countBusqueda }
+//   → { status:0, rows:[{ numeroDocumento, costoFinanciamiento, montoPagado, montoPendiente,
+//        montoDeudaVencido, montoCuotasTeorico, esPerdidaDescuentoProvincia('S'/'N'), recaudos[] }] }
+// numeroDocumento null = el vehículo NO tuvo crédito de conversión (SIN_REGISTRO). El reCAPTCHA es v3
+// (score): desde IP datacenter puede rechazar (como ATU) → status!=0; se reintenta y, si persiste, error.
+const FISE_SITEKEY = '6LcSA7wUAAAAANXcrpjhO3zy5UPsRYWlWGPRk5w1';
+export async function runFiseGnv(
+  page: Page,
+  plate: string,
+  solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV' };
+  const PAGE_URL = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
+  const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
+  const money = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  try {
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // consultaId es un hidden que el servidor pinta; lo reenviamos tal cual (puede ir vacío).
+    const consultaId = await page.locator('#consultaId').inputValue().catch(() => '');
+    let row: Record<string, unknown> | null = null;
+    let responded = false;
+    for (let i = 1; i <= 3 && !responded; i++) {
+      const token = await solver.solveRecaptchaV3(FISE_SITEKEY, PAGE_URL, 'consulta');
+      // Posteamos el JSON DESDE la página (mismo origen → conserva cookies/jsession) y capturamos la respuesta.
+      const res = await page.evaluate(async ({ url, body }: { url: string; body: Record<string, unknown> }) => {
+        try {
+          const r = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest' }, credentials: 'include', body: JSON.stringify(body) });
+          return { status: r.status, text: await r.text() };
+        } catch (e) { return { status: 0, text: String(e) }; }
+      }, { url: ENDPOINT, body: { placaVehiculo: plate, consultaId, codigoVerificacion: token, tiempoSession: 8, countBusqueda: i } });
+      let j: { status?: number; rows?: Array<Record<string, unknown>> } | null = null;
+      try { j = JSON.parse(res.text); } catch { /* no-JSON (reCAPTCHA/HTML) → reintenta */ }
+      if (j && j.status === 0 && Array.isArray(j.rows)) { responded = true; row = j.rows[0] ?? null; }
+    }
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    if (!responded) return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado / sin respuesta (3 intentos)', screenshot: shot, ms: Date.now() - t0 };
+    // numeroDocumento null = el vehículo no figura con crédito de conversión GNV.
+    if (!row || row.numeroDocumento == null) {
+      return { ...base, status: 'SIN_REGISTRO', summary: 'Sin crédito de conversión GNV (no figura financiamiento)', data: {}, screenshot: shot, ms: Date.now() - t0 };
+    }
+    const pendiente = money(row.montoPendiente);
+    const vencido = money(row.montoDeudaVencido);
+    const financiamiento = money(row.costoFinanciamiento);
+    const pagado = money(row.montoPagado);
+    const perdioDescuento = String(row.esPerdidaDescuentoProvincia ?? '').toUpperCase() === 'S';
+    const tieneDeuda = pendiente > 0;
+    const summary = tieneDeuda
+      ? `Deuda de conversión GNV: S/ ${pendiente.toFixed(2)} pendiente${vencido > 0 ? ` · S/ ${vencido.toFixed(2)} vencido` : ''}`
+      : `Crédito de conversión GNV cancelado (financiado S/ ${financiamiento.toFixed(2)})`;
+    return {
+      ...base, status: 'ENCONTRADO', summary,
+      data: { tieneDeuda, financiamiento, pagado, pendiente, vencido, montoCuotasTeorico: money(row.montoCuotasTeorico), perdioDescuento, recaudos: Array.isArray(row.recaudos) ? row.recaudos.length : 0 },
+      screenshot: shot, ms: Date.now() - t0,
+    };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+/* ───────────────── Infogas · Estado GNV + ¿tiene crédito? (reCAPTCHA v2) ───────────────── */
+// vh.infogas.com.pe (el iframe embebido en infogas.com.pe). Form #placa-form: input name=n_placa
+// (#inp_ck_plate) + reCAPTCHA v2 (data-sitekey 6Lctj…, callback 'vcc') + botón #btn_ck_plate.
+// Resultado en .box_plate: .plate_item_havc = "¿Tiene crédito?" · .plate_item_esgnv = combustible ·
+// .plate_item_pvci = venc. cilindro · .plate_item_pran = venc. revisión anual · .plate_item_vhab =
+// habilitado para consumir. Error → .error_plate ("no ha podido ser encontrado"). Confirma que el
+// vehículo ES GNV y si arrastra crédito; el MONTO exacto de la deuda lo da FISE. ⚠ Cloudflare delante:
+// si el Chromium headless es bloqueado (interstitial), migrar a CDP (Chrome real) como SUNARP.
+const INFOGAS_SITEKEY = '6LctjAQoAAAAAKxodrxo3QPm033HbyDrLf9N7x7P';
+export async function runInfogas(
+  page: Page,
+  plate: string,
+  solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'INFOGAS_GNV', label: 'Infogas · Estado GNV / crédito', category: 'GNV' };
+  const URL = 'https://vh.infogas.com.pe/';
+  const txt = async (sel: string): Promise<string> => (await page.locator(sel).first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+  try {
+    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000, referer: 'https://infogas.com.pe/' });
+    const plateInput = page.locator('#inp_ck_plate');
+    await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
+    for (let i = 1; i <= 3; i++) {
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(1200); }
+      await plateInput.fill(plate).catch(() => {});
+      const token = await solver.solveRecaptchaV2(INFOGAS_SITEKEY, URL);
+      // Inyecta el token en el textarea g-recaptcha-response y dispara el callback 'vcc' (habilita el envío).
+      await page.evaluate((tok: string) => {
+        document.querySelectorAll('textarea#g-recaptcha-response,textarea[name="g-recaptcha-response"]').forEach((e) => {
+          (e as HTMLTextAreaElement).value = tok; (e as HTMLElement).style.display = 'block';
+        });
+        try { const w = window as unknown as { vcc?: (t: string) => void }; if (w.vcc) w.vcc(tok); } catch { /* noop */ }
+      }, token).catch(() => {});
+      await page.locator('#btn_ck_plate').click().catch(() => {});
+      // Sondea hasta que aparezca el panel de resultado (.box_plate) o el error (.error_plate).
+      let state = '';
+      for (let k = 0; k < 30; k++) {
+        state = await page.evaluate(() => {
+          const vis = (el: Element | null): boolean => !!el && !el.classList.contains('d-none') && (el as HTMLElement).offsetParent !== null;
+          if (vis(document.querySelector('.box_plate'))) return 'ok';
+          if (vis(document.querySelector('.error_plate'))) return 'err';
+          return '';
+        }).catch(() => '');
+        if (state) break;
+        await wait(500);
+      }
+      if (state === 'err') {
+        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        return { ...base, status: 'SIN_REGISTRO', summary: 'No figura como vehículo GNV en Infogas', data: {}, screenshot: shot, ms: Date.now() - t0 };
+      }
+      if (state === 'ok') {
+        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        const [esgnv, havc, pvci, pran, vhab] = await Promise.all([
+          txt('.plate_item_esgnv'), txt('.plate_item_havc'), txt('.plate_item_pvci'), txt('.plate_item_pran'), txt('.plate_item_vhab'),
+        ]);
+        const tieneCredito = /s[ií]\b|^s$|true|1/i.test(havc);
+        return {
+          ...base, status: 'ENCONTRADO',
+          summary: `GNV: ${esgnv || '—'} · ¿crédito?: ${havc || '—'}${vhab ? ` · ${vhab}` : ''}`,
+          data: { combustible: esgnv || null, tieneCredito, credito: havc || null, vencimientoCilindro: pvci || null, vencimientoRevision: pran || null, habilitado: vhab || null },
+          screenshot: shot, ms: Date.now() - t0,
+        };
+      }
+      // ni resultado ni error → reCAPTCHA rechazado o Cloudflare → reintenta con captcha nuevo
+    }
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    return { ...base, status: 'ERROR', summary: 'Sin resultado (captcha/Cloudflare) tras 3 intentos', screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
