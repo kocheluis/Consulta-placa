@@ -687,6 +687,16 @@ export function parseSatPapeletasItems(bodyRaw: string): PapeletaDetalle[] {
   return rows;
 }
 
+/**
+ * ¿El vehículo es a gas? Las fuentes GNV (FISE/Infogas) SOLO tienen sentido si el vehículo fue
+ * convertido a gas — dato que sale de la característica del asiento SPRL (`VehicleSpecs.fuel`,
+ * p. ej. "BI-COMBUSTIBLE GNV", "GAS NATURAL"). El motor usa esto para NO gastar captcha en un
+ * vehículo que no es a gas. `\bGAS\b` no matchea "GASOLINA" (no hay frontera de palabra tras "GAS").
+ */
+export function isGasVehicle(fuel: string | null | undefined): boolean {
+  return !!fuel && /\bGNV\b|GAS\s*NATURAL|\bGLP\b|BI[\s-]*COMBUSTIBLE|DUAL|\bGAS\b/i.test(fuel);
+}
+
 /* ───────────────── FISE · Deuda del crédito de conversión GNV (reCAPTCHA v3, API JSON) ───────────────── */
 // "AhorroGNV/FISE" financia la conversión a GNV (bono S/1000-2000). Su portal "Consulta tus pagos"
 // (fise.minem.gob.pe:23308) revela si el vehículo ARRASTRA DEUDA de ese crédito — dato que SUNARP NO

@@ -25,6 +25,7 @@ import {
   runSbs,
   runFiseGnv,
   runInfogas,
+  isGasVehicle,
   type OperatorSourceResult,
 } from './sources.js';
 
@@ -449,6 +450,25 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
   const baseOpts = (outDir: string): OperatorReportOptions => ({ outDir, captchaProvider: opts.captchaProvider, captchaApiKey: opts.captchaApiKey, headless: opts.headless ?? true });
   const K = Math.max(1, opts.lightConcurrency ?? 2);
 
+  // ── Gate GNV: FISE/Infogas SOLO deben correr si el vehículo es a gas (el combustible sale de la
+  // característica del asiento SPRL). Como historial y carril ligero corren EN PARALELO, el ligero
+  // ESPERA esta señal antes de gastar captcha. El carril historial la resuelve al terminar; para
+  // placas sin 'historial' en el pedido (o si el SPRL falla → fuel null), la señal resuelve y GNV se
+  // SALTA (no se puede confirmar gas). Bounded por la vida del motor (se limpia en cada deploy/reinicio).
+  const GNV_SOURCES = new Set(['fise-gnv', 'infogas-gnv']);
+  const fuelWaiters = new Map<string, { promise: Promise<string | null>; resolve: (f: string | null) => void }>();
+  const fuelSignal = (plate: string) => {
+    let w = fuelWaiters.get(plate);
+    if (!w) {
+      let resolve!: (f: string | null) => void;
+      const promise = new Promise<string | null>((r) => { resolve = r; });
+      w = { promise, resolve };
+      fuelWaiters.set(plate, w);
+    }
+    return w;
+  };
+  const resolveFuel = (plate: string, fuel: string | null): void => fuelSignal(plate).resolve(fuel);
+
   // Carril historial: pool continuo de 2 hilos SPRL sobre el canal del pipeline.
   const outByPlate = new Map<string, string>();
   const historialLane: PipelineLane = {
@@ -463,7 +483,10 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
         // 2ª cuenta en cada pedido → lockout). Sube HISTORIAL_CONCURRENCY solo si cada cuenta tiene keep-alive.
         concurrency: Math.max(1, Number(process.env.HISTORIAL_CONCURRENCY ?? 1)),
         onLog: (task, m) => logLine(task.outDir ?? '', 'historial', m), // logs en vivo por placa (los perdía el motor continuo)
-        onResult: (pr) => report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png'))),
+        onResult: (pr) => {
+          resolveFuel(pr.plate, pr.result?.caracteristicas?.fuel ?? null); // libera el gate GNV
+          report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png')));
+        },
       });
     },
   };
@@ -482,6 +505,8 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
         for (;;) {
           const it = await take();
           if (!it) { taskQ.close(); break; }
+          // Sin 'historial' en el pedido no hay señal de combustible → resolvemos null (GNV se saltará).
+          if (!it.sources.includes('historial')) resolveFuel(it.plate, null);
           for (const src of it.sources.filter((s) => s !== 'historial')) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
         }
       })();
@@ -490,8 +515,21 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
         for (;;) {
           const t = await taskQ.take();
           if (!t) break;
-          try { report(t.plate, await runSingleSource(t.plate, t.src, baseOpts(t.outDir))); }
-          catch (e) { report(t.plate, { source: t.src.toUpperCase(), label: t.src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
+          try {
+            // Gate GNV: espera la señal de combustible del SPRL (tope 8 min) y salta si NO es a gas —
+            // así no se gasta captcha en un vehículo que no aplica (FISE/Infogas son solo para GNV).
+            if (GNV_SOURCES.has(t.src)) {
+              const fuel = await Promise.race([
+                fuelSignal(t.plate).promise,
+                new Promise<string | null>((r) => { setTimeout(() => r(null), 8 * 60 * 1000); }),
+              ]);
+              if (!isGasVehicle(fuel)) {
+                report(t.plate, { source: t.src.toUpperCase().replace(/-/g, '_'), label: t.src, category: 'GNV', status: 'SIN_REGISTRO', summary: fuel ? `No aplica: el vehículo no es a gas (SPRL: ${fuel})` : 'No aplica: no se confirmó combustible a gas (SPRL)', ms: 0 });
+                continue;
+              }
+            }
+            report(t.plate, await runSingleSource(t.plate, t.src, baseOpts(t.outDir)));
+          } catch (e) { report(t.plate, { source: t.src.toUpperCase(), label: t.src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
         }
       };
       await Promise.all([feeder, ...Array.from({ length: K }, worker)]);
