@@ -68,6 +68,10 @@ boletas/
 *.db-wal
 *.sqlite
 
+# Auditorías de seguridad internas — el repo es PÚBLICO; el detalle de vulnerabilidades
+# en vivo (exploits, endpoints sin auth) NO debe subirse hasta estar corregido.
+docs/seguridad/
+
 # Screenshots del probe de ATU (no versionar)
 atu-*.png
 sprl2-*.png
