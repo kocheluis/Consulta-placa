@@ -53,6 +53,17 @@ export const OFFICIAL_LINKS: OfficialLink[] = [
     scope: 'Nacional',
     note: 'Requiere crear una cuenta SPRL y un pago (≈ S/ 5 por página). La consulta vehicular gratuita solo muestra el titular actual.',
   },
+  {
+    id: 'sunarp-sigm',
+    name: 'Garantías Mobiliarias (SIGM)',
+    entity: 'SUNARP',
+    category: 'REGISTRAL',
+    url: 'https://sigm.sunarp.gob.pe/garantias-mobiliarias/inicio',
+    description:
+      'Prendas y garantías mobiliarias inscritas sobre el vehículo: revela si está libre o dado en garantía de un crédito (con acreedor, monto y estado).',
+    scope: 'Nacional',
+    note: 'Consulta gratuita. Requiere placa + verificación (captcha). El acreedor y monto salen del detalle de cada garantía.',
+  },
 
   // ── Seguro (SOAT) y siniestralidad ─────────────────────────────────────────
   {
