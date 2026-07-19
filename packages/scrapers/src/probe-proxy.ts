@@ -41,11 +41,24 @@ async function exitIp(useProxy: boolean): Promise<string> {
   finally { await b.close().catch(() => {}); }
 }
 
-interface PageCheck { name: string; url: string; ok: string; }
+interface PageCheck { name: string; url: string; ok: string; grupo: string; }
+// Todas las fuentes en uso. `grupo` marca cuáles DEBEN ir directo (IP peruana del VPS) vs las
+// candidatas a proxy (anti-bot). Superbid no está: es un lookup en la DB local, no toca la red.
 const PAGES: PageCheck[] = [
-  { name: 'Infogas', url: 'https://vh.infogas.com.pe/', ok: '#inp_ck_plate' },
-  { name: 'FISE', url: 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio', ok: '#placaVehiculo' },
-  { name: 'ATU', url: 'https://soluciones.atu.gob.pe/ConsultaVehiculo', ok: 'input' },
+  // Directas — deberían pasar por la IP peruana del VPS (NO proxy):
+  { name: 'SUNARP', grupo: 'directa', url: 'https://consultavehicular.sunarp.gob.pe/', ok: 'input' },
+  { name: 'SPRL', grupo: 'directa', url: 'https://sprl.sunarp.gob.pe/', ok: 'input,button,a' },
+  { name: 'SIGM', grupo: 'directa', url: 'https://sigm.sunarp.gob.pe/garantias-mobiliarias/inicio', ok: 'input,button' },
+  { name: 'SAT-pap', grupo: 'directa', url: 'https://www.sat.gob.pe/VirtualSAT/modulos/papeletas.aspx', ok: 'body' },
+  { name: 'SAT-capt', grupo: 'directa', url: 'https://www.sat.gob.pe/VirtualSAT/modulos/Capturas.aspx', ok: '#ctl00_cplPrincipal_txtPlaca' },
+  { name: 'Callao', grupo: 'directa', url: 'https://pagopapeletascallao.pe/', ok: '#valor_busqueda' },
+  { name: 'MTC-CITV', grupo: 'directa', url: 'https://rec.mtc.gob.pe/Citv/ArConsultaCitv', ok: '#selBUS_Filtro' },
+  { name: 'APESEG', grupo: 'directa', url: 'https://www.soat.com.pe/servicios-soat/', ok: 'iframe' },
+  { name: 'SBS', grupo: 'directa', url: 'https://servicios.sbs.gob.pe/reportesoat/', ok: '#ctl00_MainBodyContent_txtPlaca' },
+  // Anti-bot — candidatas a salir por el proxy residencial:
+  { name: 'ATU', grupo: 'proxy', url: 'https://soluciones.atu.gob.pe/ConsultaVehiculo', ok: 'input' },
+  { name: 'FISE', grupo: 'proxy', url: 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio', ok: '#placaVehiculo' },
+  { name: 'Infogas', grupo: 'proxy', url: 'https://vh.infogas.com.pe/', ok: '#inp_ck_plate' },
 ];
 
 async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
@@ -53,9 +66,9 @@ async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
   const p = await ctx.newPage();
   let status = 0, blocked = false, okSel = false, err = '';
   try {
-    const resp = await p.goto(c.url, { waitUntil: 'domcontentloaded', timeout: 45000 });
+    const resp = await p.goto(c.url, { waitUntil: 'domcontentloaded', timeout: 30000 });
     status = resp?.status() ?? 0;
-    await wait(2500);
+    await wait(2000);
     const title = (await p.title().catch(() => '')) || '';
     const body = (await p.locator('body').innerText().catch(() => '')).slice(0, 4000);
     blocked = /just a moment|attention required|checking your browser|access denied|cf-browser|forbidden|verifica que eres/i.test(`${title} ${body}`);
@@ -64,7 +77,7 @@ async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
   } catch (e) { err = (e as Error).message; }
   finally { await ctx.close().catch(() => {}); }
   const verdict = err ? 'ERROR' : blocked ? '⛔ BLOQUEADO' : okSel ? '✅ OK (form visible)' : (status === 200 ? '⚠ cargó sin form' : '⚠ dudoso');
-  console.log(`     ${c.name.padEnd(9)} → ${verdict}   http ${status || '-'}${err ? ` · ${err.slice(0, 70)}` : ''}`);
+  console.log(`     ${c.name.padEnd(10)} → ${verdict}   http ${status || '-'}${err ? ` · ${err.slice(0, 70)}` : ''}`);
 }
 
 (async () => {
@@ -89,8 +102,13 @@ async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
     for (const c of PAGES) await checkPage(bProxy, c, 'proxy');
     await bProxy.close().catch(() => {});
   }
-  console.log('\n   Nota: FISE y ATU CARGAN aun sin proxy — su bloqueo es el SCORE del reCAPTCHA v3 (solo se ve al');
-  console.log('   ENVIAR). Infogas sí bloquea en la CARGA (Cloudflare): ahí directo⛔ vs proxy✅ es la prueba.');
+  console.log('\n   Notas:');
+  console.log('   • Superbid no se prueba: es un lookup en la DB local, no toca la red.');
+  console.log('   • Las "directas" deben salir por la IP peruana del VPS (directo), NO por proxy.');
+  console.log('   • FISE/ATU CARGAN aun sin proxy — su bloqueo es el SCORE del reCAPTCHA v3 (solo se ve al ENVIAR,');
+  console.log('     por eso el bloque 3 end-to-end es la prueba real). Infogas bloquea en la CARGA (Cloudflare).');
+  console.log('   • FISE usa el puerto :23308 → los proxies residenciales (iProyal) solo tunelizan 80/443 →');
+  console.log('     ERR_TUNNEL_CONNECTION_FAILED por proxy. FISE necesita otra vía (ver con el equipo).');
 
   // 3) End-to-end real (FISE + Infogas con CapSolver, por el proxy).
   const capKey = process.env.CAPSOLVER_API_KEY ?? process.env.CAPTCHA_API_KEY ?? '';
@@ -105,8 +123,8 @@ async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
     const runners: Array<[string, typeof runFiseGnv]> = [['FISE', runFiseGnv], ['Infogas', runInfogas]];
     for (const [name, fn] of runners) {
       const page = await ctx.newPage();
-      try { const r = await fn(page, testPlate, solver, join(OUT, `e2e-${name}.png`)); console.log(`     ${name.padEnd(9)} → ${r.status} · ${r.summary} (${r.ms}ms)`); }
-      catch (e) { console.log(`     ${name.padEnd(9)} → ERROR ${(e as Error).message}`); }
+      try { const r = await fn(page, testPlate, solver, join(OUT, `e2e-${name}.png`)); console.log(`     ${name.padEnd(10)} → ${r.status} · ${r.summary} (${r.ms}ms)`); }
+      catch (e) { console.log(`     ${name.padEnd(10)} → ERROR ${(e as Error).message}`); }
       finally { await page.close().catch(() => {}); }
     }
     await b.close().catch(() => {});
