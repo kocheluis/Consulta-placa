@@ -142,8 +142,10 @@ async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
       const { scrapeAtuViaCdp } = await import('./operator/atu-cdp.js');
       const r = await scrapeAtuViaCdp(testPlate, { shotPath: join(OUT, 'e2e-ATU.png') });
       console.log(`     ATU        → ${r.status}${r.error ? ` · ${r.error.slice(0, 110)}` : (r.data ? ` · ${JSON.stringify(r.data).slice(0, 90)}` : '')}`);
-      console.log(r.status === 'ERROR' ? '     ⛔ score v3 sigue rechazando (o sin proxy = baseline). Con proxy residencial debería pasar.'
-        : '     ✅ el score v3 PASÓ — la IP residencial sirve para ATU.');
+      const launchErr = /chrome cdp|se abri[oó] la ventana|no encontr[eé] chrome|display/i.test(r.error ?? '');
+      if (r.status !== 'ERROR') console.log('     ✅ el score v3 PASÓ — la IP residencial sirve para ATU.');
+      else if (launchErr) console.log('     ⚠ ATU no abrió Chrome aquí (falta el display Xvfb del motor). Prueba ATU VÍA EL MOTOR: ATU_PROXY en placape.env → pm2 restart operador → una consulta real.');
+      else console.log('     ⛔ el score v3 rechazó. Necesita IP PERUANA residencial (whitelist = país random → peor).');
     } catch (e) { console.log(`     ATU        → ERROR ${(e as Error).message} (¿choca con el motor? pausa el operador)`); }
   } else {
     console.log('\n4) (ATU end-to-end omitido) Corre con TEST_PLATE=<cualquier placa> y ATU_PROXY apuntando al proxy.');
