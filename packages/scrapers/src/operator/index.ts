@@ -16,6 +16,7 @@ import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
 import { sprlSlots } from './sprl-slots.js';
+import { parseProxy } from './proxy.js';
 import {
   runSatCaptura,
   runCallao,
@@ -66,6 +67,17 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },
 ];
+
+// Fuentes que SALEN por el proxy residencial (`ENGINE_PROXY`). Las demás usan la IP del VPS directo
+// (peruana en LightNode → SUNARP/SIGM/SBS/SAT pasan nativo). Solo las que rechaza el reCAPTCHA v3 /
+// Cloudflare desde datacenter necesitan IP residencial. ATU va aparte (CDP `--proxy-server`, ve ATU_PROXY).
+const PROXY_SOURCES = new Set(
+  (process.env.PROXY_SOURCES ?? 'fise-gnv,infogas-gnv').split(',').map((s) => s.trim()).filter(Boolean),
+);
+/** Proxy Playwright para una fuente, o undefined si no debe proxiarse / no hay ENGINE_PROXY. */
+function proxyFor(sourceId: string): ReturnType<typeof parseProxy> {
+  return PROXY_SOURCES.has(sourceId) ? parseProxy(process.env.ENGINE_PROXY) : undefined;
+}
 
 export interface OperatorReportOptions {
   outDir: string;
@@ -193,7 +205,9 @@ export async function runSingleSource(
   if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
   // El Chrome del motor se libera al FINAL del job (runJob/runOperatorReport), NO por
   // fuente: así no se mata el Chrome de las fuentes que corren en paralelo.
-  const browser = await chromium.launch({ headless: opts.headless ?? true });
+  const proxy = proxyFor(sourceId); // FISE/Infogas salen por el proxy residencial; el resto directo
+  if (proxy) logLine(opts.outDir, sourceId, `vía proxy residencial ${proxy.server}`);
+  const browser = await chromium.launch({ headless: opts.headless ?? true, ...(proxy ? { proxy } : {}) });
   try {
     const ctx = await browser.newContext({ locale: 'es-PE' });
     const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
