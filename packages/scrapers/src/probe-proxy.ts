@@ -129,8 +129,24 @@ async function checkPage(b: Browser, c: PageCheck, tag: string): Promise<void> {
     }
     await b.close().catch(() => {});
   } else {
-    console.log('\n3) (End-to-end omitido) Para la prueba real de FISE/ATU/Infogas con envío:');
-    console.log('   PROXY_URL=... CAPSOLVER_API_KEY=... TEST_PLATE=<placa a gas> npx tsx packages/scrapers/src/probe-proxy.ts');
+    console.log('\n3) (FISE/Infogas end-to-end omitido) Requiere PROXY_URL + CAPSOLVER_API_KEY + TEST_PLATE (placa a gas).');
+  }
+
+  // 4) ATU end-to-end (CDP nativo, score reCAPTCHA v3). NO usa CapSolver ni el proxy Playwright:
+  // corre su propio Chrome real y sale por ATU_PROXY (ponlo al forwarder gost). CUALQUIER placa sirve
+  // (no necesita ser a gas). Es la prueba que de verdad importa: ¿la IP residencial pasa el score v3?
+  if (testPlate) {
+    const atuProxy = process.env.ATU_PROXY ?? process.env.CDP_PROXY ?? '';
+    console.log(`\n4) ATU END-TO-END (CDP · placa ${testPlate}) — la prueba real del score v3 · ATU_PROXY=${atuProxy || '(directo, sin proxy)'}:`);
+    try {
+      const { scrapeAtuViaCdp } = await import('./operator/atu-cdp.js');
+      const r = await scrapeAtuViaCdp(testPlate, { shotPath: join(OUT, 'e2e-ATU.png') });
+      console.log(`     ATU        → ${r.status}${r.error ? ` · ${r.error.slice(0, 110)}` : (r.data ? ` · ${JSON.stringify(r.data).slice(0, 90)}` : '')}`);
+      console.log(r.status === 'ERROR' ? '     ⛔ score v3 sigue rechazando (o sin proxy = baseline). Con proxy residencial debería pasar.'
+        : '     ✅ el score v3 PASÓ — la IP residencial sirve para ATU.');
+    } catch (e) { console.log(`     ATU        → ERROR ${(e as Error).message} (¿choca con el motor? pausa el operador)`); }
+  } else {
+    console.log('\n4) (ATU end-to-end omitido) Corre con TEST_PLATE=<cualquier placa> y ATU_PROXY apuntando al proxy.');
   }
   console.log('');
   process.exit(0);
