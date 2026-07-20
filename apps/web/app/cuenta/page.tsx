@@ -278,6 +278,23 @@ function AccountView({ account, onLogout }: { account: Account; onLogout: () => 
             </div>
           )}
 
+          {isAdmin && (
+            <div className="rounded-xl border border-azul-200 bg-azul-50 p-5 shadow-sm">
+              <div className="mb-2 flex items-center gap-2">
+                <span className="grid h-8 w-8 flex-none place-items-center rounded-lg bg-azul-100 text-primary">
+                  <Icon name="manage_accounts" className="text-[20px]" />
+                </span>
+                <p className="font-heading text-sm font-bold text-foreground">Gestión de usuarios</p>
+              </div>
+              <p className="mb-3 font-body text-[13px] leading-snug text-muted">
+                Asigna a una cuenta un nivel (Pro/Ultra) y su cupo de consultas por hora, día y semana.
+              </p>
+              <Button variant="primary" size="sm" block href="/admin/usuarios" iconRight="arrow_forward">
+                Gestionar cupos
+              </Button>
+            </div>
+          )}
+
           <Link href="/" className="font-body text-sm text-muted hover:text-foreground">
             ← Volver al inicio
           </Link>
