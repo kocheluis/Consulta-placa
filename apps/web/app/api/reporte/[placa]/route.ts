@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
 import { getPaidTier } from '@/lib/payments';
-import { getSessionOperatorAccess } from '@/lib/operador';
+import { getSessionCupo } from '@/lib/cupo';
 import { verifyPreviewToken } from '@/lib/preview-token';
 import {
   SECTION_CATALOG, TIER_RANK, ReportTier, ReportStatus, DISCLAIMER_TEXT,
@@ -55,14 +55,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
 
   let tier: 'BASIC' | 'PRO' | 'ULTRA' = 'BASIC';
   try { tier = await getPaidTier(placa); } catch { /* anónimo → BASIC */ }
-  // Cuentas internas de operador: acceso completo a SU nivel (PRO/ULTRA) para cualquier placa
-  // (son de confianza; el cupo limita cuántas consultas GENERAN, no cuántas ven). Toma el mayor.
+  // Usuarios con CUPO asignado: ven su nivel (PRO/ULTRA) para cualquier placa (el cupo limita
+  // cuántas consultas GENERAN, no cuántas ven). Toma el mayor entre el pagado y el del cupo.
   try {
-    const op = await getSessionOperatorAccess();
-    if (op?.access.enabled && TIER_RANK[op.access.tier] > TIER_RANK[tier as ReportTier]) {
-      tier = op.access.tier;
+    const cupo = await getSessionCupo();
+    if (cupo?.access.enabled && TIER_RANK[cupo.access.tier] > TIER_RANK[tier as ReportTier]) {
+      tier = cupo.access.tier;
     }
-  } catch { /* sin acceso de operador → sin cambio */ }
+  } catch { /* sin cupo → sin cambio */ }
 
   const admin = createAdminClient();
   const { data: rep } = await admin.from('reportes').select('report,status').eq('placa', placa).maybeSingle();

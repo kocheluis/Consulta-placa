@@ -16,7 +16,7 @@ interface Estado {
   remaining?: { hour: number; day: number; week: number };
 }
 
-function QuotaChip({ label, left, total }: { label: string; left: number; total: number }) {
+function CupoChip({ label, left, total }: { label: string; left: number; total: number }) {
   const pct = total > 0 ? Math.round(((total - left) / total) * 100) : 0;
   const tone = left === 0 ? 'text-danger' : left <= Math.max(1, Math.ceil(total * 0.2)) ? 'text-warning-fg' : 'text-teal-700';
   return (
@@ -31,7 +31,7 @@ function QuotaChip({ label, left, total }: { label: string; left: number; total:
   );
 }
 
-export default function OperadorPage() {
+export default function ConsultasPage() {
   const router = useRouter();
   const [estado, setEstado] = useState<Estado | null>(null);
   const [placa, setPlaca] = useState('');
@@ -40,7 +40,7 @@ export default function OperadorPage() {
 
   const loadEstado = useCallback(async () => {
     try {
-      const r = await fetch('/api/operador/estado', { cache: 'no-store' });
+      const r = await fetch('/api/cupo/estado', { cache: 'no-store' });
       setEstado((await r.json()) as Estado);
     } catch {
       setEstado({ authed: false, enabled: false });
@@ -59,7 +59,7 @@ export default function OperadorPage() {
     setBusy(true);
     setMsg(null);
     try {
-      const r = await fetch('/api/operador/consulta', {
+      const r = await fetch('/api/cupo/consultar', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ placa: norm }),
@@ -70,7 +70,7 @@ export default function OperadorPage() {
         setMsg({ kind: 'err', text: d.error ?? 'No se pudo consultar.' });
         return;
       }
-      // Consumió cupo y la cuenta tiene acceso de operador → abre el reporte.
+      // Consumió cupo y la cuenta tiene su nivel asignado → abre el reporte.
       router.push(`/reporte/${norm}`);
     } catch {
       setMsg({ kind: 'err', text: 'Error de red. Intenta de nuevo.' });
@@ -79,15 +79,15 @@ export default function OperadorPage() {
     }
   };
 
-  // ── Estados de carga / sin acceso ──────────────────────────────────
+  // ── Estados de carga / sin cupo ────────────────────────────────────
   if (estado === null) {
     return <div className="mx-auto max-w-[720px] px-6 py-16 text-center text-muted">Cargando…</div>;
   }
   if (!estado.authed) {
     return (
       <div className="mx-auto max-w-[560px] px-6 py-16 text-center">
-        <h1 className="font-heading text-2xl font-bold text-foreground">Acceso de operador</h1>
-        <p className="mt-3 text-muted">Inicia sesión con tu cuenta habilitada para consultar.</p>
+        <h1 className="font-heading text-2xl font-bold text-foreground">Consultas por cupo</h1>
+        <p className="mt-3 text-muted">Inicia sesión con tu cuenta para usar tu cupo de consultas.</p>
         <div className="mt-6"><Button href="/cuenta" variant="primary" iconRight="login">Iniciar sesión</Button></div>
       </div>
     );
@@ -95,18 +95,19 @@ export default function OperadorPage() {
   if (!estado.enabled) {
     return (
       <div className="mx-auto max-w-[560px] px-6 py-16 text-center">
-        <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl bg-warning-bg">
-          <Icon name="lock" className="text-2xl text-warning-fg" />
+        <div className="mx-auto mb-4 grid h-12 w-12 place-items-center rounded-xl bg-azul-50">
+          <Icon name="hourglass_empty" className="text-2xl text-primary" />
         </div>
-        <h1 className="font-heading text-2xl font-bold text-foreground">Tu cuenta no tiene acceso de operador</h1>
+        <h1 className="font-heading text-2xl font-bold text-foreground">Aún no tienes un cupo asignado</h1>
         <p className="mt-3 text-muted">
-          Este acceso con cupo se habilita manualmente. Pide al administrador que active tu cuenta.
+          Tu cuenta está creada, pero todavía no tiene consultas asignadas. Escríbenos para activarte un cupo.
         </p>
+        <div className="mt-6"><Button href="/cuenta" variant="secondary">Volver a mi cuenta</Button></div>
       </div>
     );
   }
 
-  // ── Panel del operador ─────────────────────────────────────────────
+  // ── Panel de consultas ─────────────────────────────────────────────
   const rem = estado.remaining ?? { hour: 0, day: 0, week: 0 };
   const lim = estado.limits ?? { hour: 0, day: 0, week: 0 };
   const sinCupo = rem.hour === 0 || rem.day === 0 || rem.week === 0;
@@ -114,20 +115,20 @@ export default function OperadorPage() {
   return (
     <div className="mx-auto max-w-[820px] px-6 py-12 sm:px-8">
       <div className="mb-2 flex items-center gap-2">
-        <span className="rounded-md bg-azul-50 px-2 py-0.5 font-mono text-[11.5px] font-bold tracking-wide text-primary">OPERADOR</span>
+        <span className="rounded-md bg-azul-50 px-2 py-0.5 font-mono text-[11.5px] font-bold tracking-wide text-primary">MI CUPO</span>
         <span className="rounded-md border border-border px-2 py-0.5 font-mono text-[11px] text-muted">nivel {estado.tier}</span>
       </div>
-      <h1 className="font-heading text-[28px] font-extrabold tracking-tight text-foreground sm:text-[34px]">Consulta con cupo</h1>
+      <h1 className="font-heading text-[28px] font-extrabold tracking-tight text-foreground sm:text-[34px]">Consulta de placas</h1>
       <p className="mt-2 max-w-[60ch] text-[15px] leading-relaxed text-muted">
-        Cada consulta genera un reporte <b>{estado.tier}</b> y descuenta 1 de tu cupo. Ver un reporte ya
-        generado no consume cupo.
+        Cada consulta genera un reporte <b>{estado.tier}</b> y descuenta 1 de tu cupo. Volver a ver un
+        reporte ya generado no consume cupo.
       </p>
 
       {/* Cupos */}
       <div className="mt-7 flex flex-wrap gap-3">
-        <QuotaChip label="Esta hora" left={rem.hour} total={lim.hour} />
-        <QuotaChip label="Hoy" left={rem.day} total={lim.day} />
-        <QuotaChip label="Esta semana" left={rem.week} total={lim.week} />
+        <CupoChip label="Esta hora" left={rem.hour} total={lim.hour} />
+        <CupoChip label="Hoy" left={rem.day} total={lim.day} />
+        <CupoChip label="Esta semana" left={rem.week} total={lim.week} />
       </div>
 
       {/* Buscador */}
@@ -153,8 +154,8 @@ export default function OperadorPage() {
       </div>
 
       <p className="mt-6 text-[12.5px] leading-relaxed text-muted">
-        El pago por reporte sigue disponible como siempre. Este acceso es para cuentas internas habilitadas
-        por el administrador; los cupos se ajustan por cuenta.
+        El pago por reporte sigue disponible como siempre. Tu cupo lo asigna el administrador y se ajusta
+        por cuenta.
       </p>
     </div>
   );
