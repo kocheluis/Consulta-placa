@@ -1,5 +1,7 @@
 import {
   buildReport,
+  maskOwnerName,
+  maskDoc,
   SectionKind,
   SectionStatus,
   SourceId,
@@ -268,15 +270,15 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   if (atu) {
     if (atu.status === 'ENCONTRADO' || atu.status === 'SIN_REGISTRO') {
       const d = data(atu);
-      // FASE DE PRUEBA: se expone el titular (nombre + documento) SIN enmascarar para evaluarlo.
-      // Antes de producción, aplicar aquí la máscara decidida (retirar, o nombre + 3 letras del
-      // apellido + ***) — este es el único punto donde el dato pasa del motor al reporte del cliente.
+      // PII minimizada (Ley 29733): se enmascara el titular (nombre + documento) antes de pasar al
+      // reporte del cliente. Empresa → tal cual (razón social/RUC públicos); persona → nombres + apellido
+      // recortado, DNI recortado. El dato crudo solo vive en la fuente del VPS (operador).
       const pay: TransporteInfo = {
         isPublicTransport: Boolean(d.isPublicTransport),
         modality: (d.modalidad as string) ?? null,
         detail: (d.estado as string) ?? null,
-        holder: (d.titular as string) ?? null,
-        holderDoc: (d.documento as string) ?? null,
+        holder: maskOwnerName((d.titular as string) ?? null),
+        holderDoc: maskDoc((d.documento as string) ?? null),
         validUntil: (d.vigencia as string) ?? null,
       };
       src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });

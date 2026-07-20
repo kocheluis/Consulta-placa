@@ -5,6 +5,7 @@ import { getSessionCupo } from '@/lib/cupo';
 import { verifyPreviewToken } from '@/lib/preview-token';
 import {
   SECTION_CATALOG, TIER_RANK, ReportTier, ReportStatus, DISCLAIMER_TEXT,
+  maskOwnerName,
   type Report, type SectionResult,
 } from '@app/shared';
 
@@ -76,6 +77,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
 
   if (rep?.report) {
     const report = operatorPreview ? (rep.report as Report) : stripByTier(rep.report as Report, tier);
+    // Enmascarar el titular al servir (idempotente): cubre reportes VIEJOS cacheados antes de que el
+    // motor enmascarara en origen. Empresas quedan tal cual (razón social/RUC públicos). Cierra A-1.
+    if (report.vehicle?.owner?.name) {
+      report.vehicle.owner.name = maskOwnerName(report.vehicle.owner.name) ?? report.vehicle.owner.name;
+    }
     return NextResponse.json({ generating, report });
   }
 

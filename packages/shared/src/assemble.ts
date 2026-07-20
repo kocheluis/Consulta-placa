@@ -13,6 +13,7 @@ import {
   type VehicleData,
   type OwnerInfo,
 } from './report.js';
+import { maskOwnerName } from './mask.js';
 
 export interface BuildReportInput {
   id: string;
@@ -61,8 +62,10 @@ export function buildReport(input: BuildReportInput): Report {
   const vehicleParts = sources.filter((s) => s.vehicle).map((s) => s.vehicle!);
   if (vehicleParts.length > 0) {
     const merged = Object.assign({}, ...vehicleParts) as Partial<VehicleData>;
-    const ownerName = sources.find((s) => s.ownerName)?.ownerName ?? null;
-    const owner: OwnerInfo | null = ownerName ? { name: ownerName, note: OWNER_NOTE } : null;
+    // PII minimizada (Ley 29733): se enmascara el titular ANTES de persistir/servir. Empresas quedan
+    // tal cual (razón social/RUC públicos). El dato crudo solo vive en la fuente del VPS (operador).
+    const maskedOwner = maskOwnerName(sources.find((s) => s.ownerName)?.ownerName ?? null);
+    const owner: OwnerInfo | null = maskedOwner ? { name: maskedOwner, note: OWNER_NOTE } : null;
     vehicle = {
       brand: merged.brand ?? null,
       model: merged.model ?? null,
