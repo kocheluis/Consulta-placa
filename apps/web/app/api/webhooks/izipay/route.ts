@@ -11,7 +11,9 @@ export const dynamic = 'force-dynamic';
  * con el cliente admin (service_role) y responde 200. Es el endpoint estable que
  * confirma el pago aunque el usuario cierre la ventana.
  *
- * Probar en mock:  curl -X POST .../api/webhooks/izipay \
+ * El modo mock (kr-hash: 'mock') SOLO funciona en dev local con `ALLOW_MOCK_WEBHOOK=1` (ver
+ * verifyWebhookSignature): en producción/preview sin secreto el webhook falla cerrado (C-1).
+ * Probar en dev:  ALLOW_MOCK_WEBHOOK=1 → curl -X POST .../api/webhooks/izipay \
  *   -H 'kr-hash: mock' -H 'content-type: application/json' \
  *   -d '{"orderId":"<uuid>","orderStatus":"PAID","transactionId":"t1"}'
  */

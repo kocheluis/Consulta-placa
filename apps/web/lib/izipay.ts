@@ -56,13 +56,22 @@ export async function createPaymentSession(_req: PaymentRequest): Promise<Paymen
 
 /**
  * Verifica la firma HMAC-SHA256 del webhook (Lyra envía `kr-hash`).
- * En mock (sin secreto) acepta solo si el header trae el token de prueba.
+ *
+ * SEGURIDAD (C-1): sin `IZIPAY_SECRET_KEY` configurado el webhook FALLA CERRADO. Antes aceptaba el
+ * header `kr-hash: 'mock'` por defecto → cualquiera podía marcar una compra como pagada y sacar un
+ * reporte PRO/ULTRA gratis (el flujo Yape manual confirma por el panel admin, NO por este webhook,
+ * así que cerrarlo no afecta los pagos reales). El modo mock ahora SOLO existe en dev local y con una
+ * env EXPLÍCITA (`ALLOW_MOCK_WEBHOOK=1`): nunca en producción ni en previews (NODE_ENV='production').
  */
 export function verifyWebhookSignature(rawBody: string, signature: string | null): boolean {
   const secret = process.env.IZIPAY_SECRET_KEY ?? '';
   if (!secret) {
-    // Modo mock: acepta el webhook de prueba marcado explícitamente.
-    return signature === 'mock';
+    // Fallar cerrado. El mock solo en dev local con opt-in explícito (jamás por defecto ni en deploy).
+    return (
+      process.env.NODE_ENV !== 'production' &&
+      process.env.ALLOW_MOCK_WEBHOOK === '1' &&
+      signature === 'mock'
+    );
   }
   if (!signature) return false;
   const expected = crypto.createHmac('sha256', secret).update(rawBody).digest('hex');
