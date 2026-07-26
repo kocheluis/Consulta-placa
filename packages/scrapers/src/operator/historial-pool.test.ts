@@ -103,4 +103,28 @@ describe('runHistorialPoolLive (pool continuo)', () => {
     expect(seenBy).toContainEqual(['P1', 1]);       // intentada en slot 1
     expect(seenBy).toContainEqual(['P1', 2]);       // REINTENTADA en slot 2 (failover)
   });
+
+  it('auto-recuperación: tras bloquear TODAS las cuentas entra en enfriamiento y REVIVE (no mata el carril)', async () => {
+    const reported: Array<{ plate: string; ms: number; ok: boolean }> = [];
+    let attempts = 0;
+    const chan = new AsyncQueue<HistorialTask>();
+    const done = runHistorialPoolLive(() => chan.take(), {
+      concurrency: 1,
+      cooldownMs: 20,   // enfriamiento cortito para el test
+      heartbeatMs: 0,   // sin heartbeat (no hay browser real)
+      openBrowser: fakeOpen,
+      // Los 2 primeros intentos lockean (slot1 + failover slot2) → bloqueo total; luego OK.
+      runOne: async () => { attempts++; return attempts <= 2 ? lockedRes() : ok(); },
+      onResult: (r) => reported.push({ plate: r.plate, ms: r.ms, ok: !!r.result.ok }),
+    });
+    chan.push({ plate: 'P1' });
+    await new Promise((r) => setTimeout(r, 70)); // deja lockear ambos slots + entrar y VENCER el cooldown
+    chan.push({ plate: 'P2' });                  // llega tras el cooldown → el carril revivió y la atiende
+    await new Promise((r) => setTimeout(r, 40));
+    chan.close();
+    await done;
+    // P1: bloqueo total → error inmediato (ms:0). P2: procesada OK tras revivir (carril NO murió).
+    expect(reported.find((x) => x.plate === 'P1')).toMatchObject({ ms: 0, ok: false });
+    expect(reported.find((x) => x.plate === 'P2')).toMatchObject({ ok: true });
+  });
 });

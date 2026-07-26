@@ -152,8 +152,74 @@ export interface HistorialPoolLiveOpts {
   log?: (slot: number, m: string) => void;
   /** Log POR TAREA (placa) → deja escribir cada línea al archivo `historial.log` de esa placa (logs en vivo). */
   onLog?: (task: HistorialTask, m: string) => void;
+  /** Log de eventos del POOL (no ligados a una placa): heartbeat, enfriamiento, failover. Va a stdout/pm2. */
+  onEngineLog?: (m: string) => void;
+  /** Heartbeat (ms) para mantener CALIENTE la sesión SPRL del worker parqueado (0 = off). El worker tiene
+   *  el perfil tomado (:9224 sale `perfil-en-uso` para el keep-alive), así que es el ÚNICO que puede
+   *  refrescarla → sin esto la sesión se enfría entre pedidos y cada historial hace cold-login (→ lockout).
+   *  Default env `HISTORIAL_HEARTBEAT_MS` o 6 min. */
+  heartbeatMs?: number;
+  /** Enfriamiento (ms) tras bloquear TODAS las cuentas por IP: en vez de MATAR el carril (return), espera
+   *  y repone los slots (la IP se libera sola). 0 = comportamiento viejo. Default env
+   *  `HISTORIAL_LOCKOUT_COOLDOWN_MS` o 30 min. */
+  cooldownMs?: number;
   openBrowser?: (slot: SprlSlot) => Promise<{ browser: Browser | null; close: () => Promise<void> }>;
   runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void) => Promise<HistorialResult>;
+}
+
+const PARTIDA_URL = 'https://sprl.sunarp.gob.pe/sprl/main/partidas-base-grafica-registral';
+const RX_VIVA = /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/;
+
+/**
+ * HEARTBEAT: refresca la sesión SPRL del browser YA ABIERTO (SIN login), navegando a PARTIDA para que
+ * el re-auth OAuth mantenga vivo el token mientras el worker está IDLE. Es lo mismo que hace el
+ * keep-alive, pero DESDE el motor — el único que puede, porque tiene el perfil tomado (para el
+ * keep-alive el puerto sale `perfil-en-uso` y lo salta). Espera CORTA (~8s): solo dispara el re-auth,
+ * no bloquea un historial entrante. Nunca lanza: un heartbeat fallido no debe tumbar el pool.
+ */
+async function warmSession(browser: Browser): Promise<string> {
+  const ctx = browser.contexts()[0] ?? (await browser.newContext());
+  const page = ctx.pages()[0] ?? (await ctx.newPage());
+  await page.goto(PARTIDA_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+  let body = '';
+  for (let i = 0; i < 8; i++) {
+    body = (await page.locator('body').innerText().catch(() => '')).toUpperCase();
+    if (RX_VIVA.test(body)) break;
+    await sleep(1000);
+  }
+  return RX_VIVA.test(body) ? 'VIVA' : (/PASSWORD|USERNAME|INGRESAR/.test(body) ? 'CAIDA' : 'DESCONOCIDO');
+}
+
+/** setTimeout cancelable (para no dejar timers colgando que retrasen el apagado del motor). */
+function delayHandle(ms: number): { p: Promise<void>; cancel: () => void } {
+  let t: ReturnType<typeof setTimeout>;
+  const p = new Promise<void>((r) => { t = setTimeout(r, ms); });
+  return { p, cancel: () => clearTimeout(t) };
+}
+
+/**
+ * Espera la próxima tarea del canal MANTENIENDO CALIENTE la sesión: cada `everyMs` sin tarea hace un
+ * heartbeat (`warmSession`). En cuanto llega la tarea, corta y espera a que el heartbeat en curso
+ * termine (no arranca un historial con la sesión a medio refrescar). `take()` se llama UNA sola vez
+ * (no se consume de más). Sin browser o `everyMs<=0` → espera normal, sin heartbeat.
+ */
+async function takeWarm(
+  take: () => Promise<HistorialTask | null>,
+  browser: Browser | null,
+  everyMs: number,
+  onBeat: (state: string) => void,
+): Promise<HistorialTask | null> {
+  if (!browser || everyMs <= 0) return take();
+  const taskP = take();
+  let resolved = false;
+  void taskP.then(() => { resolved = true; }, () => { resolved = true; });
+  for (;;) {
+    const d = delayHandle(everyMs);
+    const winner = await Promise.race([taskP.then(() => 'task'), d.p.then(() => 'beat')]);
+    d.cancel();
+    if (winner === 'task' || resolved) return taskP;
+    try { onBeat(await warmSession(browser)); } catch { /* un heartbeat fallido nunca tumba el pool */ }
+  }
 }
 
 /**
@@ -182,6 +248,13 @@ export async function runHistorialPoolLive(
   const runOne = opts.runOne ?? defaultRunOne;
   const [smin, smax] = opts.spacingMs ?? [0, 0];
   const slog = opts.log ?? (() => {});
+  const elog = opts.onEngineLog ?? (() => {});
+  // Heartbeat: mantiene caliente la sesión del worker parqueado → mata el cold-login que dispara el
+  // bloqueo por IP. Solo aplica cuando el worker está IDLE (esperando placa); durante un historial no corre.
+  const heartbeatMs = opts.heartbeatMs ?? Number(process.env.HISTORIAL_HEARTBEAT_MS ?? 6 * 60_000);
+  // Enfriamiento tras bloquear TODAS las cuentas por IP: en vez de matar el carril, espera y repone los
+  // slots (la IP se libera sola). 0 = comportamiento viejo (el worker termina → historial muerto hasta reiniciar).
+  const cooldownMs = opts.cooldownMs ?? Number(process.env.HISTORIAL_LOCKOUT_COOLDOWN_MS ?? 30 * 60_000);
 
   // Pool COMPARTIDO de slots libres: un worker que se queda sin slot por lockout toma el siguiente
   // (failover). Con concurrencia 1 → 1 slot activo + failover (el modelo del motor viejo, sin cold-login spam).
@@ -189,18 +262,43 @@ export async function runHistorialPoolLive(
 
   async function worker(): Promise<void> {
     let pending: HistorialTask | null = null; // placa a REINTENTAR en el próximo slot tras un lockout
+    let lockedUntil = 0; // epoch ms; mientras now < lockedUntil TODA la IP está en enfriamiento (fail-fast)
     for (;;) {
+      // Fin del enfriamiento → repone TODOS los slots (idempotente entre workers) y reanuda normal.
+      if (lockedUntil && Date.now() >= lockedUntil) {
+        lockedUntil = 0;
+        if (freeSlots.length === 0) { freeSlots.push(...withCreds); elog('enfriamiento terminado → slots repuestos, historial reanudado'); }
+      }
+      // Durante el enfriamiento: seguimos consumiendo el canal pero FALLAMOS RÁPIDO (reintentar SPRL
+      // agravaría el bloqueo por IP). El carril sigue VIVO → al vencer el cooldown vuelve a atender.
+      if (lockedUntil) {
+        const task: HistorialTask | null = pending ?? (await take());
+        pending = null;
+        if (!task) return; // canal cerrado → salida limpia (el apagado no cuelga)
+        if (Date.now() >= lockedUntil) { pending = task; continue; } // venció mientras esperábamos → procesar normal
+        const mins = Math.max(1, Math.ceil((lockedUntil - Date.now()) / 60_000));
+        opts.onResult?.({ plate: task.plate, slot: -1, ms: 0, result: failResult(`SUNARP bloqueó la IP del VPS (límite de intentos de login); historial en enfriamiento ~${mins} min. Reintentá luego.`), logs: [] });
+        continue;
+      }
       const slot = freeSlots.shift();
-      if (!slot) { // no quedan cuentas libres → la placa pendiente (si hay) se cierra como error
-        if (pending) opts.onResult?.({ plate: pending.plate, slot: -1, ms: 0, result: failResult('todas las cuentas SPRL bloqueadas por IP'), logs: [] });
-        return;
+      if (!slot) { // no quedan cuentas libres → todas bloqueadas por IP
+        // NO matamos el carril: entramos en enfriamiento y al vencer reponemos los slots (auto-recuperación,
+        // "Fase 2"). La placa pendiente (si hay) cae en el fail-fast de arriba. cooldownMs=0 → comportamiento viejo.
+        if (cooldownMs <= 0) {
+          if (pending) { opts.onResult?.({ plate: pending.plate, slot: -1, ms: 0, result: failResult('todas las cuentas SPRL bloqueadas por IP'), logs: [] }); pending = null; }
+          return;
+        }
+        lockedUntil = Date.now() + cooldownMs;
+        elog(`todas las cuentas SPRL bloqueadas por IP → enfriamiento ${Math.round(cooldownMs / 60_000)} min (el carril sigue vivo)`);
+        continue;
       }
       slog(slot.index, `abriendo Chrome SPRL :${slot.port} (pool continuo)`);
       const { browser, close } = await openBrowser(slot);
       let failover = false;
       try {
         for (;;) {
-          const task: HistorialTask | null = pending ?? (await take());
+          // Espera la próxima tarea manteniendo CALIENTE la sesión (heartbeat) → evita el cold-login.
+          const task: HistorialTask | null = pending ?? (await takeWarm(take, browser, heartbeatMs, (st) => elog(`heartbeat slot${slot.index} sesión=${st}`)));
           pending = null;
           if (!task) return; // canal cerrado → apagado limpio (sale del worker por completo)
           const logs: string[] = [];
@@ -211,6 +309,7 @@ export async function runHistorialPoolLive(
           catch (e) { result = failResult((e as Error).message); }
           if ((result as { locked?: boolean }).locked) {
             slog(slot.index, `slot ${slot.index} BLOQUEADO por IP → failover al siguiente slot (reintenta ${task.plate})`);
+            elog(`slot ${slot.index} bloqueado por IP → failover (reintenta ${task.plate})`);
             pending = task;   // REINTENTAR esta placa en el próximo slot (aún no se reporta)
             failover = true;
             break;            // cierra este slot y el for exterior toma el siguiente

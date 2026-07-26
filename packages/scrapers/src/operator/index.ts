@@ -497,6 +497,8 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
         // 2ª cuenta en cada pedido → lockout). Sube HISTORIAL_CONCURRENCY solo si cada cuenta tiene keep-alive.
         concurrency: Math.max(1, Number(process.env.HISTORIAL_CONCURRENCY ?? 1)),
         onLog: (task, m) => logLine(task.outDir ?? '', 'historial', m), // logs en vivo por placa (los perdía el motor continuo)
+        onEngineLog: (m) => console.log(`[historial-cont] ${m}`), // heartbeat/enfriamiento/failover → pm2 logs
+        // heartbeatMs / cooldownMs: default desde el entorno (HISTORIAL_HEARTBEAT_MS / HISTORIAL_LOCKOUT_COOLDOWN_MS).
         onResult: (pr) => {
           resolveFuel(pr.plate, pr.result?.caracteristicas?.fuel ?? null); // libera el gate GNV
           report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png')));

@@ -8,6 +8,7 @@ import { parseAsientos, pdfBytesToText, construirTimeline, type AsientoRecord } 
 import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
+import { sprlIsLogged, sprlLogin } from './sprl-login.js';
 
 /**
  * HISTORIAL REGISTRAL completo (SUNARP → SPRL → Síguelo) por HÍBRIDO CDP.
@@ -141,67 +142,15 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     const page = ctx.pages()[0] ?? (await ctx.newPage());
 
     // ── [2] SPRL: login (la sesión ya debería estar asentada por el spawn temprano) ──
-    const isLogged = async () => /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/.test((await page.locator('body').innerText().catch(() => '')).toUpperCase());
-    const passVisible = async () => page.locator('input[type="password"]:visible').first().isVisible().catch(() => false);
-    // SUNARP bloquea la cuenta tras varios intentos ("Se superó el número de intentos…").
-    // Si aparece, hay que ABORTAR sin re-someter: cada intento extra agrava/prolonga el bloqueo.
-    const RX_LOCK = /super[oó].{0,15}n[uú]mero de intentos|vuelva m[aá]s tarde|intente.{0,12}m[aá]s tarde|demasiados intentos|cuenta.{0,25}bloqueada/i;
-    const isLocked = async () => RX_LOCK.test(await page.locator('body').innerText().catch(() => ''));
+    // Login + detección de lockout centralizados en sprl-login.ts (MISMA lógica que reusan el
+    // keep-alive y el seed → un solo lugar donde mantenerlos).
+    const isLogged = (): Promise<boolean> => sprlIsLogged(page);
     let blockReason = '';
-    async function autoLogin(): Promise<boolean> {
-      if (await isLogged()) return true;
-      if (!user || !pass) { log('sin SPRL_USER/SPRL_PASS en el entorno'); return false; }
-      // Forzar el FORM de login directo: limpiar storage+cookies → la SPA redirige al
-      // login (path probado). El token del SPRL vive en localStorage, por eso esto
-      // desloguea de verdad y muestra el formulario (más fiable que clic en INGRESAR).
-      if (!(await passVisible())) {
-        await page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear(); } catch { /* */ } }).catch(() => {});
-        await ctx.clearCookies().catch(() => {});
-        await page.goto(INGRESO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
-        for (let i = 0; i < 25 && !(await passVisible()); i++) await wait(1000);
-      }
-      // Fallback: clic en INGRESAR de la home.
-      if (!(await passVisible())) {
-        await page.locator('a:has-text("INGRESAR"), button:has-text("INGRESAR"), a:has-text("Acceder")').first().click({ timeout: 6000 }).catch(() => {});
-        for (let i = 0; i < 15 && !(await passVisible()); i++) await wait(1000);
-      }
-      if (!(await passVisible())) {
-        // SIN form de login = 3 casos, hay que distinguirlos:
-        //  1) La sesión VOLVIÓ: el force-clear + goto disparó el re-auth OAuth (el SSO
-        //     seguía vivo) y SUNARP re-logueó solo → es ÉXITO, no fallo. Fue el bug de
-        //     M4S859 (sesión viva, pero isLogged tardó >25s en renderizar tras el redirect).
-        //  2) Lockout: SUNARP muestra "se superó el número de intentos" en vez del form.
-        //  3) Otra cosa (cambio de página / red): logueo qué sirvió para poder diagnosticar.
-        if (await isLogged()) { log('sesión recuperada por re-auth (sin form de login) → sigo'); return true; }
-        const bodySnippet = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
-        if (await isLocked()) { blockReason = 'lockout'; log('SPRL bloqueada por SUNARP (exceso de intentos) — sin form de login; no reintento'); }
-        else log(`no apareció el form de login · url=${page.url()} · body="${bodySnippet}"`);
-        await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
-        return false;
-      }
-      if (await isLocked()) { blockReason = 'lockout'; log('SPRL bloqueada por SUNARP (exceso de intentos) — NO intento login para no agravarlo'); return false; }
-      const pf = page.locator('input[type="password"]:visible').first();
-      await page.locator('input[name*="usuario" i], input[formcontrolname*="usuario" i], input[type="text"]:visible').first().fill(user).catch(() => {});
-      await pf.fill(pass).catch(() => {});
-      log('login automático (creds de entorno)…');
-      let lt = '';
-      for (let i = 0; i < 12 && !lt; i++) { await wait(1000); lt = await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 800 }).catch(() => ''); }
-      log(lt ? `Turnstile login ok (${lt.length})` : 'login sin token Turnstile (este login no lo requiere)');
-      const ing = page.locator('button:has-text("INGRESAR"), button:has-text("Ingresar"), button[type="submit"], input[type="submit"]');
-      let clicked = false;
-      for (let i = 0; i < (await ing.count().catch(() => 0)); i++) { const b = ing.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); clicked = true; break; } }
-      if (!clicked) await pf.press('Enter').catch(() => {});
-      for (let i = 0; i < 18 && !(await isLogged()); i++) await wait(1000);
-      if (!(await isLogged())) {
-        // Antes de re-someter, verifica que SUNARP no nos haya bloqueado: si sí, ABORTAR
-        // (otro Enter = otro intento = agrava el bloqueo por IP).
-        if (await isLocked()) { blockReason = 'lockout'; log('SPRL: "se superó el número de intentos" → aborto (no reintento)'); return false; }
-        await pf.press('Enter').catch(() => {});
-        for (let i = 0; i < 12 && !(await isLogged()); i++) await wait(1000);
-      }
-      if (!(await isLogged()) && (await isLocked())) blockReason = 'lockout';
-      return isLogged();
-    }
+    const autoLogin = async (): Promise<boolean> => {
+      const r = await sprlLogin(page, ctx, { user, pass, log, shotPath: `${PROFILE}/_login.png` });
+      if (r.locked) blockReason = 'lockout';
+      return r.ok;
+    };
     // Esperar a que la sesión activa se renderice. El re-auth OAuth puede tardar >25s en
     // VPS lento; si nos rendimos antes, autoLogin dispara un force-clear innecesario que
     // destruye una sesión que estaba por aparecer (fue el bug de M4S859) → 45s de margen.
