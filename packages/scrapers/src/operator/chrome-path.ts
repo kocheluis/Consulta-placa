@@ -60,11 +60,19 @@ export function killEngineChrome(): void {
   // el clearance CALIENTE y el Turnstile pasa pasivo en ~6s (en vez de relanzar frío y esperar
   // ~30-45s de recargas). Cuesta ~1 Chrome de RAM sostenido; enciéndelo si el VPS lo aguanta.
   const keepSunarpWarm = process.env.KEEP_SUNARP_WARM === '1';
+  // KEEP_SPRL_WARM=1 (lo pone solo el MOTOR CONTINUO): NO mata los Chrome del SPRL (:9224/9225/9228).
+  // El pool de historial continuo los tiene PARQUEADOS con la sesión caliente; matarlos dejaba al
+  // worker con un handle CDP muerto → cada historial fallaba AL INSTANTE ("Target closed") hasta
+  // reiniciar, y el re-abrir forzaba cold-login (→ lockout por IP). Lo llamaban entre pedidos el
+  // dedup (tryReuseReport), Cancelar y las corridas manuales. El pool cierra los suyos al apagarse.
+  const keepSprlWarm = process.env.KEEP_SPRL_WARM === '1';
   const ports = [...new Set([
     ...(keepSunarpWarm ? [] : [Number(process.env.CDP_SUNARP_PORT ?? 9222)]),
-    Number(process.env.CDP_SPRL_PORT ?? 9224),
-    Number(process.env.CDP_SPRL_PORT_2 ?? 9225), // 2ª cuenta SPRL (si no, su Chrome quedaría huérfano)
-    Number(process.env.CDP_SPRL_PORT_3 ?? 9228), // 3ª cuenta SPRL (backup). 9228: 9226/9227 = Superbid/ATU/SIGM
+    ...(keepSprlWarm ? [] : [
+      Number(process.env.CDP_SPRL_PORT ?? 9224),
+      Number(process.env.CDP_SPRL_PORT_2 ?? 9225), // 2ª cuenta SPRL (si no, su Chrome quedaría huérfano)
+      Number(process.env.CDP_SPRL_PORT_3 ?? 9228), // 3ª cuenta SPRL (backup). 9228: 9226/9227 = Superbid/ATU/SIGM
+    ]),
     // Superbid en el reporte es lookup en DB (sin navegador); puerto propio 9226 SOLO para no
     // aliasar el 9225 de la 2ª cuenta SPRL (si algún día vuelve a abrir Chrome, no la mata).
     Number(process.env.CDP_SUPERBID_PORT ?? 9226),

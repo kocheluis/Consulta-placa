@@ -218,7 +218,10 @@ async function takeWarm(
     const winner = await Promise.race([taskP.then(() => 'task'), d.p.then(() => 'beat')]);
     d.cancel();
     if (winner === 'task' || resolved) return taskP;
-    try { onBeat(await warmSession(browser)); } catch { /* un heartbeat fallido nunca tumba el pool */ }
+    // Chrome muerto (killEngineChrome/crash): no hay sesión que calentar → se reporta (visible en pm2)
+    // y se sigue esperando; el worker lo REABRE (auto-sana) apenas llegue la próxima placa.
+    if (!browser.isConnected()) { onBeat('DESCONECTADA (Chrome caído; se reabre con la próxima placa)'); continue; }
+    try { onBeat(await warmSession(browser)); } catch { onBeat('ERROR'); /* un heartbeat fallido nunca tumba el pool */ }
   }
 }
 
@@ -293,7 +296,7 @@ export async function runHistorialPoolLive(
         continue;
       }
       slog(slot.index, `abriendo Chrome SPRL :${slot.port} (pool continuo)`);
-      const { browser, close } = await openBrowser(slot);
+      let { browser, close } = await openBrowser(slot);
       let failover = false;
       try {
         for (;;) {
@@ -301,6 +304,16 @@ export async function runHistorialPoolLive(
           const task: HistorialTask | null = pending ?? (await takeWarm(take, browser, heartbeatMs, (st) => elog(`heartbeat slot${slot.index} sesión=${st}`)));
           pending = null;
           if (!task) return; // canal cerrado → apagado limpio (sale del worker por completo)
+          // AUTO-SANA: si algo mató el Chrome parqueado (killEngineChrome de un cancel/manual, crash),
+          // el handle CDP queda muerto y CADA historial fallaría al instante ("Target closed") hasta
+          // reiniciar el motor. Detectamos la desconexión y reabrimos el Chrome del slot ANTES de correr
+          // (la sesión vive en el perfil en disco → normalmente vuelve sin login).
+          if (browser && !browser.isConnected()) {
+            slog(slot.index, `Chrome SPRL :${slot.port} desconectado → reabriendo (auto-sana)`);
+            elog(`Chrome SPRL slot${slot.index} desconectado (¿killEngineChrome/cancel?) → reabierto`);
+            await close().catch(() => {});
+            ({ browser, close } = await openBrowser(slot));
+          }
           const logs: string[] = [];
           const plog = (m: string): void => { logs.push(m); slog(slot.index, m); opts.onLog?.(task, m); };
           const t0 = Date.now();

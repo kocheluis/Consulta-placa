@@ -152,6 +152,11 @@ const BATCH_WINDOW_MS = Math.max(0, Number(process.env.BATCH_WINDOW_MS ?? 6000))
 // vida larga (pool de historial + carril ligero) → un pedido nuevo NO espera a que termine el
 // anterior. El motor por lotes queda como fallback (flag off) para revertir sin tocar código.
 const ENGINE_CONTINUOUS = process.env.ENGINE_CONTINUOUS === '1';
+// El pool continuo PARQUEA los Chrome SPRL con la sesión caliente → killEngineChrome NO debe matarlos.
+// El dedup (tryReuseReport), Cancelar y las corridas manuales lo llaman entre pedidos y dejaban al pool
+// con un handle muerto (historial fallaba al instante con "Target closed" hasta reiniciar) + cold-logins.
+// `??=` : un KEEP_SPRL_WARM=0 explícito en placape.env gana (para revertir sin código).
+if (ENGINE_CONTINUOUS) process.env.KEEP_SPRL_WARM ??= '1';
 const ENGINE_MAX_INFLIGHT = Math.max(1, Number(process.env.ENGINE_MAX_INFLIGHT ?? 4));
 // Workers globales del carril ligero (fuentes NO-historial en paralelo). Son I/O-bound (esperan
 // CapSolver + portales), así que 4 corren bien aun en 2 vCPU. Baja si el VPS aprieta RAM / CapSolver 400.

@@ -1,4 +1,5 @@
 import { describe, it, expect, beforeAll } from 'vitest';
+import type { Browser } from 'playwright';
 import { runHistorialPool, runHistorialPoolLive, type HistorialResult, type HistorialTask } from './historial-pool.js';
 import { AsyncQueue } from './async-queue.js';
 import type { SprlSlot } from './sprl-slots.js';
@@ -126,5 +127,25 @@ describe('runHistorialPoolLive (pool continuo)', () => {
     // P1: bloqueo total → error inmediato (ms:0). P2: procesada OK tras revivir (carril NO murió).
     expect(reported.find((x) => x.plate === 'P1')).toMatchObject({ ms: 0, ok: false });
     expect(reported.find((x) => x.plate === 'P2')).toMatchObject({ ok: true });
+  });
+
+  it('auto-sana: si el Chrome del slot muere (p. ej. killEngineChrome), REABRE el browser antes del siguiente historial', async () => {
+    const opens: number[] = [];
+    // Handle CDP "muerto": isConnected() false → el worker debe reabrir en vez de correr con él.
+    const deadBrowser = { isConnected: () => false } as unknown as Browser;
+    const seen: string[] = [];
+    const chan = new AsyncQueue<HistorialTask>();
+    const done = runHistorialPoolLive(() => chan.take(), {
+      concurrency: 1, heartbeatMs: 0,
+      openBrowser: async (slot: SprlSlot) => { opens.push(slot.index); return { browser: deadBrowser, close: async () => {} }; },
+      runOne: async (plate) => { seen.push(plate); return ok(); },
+      onResult: () => {},
+    });
+    chan.push({ plate: 'P1' });
+    await new Promise((r) => setTimeout(r, 20));
+    chan.close();
+    await done;
+    expect(opens).toEqual([1, 1]); // 1 apertura inicial + 1 REAPERTURA al detectar la desconexión
+    expect(seen).toEqual(['P1']);  // la placa igual se procesó (no falló con "Target closed")
   });
 });
