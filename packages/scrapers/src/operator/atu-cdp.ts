@@ -3,6 +3,8 @@ import { spawn } from 'node:child_process';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
 import { parseAtuFields } from './sources.js';
+import { proxyForSource, proxyServerArg } from './proxy.js';
+import { startProxyForwarder, type ProxyForwarder } from './proxy-forwarder.js';
 
 /**
  * ATU (uso taxi/transporte) por HÍBRIDO CDP — la misma vía que destraba SUNARP.
@@ -45,19 +47,53 @@ export interface CdpAtuResult {
   error?: string;
 }
 
+// Forwarder local para ENGINE_PROXY con credenciales: Chrome NO acepta user:pass en --proxy-server,
+// así que se abre un mini-proxy en 127.0.0.1 (sin auth) que reenvía al upstream CON auth. Singleton
+// por proceso: el Chrome de ATU queda parqueado usándolo entre placas; si cambia el ENGINE_PROXY,
+// se recicla.
+let atuForwarder: ProxyForwarder | null = null;
+let atuForwarderKey = '';
+
+/**
+ * Resuelve el `--proxy-server` para el Chrome de ATU:
+ *  1. `ATU_PROXY`/`CDP_PROXY` explícito (host:port por WHITELIST de IP) — prioridad, camino previo.
+ *  2. `ENGINE_PROXY` compartido, si 'atu' está en PROXY_SOURCES (default sí): sin credenciales va
+ *     directo; CON credenciales pasa por el forwarder local (túnel con auth).
+ * '' = sin proxy (comportamiento de siempre: IP del VPS).
+ */
+async function resolveAtuProxy(log: (m: string) => void): Promise<string> {
+  const explicit = process.env.ATU_PROXY || process.env.CDP_PROXY || '';
+  if (explicit) return explicit;
+  const cfg = proxyForSource('atu');
+  if (!cfg) return '';
+  if (!cfg.username) return proxyServerArg(cfg) ?? '';
+  const key = `${cfg.server}|${cfg.username}`;
+  if (!atuForwarder || atuForwarderKey !== key) {
+    if (atuForwarder) await atuForwarder.close().catch(() => {});
+    atuForwarder = await startProxyForwarder(cfg);
+    atuForwarderKey = key;
+    log(`forwarder local 127.0.0.1:${atuForwarder.port} → ${cfg.server} (con auth; Chrome no acepta user:pass)`);
+  }
+  return `127.0.0.1:${atuForwarder.port}`;
+}
+
 /** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio en la URL de ATU. */
 async function connectOrLaunch(port: number, profileDir: string, chrome: string, log: (m: string) => void): Promise<Browser> {
   try {
     const b = await chromium.connectOverCDP(`http://localhost:${port}`);
     log(`reusando Chrome CDP en :${port} (reputación persistida)`);
+    // El proxy se aplica AL LANZAR Chrome: uno ya parqueado conserva el proxy (o la falta de él) de
+    // su lanzamiento. Aviso para no perseguir fantasmas si acaban de configurar el proxy.
+    if (process.env.ATU_PROXY || process.env.CDP_PROXY || proxyForSource('atu')) {
+      log(`⚠ proxy configurado pero Chrome ya estaba abierto: aplica el del LANZAMIENTO original. Si lo acabas de configurar: pkill -f "remote-debugging-port=${port}" y reintenta.`);
+    }
     return b;
   } catch {
     log(`lanzando Chrome limpio (CDP :${port})…`);
-    // Proxy RESIDENCIAL opcional (env ATU_PROXY / CDP_PROXY, formato host:puerto): el reCAPTCHA v3
-    // de ATU puntúa por reputación de IP → desde el VPS (datacenter) el score es bajo y rechaza.
-    // Con un proxy residencial (auth por WHITELIST de la IP del VPS; Chrome no acepta user:pass
-    // inline en --proxy-server) el v3 pasa. Sin proxy → sin cambio (comportamiento actual).
-    const proxy = process.env.ATU_PROXY ?? process.env.CDP_PROXY ?? '';
+    // Proxy RESIDENCIAL: el reCAPTCHA v3 de ATU puntúa por reputación de IP → desde el VPS
+    // (datacenter) el score es bajo y rechaza. ATU_PROXY/CDP_PROXY (whitelist) o ENGINE_PROXY
+    // (credenciales → forwarder local). Sin proxy → sin cambio (IP del VPS).
+    const proxy = await resolveAtuProxy(log);
     if (proxy) log(`vía proxy residencial ${proxy}`);
     const flags = [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, ...chromeFlags(), ...(proxy ? [`--proxy-server=${proxy}`] : []), URL];
     const proc = spawn(chrome, flags, { detached: false, stdio: 'ignore' });

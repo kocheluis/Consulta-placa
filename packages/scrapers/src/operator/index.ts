@@ -16,7 +16,7 @@ import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
 import { sprlSlots } from './sprl-slots.js';
-import { parseProxy } from './proxy.js';
+import { proxyForSource } from './proxy.js';
 import {
   runSatCaptura,
   runCallao,
@@ -68,16 +68,11 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },
 ];
 
-// Fuentes que SALEN por el proxy residencial (`ENGINE_PROXY`). Las demás usan la IP del VPS directo
-// (peruana en LightNode → SUNARP/SIGM/SBS/SAT pasan nativo). Solo las que rechaza el reCAPTCHA v3 /
-// Cloudflare desde datacenter necesitan IP residencial. ATU va aparte (CDP `--proxy-server`, ve ATU_PROXY).
-const PROXY_SOURCES = new Set(
-  (process.env.PROXY_SOURCES ?? 'fise-gnv,infogas-gnv').split(',').map((s) => s.trim()).filter(Boolean),
-);
-/** Proxy Playwright para una fuente, o undefined si no debe proxiarse / no hay ENGINE_PROXY. */
-function proxyFor(sourceId: string): ReturnType<typeof parseProxy> {
-  return PROXY_SOURCES.has(sourceId) ? parseProxy(process.env.ENGINE_PROXY) : undefined;
-}
+// Fuentes que SALEN por el proxy residencial (`ENGINE_PROXY`): gate compartido `proxyForSource`
+// (proxy.ts; default fise-gnv,infogas-gnv,atu — override con env PROXY_SOURCES). Las demás usan la
+// IP del VPS directo (peruana en LightNode → SUNARP/SIGM/SBS/SAT pasan nativo). ATU es CDP: su
+// Chrome toma el ENGINE_PROXY vía `--proxy-server` (forwarder local si trae credenciales) en atu-cdp.
+const proxyFor = proxyForSource;
 
 export interface OperatorReportOptions {
   outDir: string;

@@ -52,3 +52,20 @@ export function proxyServerArg(cfg?: ProxyConfig): string | undefined {
   if (!cfg) return undefined;
   return cfg.server.replace(/^[a-z0-9]+:\/\//i, '');
 }
+
+/**
+ * Fuentes que SALEN por el proxy residencial compartido (`ENGINE_PROXY`). Default: las que el
+ * reCAPTCHA/Cloudflare rechaza desde IP datacenter — FISE, Infogas y ATU (v3 puntúa por reputación
+ * de IP). Override con env `PROXY_SOURCES` (coma-separado). Las demás fuentes usan la IP del VPS
+ * directo (peruana en LightNode → SUNARP/SIGM/SBS/SAT pasan nativo, sin gastar datos del proxy).
+ */
+const DEFAULT_PROXY_SOURCES = 'fise-gnv,infogas-gnv,atu';
+export function proxySources(): Set<string> {
+  return new Set((process.env.PROXY_SOURCES ?? DEFAULT_PROXY_SOURCES).split(',').map((s) => s.trim()).filter(Boolean));
+}
+
+/** Proxy compartido (`ENGINE_PROXY`) para una fuente, o undefined si la fuente no está en
+ *  `PROXY_SOURCES` o no hay proxy configurado. Se evalúa al llamar (no al cargar el módulo). */
+export function proxyForSource(sourceId: string): ProxyConfig | undefined {
+  return proxySources().has(sourceId) ? parseProxy(process.env.ENGINE_PROXY) : undefined;
+}
