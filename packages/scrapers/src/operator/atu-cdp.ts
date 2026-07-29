@@ -132,7 +132,15 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
     browser = await connectOrLaunch(port, profileDir, chrome, log);
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
-    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    let navErr = '';
+    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { navErr = (e as Error).message; });
+    // Proxy muerto / túnel roto (ERR_PROXY_CONNECTION_FAILED, ERR_TUNNEL, ERR_SOCKS…): Chrome no carga
+    // NADA — sin este corte, los reintentos queman ~90s para acabar culpando (mal) al reCAPTCHA v3.
+    // Caso real: un ATU_PROXY=socks5://localhost:1080 huérfano (gost apagado) tapando al ENGINE_PROXY.
+    if (/ERR_(PROXY|TUNNEL|SOCKS)/i.test(navErr)) {
+      const code = /net::\S+/.exec(navErr)?.[0] ?? navErr;
+      return { ok: false, status: 'ERROR', error: `el proxy configurado no responde (${code}). Revisa ATU_PROXY/CDP_PROXY/ENGINE_PROXY en el env (¿quedó un socks5://localhost viejo sin su forwarder corriendo?).` };
+    }
 
     // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
     const acceptCookies = async (): Promise<void> => {
