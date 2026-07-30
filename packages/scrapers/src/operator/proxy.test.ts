@@ -32,6 +32,14 @@ describe('parseProxy (formatos de iProyal)', () => {
     expect(parseProxy(undefined)).toBeUndefined();
   });
 
+  it('tolera placeholders pegados con <> o comillas en los bordes (caso real del VPS)', () => {
+    expect(parseProxy('<geo.iproyal.com:32325:usuario:clave_country-pe>')).toEqual({
+      server: 'http://geo.iproyal.com:32325', username: 'usuario', password: 'clave_country-pe',
+    });
+    expect(parseProxy('"geo.iproyal.com:12321"')).toEqual({ server: 'http://geo.iproyal.com:12321' });
+    expect(parseProxy('<>')).toBeUndefined();
+  });
+
   it('proxyServerArg quita el esquema (para --proxy-server de Chrome)', () => {
     expect(proxyServerArg(parseProxy('http://u:p@host:8080'))).toBe('host:8080');
     expect(proxyServerArg(undefined)).toBeUndefined();

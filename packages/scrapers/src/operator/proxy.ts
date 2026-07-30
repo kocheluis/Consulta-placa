@@ -21,7 +21,10 @@ export interface ProxyConfig {
 }
 
 export function parseProxy(raw?: string | null): ProxyConfig | undefined {
-  const s = (raw ?? '').trim();
+  // Tolerante a placeholders pegados tal cual: quita <>, comillas y espacios de los bordes
+  // (caso real: ENGINE_PROXY=<geo.iproyal.com:32325:user:pass> copiado CON los corchetes de la
+  // instrucción → "Invalid URL" en el forwarder). Un password legítimo no termina en '>'.
+  const s = (raw ?? '').trim().replace(/^[<'"]+|[>'"]+$/g, '').trim();
   if (!s) return undefined;
 
   // Forma URL: scheme://[user:pass@]host:port
