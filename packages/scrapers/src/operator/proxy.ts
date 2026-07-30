@@ -57,11 +57,11 @@ export function proxyServerArg(cfg?: ProxyConfig): string | undefined {
 }
 
 /**
- * Fuentes PLAYWRIGHT que SALEN por el proxy residencial compartido (`ENGINE_PROXY`): FISE e
- * Infogas (su reCAPTCHA/Cloudflare rechaza IP datacenter). Las demás usan la IP del VPS directo
- * (SUNARP/SIGM/SBS/SAT pasan nativo). ⚠ ATU NO se gobierna por este gate: tiene su propia CADENA
- * de egresos con fallback (directo → túnel ENGINE_PROXY → ATU_PROXY) en `atu-cdp.ts` — poner
- * 'atu' aquí es inocuo (se ignora).
+ * Gate LEGADO de fuentes Playwright → `ENGINE_PROXY` (modo fijo, sin fallback). ⚠ Hoy ni ATU ni
+ * las GNV lo usan: ATU tiene su cadena de egresos en `atu-cdp.ts` y FISE/Infogas la suya en
+ * `operator/index.ts` (`gnvEgressChain`), ambas con fallback directo → túnel → proxy — poner esas
+ * fuentes aquí es inocuo (se ignora). El gate queda para overrides puntuales de OTRAS fuentes
+ * ligeras vía env `PROXY_SOURCES` (p. ej. si SAT/SBS empezaran a rechazar la IP del VPS).
  */
 const DEFAULT_PROXY_SOURCES = 'fise-gnv,infogas-gnv';
 export function proxySources(): Set<string> {

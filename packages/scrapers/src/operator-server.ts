@@ -129,7 +129,11 @@ const weightOf = (id: string) => WEIGHT[id] ?? 30;
 // para su CADENA de egresos (directo → túnel → proxy explícito, con relanzamiento de Chrome
 // entre egresos — la cadena completa puede pasar de 150s). Override por env
 // SRC_TIMEOUT_<FUENTE>_MS no es necesario hoy; ajustar aquí si hiciera falta.
-const SRC_TIMEOUT_MS: Record<string, number> = { historial: 7 * 60_000, superbid: 45_000, sunarp: 120_000, atu: 4 * 60_000 };
+const SRC_TIMEOUT_MS: Record<string, number> = {
+  historial: 7 * 60_000, superbid: 45_000, sunarp: 120_000, atu: 4 * 60_000,
+  // fise/infogas: cadena de egresos (directo → túnel → proxy) × reintentos de captcha internos.
+  'fise-gnv': 4 * 60_000, 'infogas-gnv': 4 * 60_000,
+};
 const SRC_TIMEOUT_DEFAULT = 150_000; // 2.5 min para las fuentes de captcha (SAT/MTC/SBS/Callao)
 // Fuentes en paralelo. DEFAULT 1 (secuencial) porque el VPS actual tiene 1 vCPU: con un
 // solo núcleo, 2+ navegadores compiten por CPU y va MÁS LENTO (medido: 386s/6-8 vs ~330s

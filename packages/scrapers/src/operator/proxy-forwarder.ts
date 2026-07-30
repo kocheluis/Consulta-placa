@@ -85,3 +85,21 @@ export async function startProxyForwarder(upstream: ProxyConfig, listenPort = 0)
   const port = typeof addr === 'object' && addr ? addr.port : listenPort;
   return { port, close: () => new Promise((r) => server.close(() => r())) };
 }
+
+// ── Forwarder COMPARTIDO del proceso ────────────────────────────────────────────────────────────
+// UN solo túnel por upstream para todo el motor (ATU por CDP + fuentes ligeras GNV): se crea al
+// primer uso y se recicla si cambia el ENGINE_PROXY. Los navegadores apuntan a 127.0.0.1:<port>.
+let shared: ProxyForwarder | null = null;
+let sharedKey = '';
+
+/** Devuelve `127.0.0.1:<port>` del forwarder compartido hacia `upstream` (lo crea si hace falta). */
+export async function sharedForwarderArg(upstream: ProxyConfig, log?: (m: string) => void): Promise<string> {
+  const key = `${upstream.server}|${upstream.username ?? ''}`;
+  if (!shared || sharedKey !== key) {
+    if (shared) await shared.close().catch(() => {});
+    shared = await startProxyForwarder(upstream);
+    sharedKey = key;
+    log?.(`forwarder local 127.0.0.1:${shared.port} → ${upstream.server} (túnel con auth)`);
+  }
+  return `127.0.0.1:${shared.port}`;
+}

@@ -16,7 +16,8 @@ import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
 import { sprlSlots } from './sprl-slots.js';
-import { proxyForSource } from './proxy.js';
+import { parseProxy, proxyForSource, type ProxyConfig } from './proxy.js';
+import { sharedForwarderArg } from './proxy-forwarder.js';
 import {
   runSatCaptura,
   runCallao,
@@ -198,9 +199,12 @@ export async function runSingleSource(
   if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
   const runner = SOURCE_RUNNERS[sourceId];
   if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
+  // GNV (FISE/Infogas): CADENA de egresos con fallback automático (directo → túnel → proxy),
+  // el mismo patrón que ATU. Ignora el gate PROXY_SOURCES: el proxy aquí es fallback, no modo fijo.
+  if (GNV_SOURCES.has(sourceId)) return await runGnvWithEgress(plate, sourceId, runner, solver, shot, opts);
   // El Chrome del motor se libera al FINAL del job (runJob/runOperatorReport), NO por
   // fuente: así no se mata el Chrome de las fuentes que corren en paralelo.
-  const proxy = proxyFor(sourceId); // FISE/Infogas salen por el proxy residencial; el resto directo
+  const proxy = proxyFor(sourceId);
   if (proxy) logLine(opts.outDir, sourceId, `vía proxy residencial ${proxy.server}`);
   const browser = await chromium.launch({ headless: opts.headless ?? true, ...(proxy ? { proxy } : {}) });
   try {
@@ -214,6 +218,67 @@ export async function runSingleSource(
   } finally {
     await browser.close().catch(() => {});
   }
+}
+
+/**
+ * Egresos de red de las fuentes GNV (mismo orden pedido que ATU): 1) DIRECTO con la IP del VPS
+ * (gratis; puede pasar — el v3/Cloudflare varían), 2) TÚNEL local con auth → ENGINE_PROXY, 3)
+ * ENGINE_PROXY con auth NATIVA de Playwright. 2 y 3 van al MISMO upstream por tuberías distintas;
+ * ⚠ iProyal puede cortar el CONNECT a puertos raros (FISE usa :23308) → si eso pasa, ambos caen
+ * rápido y queda lo que dio el directo. Se evalúa al llamar (lee el env vigente).
+ */
+function gnvEgressChain(): Array<{ label: string; proxy: () => Promise<ProxyConfig | undefined> }> {
+  const chain: Array<{ label: string; proxy: () => Promise<ProxyConfig | undefined> }> = [
+    { label: 'directo (IP del VPS)', proxy: async () => undefined },
+  ];
+  const cfg = parseProxy(process.env.ENGINE_PROXY);
+  if (cfg?.username) {
+    chain.push({ label: `túnel local → ${cfg.server}`, proxy: async () => ({ server: `http://${await sharedForwarderArg(cfg)}` }) });
+    chain.push({ label: `proxy ${cfg.server} (auth nativa)`, proxy: async () => cfg });
+  } else if (cfg) {
+    chain.push({ label: `proxy ${cfg.server} (whitelist)`, proxy: async () => cfg });
+  }
+  return chain;
+}
+
+/** Corre una fuente GNV probando la cadena de egresos EN ORDEN hasta que una responda (≠ ERROR).
+ *  Chromium headless se relanza por egreso (barato); el resultado bueno corta la cadena. */
+async function runGnvWithEgress(
+  plate: string,
+  sourceId: string,
+  runner: Runner,
+  solver: CaptchaSolver,
+  shot: string,
+  opts: OperatorReportOptions,
+): Promise<OperatorSourceResult> {
+  const chain = gnvEgressChain();
+  const srcName = sourceId.toUpperCase().replace(/-/g, '_');
+  let last: OperatorSourceResult | null = null;
+  for (let i = 0; i < chain.length; i++) {
+    const eg = chain[i]!;
+    if (i > 0) logLine(opts.outDir, sourceId, `egreso ${i + 1}/${chain.length} → ${eg.label}`);
+    let proxy: ProxyConfig | undefined;
+    try { proxy = await eg.proxy(); }
+    catch (e) { logLine(opts.outDir, sourceId, `egreso "${eg.label}": no se pudo preparar (${(e as Error).message}) → salto`); continue; }
+    if (proxy) logLine(opts.outDir, sourceId, `vía ${eg.label}`);
+    const browser = await chromium.launch({ headless: opts.headless ?? true, ...(proxy ? { proxy } : {}) });
+    try {
+      const ctx = await browser.newContext({ locale: 'es-PE' });
+      const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
+      if (r.status !== 'ERROR') { logLine(opts.outDir, sourceId, resultLog(r)); return r; }
+      last = r;
+      logLine(opts.outDir, sourceId, `egreso "${eg.label}" falló: ${r.summary}`);
+    } catch (e) {
+      last = { source: srcName, label: sourceId, category: 'GNV', status: 'ERROR', summary: (e as Error).message, ms: 0 };
+      logLine(opts.outDir, sourceId, `egreso "${eg.label}" reventó: ${(e as Error).message}`);
+    } finally {
+      await browser.close().catch(() => {});
+    }
+  }
+  const base = last ?? { source: srcName, label: sourceId, category: 'GNV', status: 'ERROR' as const, summary: 'sin egresos configurados', ms: 0 };
+  const final = { ...base, summary: `${base.summary} · egresos agotados: ${chain.map((e) => e.label).join(' → ')}` };
+  logLine(opts.outDir, sourceId, resultLog(final));
+  return final;
 }
 
 async function runSunarpSource(

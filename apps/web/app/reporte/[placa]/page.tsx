@@ -1186,6 +1186,7 @@ function GnvBody({ section, onRetry }: { section: SectionResult; onRetry: () => 
     );
   }
   const soles = (n: number) => `S/ ${n.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  const hadCredit = g.financed != null && g.financed > 0; // FISE respondió CON crédito de conversión
   return (
     <div className="flex flex-col gap-3">
       {g.hasDebt === true ? (
@@ -1196,22 +1197,27 @@ function GnvBody({ section, onRetry }: { section: SectionResult; onRetry: () => 
         </StatusLine>
       ) : g.hasDebt === false ? (
         <StatusLine tone="success" icon="verified">
-          Sin deuda del crédito de conversión GNV (FISE)
+          {hadCredit
+            ? 'Crédito de conversión GNV totalmente pagado — sin deuda pendiente'
+            : 'Sin crédito de conversión GNV (no registra financiamiento FISE)'}
         </StatusLine>
       ) : (
         <StatusLine tone="neutral" icon="help">
           No se pudo confirmar la deuda del crédito de conversión (FISE no respondió)
         </StatusLine>
       )}
+      {/* Infogas: estado en el sistema de carga (etiquetas = las del portal). */}
       <DefGrid
         items={[
-          ['Combustible (Infogas)', g.fuel],
-          ['¿Crédito activo?', g.hasCredit == null ? null : g.hasCredit ? 'Sí' : 'No'],
-          ['Vence cilindro', g.cylinderExpiry],
-          ['Vence revisión anual', g.annualReviewExpiry],
-          ['Habilitado para cargar', g.enabled],
-          ['Financiado', g.financed != null && g.financed > 0 ? soles(g.financed) : null],
-          ['Pagado', g.paid != null && g.paid > 0 ? soles(g.paid) : null],
+          ['Tipo de combustible', g.fuel],
+          ['¿Tiene crédito? (Infogas)', g.hasCredit == null ? null : g.hasCredit ? 'Sí' : 'No'],
+          ['Habilitado para consumir', g.enabled],
+          ['Vencimiento de cilindro', g.cylinderExpiry],
+          ['Vencimiento de revisión anual', g.annualReviewExpiry],
+          // FISE: los 3 montos del crédito SIEMPRE que hubo crédito (S/ 0.00 pendiente = pagado).
+          ['Monto financiado (FISE)', hadCredit ? soles(g.financed!) : null],
+          ['Monto pagado', hadCredit && g.paid != null ? soles(g.paid) : null],
+          ['Monto pendiente de pago', hadCredit && g.debtPending != null ? soles(g.debtPending) : null],
         ]}
       />
     </div>

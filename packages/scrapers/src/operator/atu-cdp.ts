@@ -3,8 +3,8 @@ import { spawn } from 'node:child_process';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
 import { parseAtuFields } from './sources.js';
-import { parseProxy, proxyServerArg, type ProxyConfig } from './proxy.js';
-import { startProxyForwarder, type ProxyForwarder } from './proxy-forwarder.js';
+import { parseProxy, proxyServerArg } from './proxy.js';
+import { sharedForwarderArg } from './proxy-forwarder.js';
 
 /**
  * ATU (uso taxi/transporte) por HÍBRIDO CDP — la misma vía que destraba SUNARP.
@@ -58,21 +58,6 @@ export interface CdpAtuResult {
 
 // ── Egresos de red (cadena de fallback) ─────────────────────────────────────────────────────────
 
-// Forwarder local para ENGINE_PROXY con credenciales. Singleton por proceso (se recicla si cambia
-// el upstream): el Chrome de ATU queda parqueado usándolo entre placas.
-let atuForwarder: ProxyForwarder | null = null;
-let atuForwarderKey = '';
-async function forwarderArg(cfg: ProxyConfig, log: (m: string) => void): Promise<string> {
-  const key = `${cfg.server}|${cfg.username ?? ''}`;
-  if (!atuForwarder || atuForwarderKey !== key) {
-    if (atuForwarder) await atuForwarder.close().catch(() => {});
-    atuForwarder = await startProxyForwarder(cfg);
-    atuForwarderKey = key;
-    log(`forwarder local 127.0.0.1:${atuForwarder.port} → ${cfg.server} (túnel con auth)`);
-  }
-  return `127.0.0.1:${atuForwarder.port}`;
-}
-
 export interface AtuEgress {
   label: string;
   /** Resuelve el valor de `--proxy-server` ('' = directo). LAZY: el túnel solo se abre si este
@@ -88,7 +73,7 @@ export interface AtuEgress {
 export function atuEgressChain(): AtuEgress[] {
   const chain: AtuEgress[] = [{ label: 'directo (IP del VPS)', proxy: async () => '' }];
   const cfg = parseProxy(process.env.ENGINE_PROXY);
-  if (cfg?.username) chain.push({ label: `túnel local → ${cfg.server}`, proxy: (log) => forwarderArg(cfg, log) });
+  if (cfg?.username) chain.push({ label: `túnel local → ${cfg.server}`, proxy: (log) => sharedForwarderArg(cfg, log) });
   else if (cfg) chain.push({ label: `proxy ${proxyServerArg(cfg)} (whitelist)`, proxy: async () => proxyServerArg(cfg) ?? '' });
   const explicit = process.env.ATU_PROXY || process.env.CDP_PROXY || '';
   if (explicit) chain.push({ label: `proxy explícito ${explicit}`, proxy: async () => explicit });
