@@ -96,14 +96,15 @@ async function killAtuChrome(port: number, log: (m: string) => void): Promise<vo
   await wait(1000); // deja que el SO suelte el puerto
 }
 
-/** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio con el egreso dado. */
-async function connectOrLaunch(port: number, profileDir: string, chrome: string, log: (m: string) => void, proxyArg: string): Promise<Browser> {
+/** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio con el egreso dado.
+ *  `launched=true` = Chrome nuevo (perfil posiblemente frío → conviene el warm-up de Google). */
+async function connectOrLaunch(port: number, profileDir: string, chrome: string, log: (m: string) => void, proxyArg: string): Promise<{ browser: Browser; launched: boolean }> {
   try {
     const b = await chromium.connectOverCDP(`http://localhost:${port}`);
     // Un Chrome parqueado conserva el egreso de SU lanzamiento (el proxy no se puede cambiar en
     // caliente): normalmente es el egreso que FUNCIONÓ la última vez → reusarlo es lo deseado.
     log(`reusando Chrome CDP en :${port} (reputación y egreso del lanzamiento original)`);
-    return b;
+    return { browser: b, launched: false };
   } catch {
     log(`lanzando Chrome limpio (CDP :${port})${proxyArg ? ` vía ${proxyArg}` : ' — directo'}…`);
     const flags = [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, ...chromeFlags(), ...(proxyArg ? [`--proxy-server=${proxyArg}`] : []), URL];
@@ -111,7 +112,7 @@ async function connectOrLaunch(port: number, profileDir: string, chrome: string,
     proc.on('error', (e) => log(`spawn chrome: ${e.message}`));
     for (let i = 0; i < 20; i++) {
       await wait(700);
-      try { return await chromium.connectOverCDP(`http://localhost:${port}`); } catch { /* aún no abre */ }
+      try { return { browser: await chromium.connectOverCDP(`http://localhost:${port}`), launched: true }; } catch { /* aún no abre */ }
     }
     throw new Error('no pude conectar al Chrome CDP de ATU (¿se abrió la ventana?)');
   }
@@ -144,11 +145,25 @@ async function attemptAtu(plate: string, a: AtuAttemptOpts): Promise<CdpAtuResul
   const { log } = a;
   let browser: Browser | null = null;
   try {
-    browser = await connectOrLaunch(a.port, a.profileDir, a.chrome, log, a.proxyArg);
+    const conn = await connectOrLaunch(a.port, a.profileDir, a.chrome, log, a.proxyArg);
+    browser = conn.browser;
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
+    // WARM-UP de Google (solo en Chrome recién lanzado): un perfil SIN cookies de Google puntúa
+    // bajísimo en el v3. Una visita corta a google.com siembra NID/consent y sube el score base.
+    if (conn.launched) {
+      await page.goto('https://www.google.com/', { waitUntil: 'domcontentloaded', timeout: 20000 }).catch(() => {});
+      await page.locator('button:has-text("Aceptar todo"), button:has-text("Acepto")').first().click({ timeout: 2500 }).catch(() => {});
+      await wait(2500);
+    }
     let navErr = '';
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { navErr = (e as Error).message; });
+    // Echo de la IP DE SALIDA (evidencia, no lógica): confirma por dónde sale este intento y si el
+    // sticky de iProyal está fijando la IP (si rota entre intentos/corridas, ahí está el problema).
+    const egressIp = String(await page.evaluate(
+      `fetch('https://api.ipify.org?format=text').then(function(r){return r.text()}).catch(function(){return '?'})`,
+    ).catch(() => '?'));
+    log(`IP de salida: ${egressIp.trim().slice(0, 45)}`);
     // Proxy muerto / túnel roto (ERR_PROXY_CONNECTION_FAILED, ERR_TUNNEL, ERR_SOCKS…): Chrome no
     // carga NADA — corta YA para que la cadena pase al siguiente egreso sin quemar reintentos.
     if (/ERR_(PROXY|TUNNEL|SOCKS)/i.test(navErr)) {
