@@ -50,6 +50,38 @@ export function maskOwnerName(raw: string | null | undefined): string | null {
   return name.replace(/,/g, ' ').split(' ').filter(Boolean).map(maskToken).join(' ');
 }
 
+// Tokens que NO son parte del nombre (roles, estado civil, régimen, conectores): se conservan
+// tal cual y ayudan a que la máscara no se coma contexto útil del asiento.
+const RX_STOP_TOKEN =
+  /^(?:DEUDOR|ACREEDOR|COMPRADOR|VENDEDOR|TITULAR|PROPIETARIO|REPRESENTANTE|APODERADO|SUCESI[OÓ]N|SOCIEDAD|CONYUGAL|CASAD[OA]|SOLTER[OA]|VIUD[OA]|DIVORCIAD[OA]|Y|E|DEL?|LA|LOS|LAS)[.,:]?$/i;
+
+/**
+ * Enmascara la PII de PERSONAS dentro del texto libre de participantes de un ASIENTO (historial):
+ * los dueños ANTERIORES del vehículo no necesitan ser identificables (Ley 29733). Regla ANCLADA AL
+ * DOCUMENTO: en los asientos las personas naturales van siempre con su DNI/CE — se enmascaran los
+ * tokens del nombre que lo acompañan (3 letras + ****) y el número (3 dígitos + ****). Las EMPRESAS
+ * (acreedores tipo "BBVA CONSUMER FINANCE…", sin DNI) y el texto del acto/montos quedan INTACTOS —
+ * anclar al documento evita enmascarar razones sociales por error. Roles/estado civil ("Deudor:",
+ * "Casado", "SOCIEDAD CONYUGAL") se conservan como contexto.
+ */
+export function maskHistorialParties(raw: string | null | undefined): string | null {
+  if (!raw) return null;
+  // 1) Nombre pegado a su documento: "APELLIDOS[,] NOMBRES DNI 06725079" → tokens a 3+**** + nº recortado.
+  const RX_NAME_DOC =
+    /((?:[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚÑÜáéíóúñü'.-]*,?\s+){1,6})(D\.?\s?N\.?\s?I\.?|DNI|C\.?\s?E\.?|CE|CARNE\s+DE\s+EXTRANJER[IÍ]A)\s*:?\s*(\d{6,9})/g;
+  let out = raw.replace(RX_NAME_DOC, (_m, names: string, doc: string, num: string) => {
+    const masked = String(names).trim().split(/\s+/).map((t) => {
+      if (RX_STOP_TOKEN.test(t)) return t; // rol/estado civil/conector → visible
+      const comma = t.endsWith(',') ? ',' : '';
+      return `${maskToken(t.replace(/,+$/, ''))}${comma}`;
+    }).join(' ');
+    return `${masked} ${doc} ${num.slice(0, 3)}****`;
+  });
+  // 2) Documentos sueltos que quedaron sin pareja de nombre (igual se recortan).
+  out = out.replace(/\b(DNI|D\.N\.I\.?|C\.?E\.?)\s*:?\s*(\d{6,9})\b/gi, (_m, d: string, n: string) => `${d} ${n.slice(0, 3)}****`);
+  return out;
+}
+
 /**
  * Enmascara el documento del titular. RUC de EMPRESA (20…, 11 dígitos) → público (tal cual). DNI / CE /
  * RUC de persona (10…) → 3 primeros + ****. Entrada típica: "DNI 08701061", "RUC 20601234567".

@@ -39,8 +39,9 @@ describe('buildReport', () => {
     const report = buildReport({ ...base, sources });
     expect(report.status).toBe('COMPLETE');
     expect(report.vehicle?.brand).toBe('TOYOTA');
-    // El titular se enmascara (PII, Ley 29733): nombres completos + apellido recortado.
-    expect(report.vehicle?.owner).toEqual({ name: 'JUAN PER****', note: expect.any(String) });
+    // El titular ACTUAL se muestra COMPLETO (dato registral público; el enmascarado aplica a los
+    // dueños ANTERIORES del historial, no al vigente).
+    expect(report.vehicle?.owner).toEqual({ name: 'PEREZ, JUAN', note: expect.any(String) });
   });
 
   it('deduplica SEGUROS de SBS y APESEG en una sola sección, prefiriendo AVAILABLE', () => {

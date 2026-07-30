@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { maskOwnerName, maskDoc, isCompanyName } from './mask.js';
+import { maskOwnerName, maskDoc, isCompanyName, maskHistorialParties } from './mask.js';
 
 describe('maskOwnerName (PII del titular, Ley 29733)', () => {
   it('persona "APELLIDOS, NOMBRES" → nombres completos + apellidos recortados', () => {
@@ -35,6 +35,39 @@ describe('maskOwnerName (PII del titular, Ley 29733)', () => {
     expect(maskOwnerName('')).toBeNull();
     expect(maskOwnerName(null)).toBeNull();
     expect(maskOwnerName(undefined)).toBeNull();
+  });
+});
+
+describe('maskHistorialParties (dueños ANTERIORES en los asientos del historial)', () => {
+  it('caso real BEM617: personas (nombre+DNI) enmascaradas; roles y estado civil visibles', () => {
+    const raw = 'SOCIEDAD CONYUGAL AGREDA VILLANUEVA DE VARGAS OLINDA QUERY DNI 32775111 Casado VARGAS RODRIGUEZ CESAR ERNESTO DNI 06725079 Casado';
+    const out = maskHistorialParties(raw)!;
+    expect(out).not.toContain('32775111');
+    expect(out).not.toContain('06725079');
+    expect(out).not.toMatch(/VILLANUEVA|RODRIGUEZ|ERNESTO|OLINDA/); // nombres/apellidos ocultos
+    expect(out).toContain('DNI 327****');
+    expect(out).toContain('DNI 067****');
+    expect(out).toContain('SOCIEDAD CONYUGAL'); // régimen visible (contexto, no PII)
+    expect(out).toContain('Casado'); // estado civil visible
+  });
+
+  it('empresa acreedora (sin DNI) → INTACTA', () => {
+    const raw = 'Acreedor: BBVA CONSUMER FINANCE ENTIDAD DE DESARROLLO A LA PEQUEÑA Y MICRO EMPRE';
+    expect(maskHistorialParties(raw)).toBe(raw);
+  });
+
+  it('mixto empresa + persona: solo la persona se enmascara', () => {
+    const out = maskHistorialParties('Deudor: VARGAS RODRIGUEZ, CESAR ERNESTO DNI 06725079 · Acreedor: BANCO SANTANDER PERU S.A.')!;
+    expect(out).toContain('BANCO SANTANDER PERU S.A.'); // razón social intacta
+    expect(out).toContain('Deudor:'); // rol visible
+    expect(out).not.toMatch(/RODRIGUEZ|ERNESTO/);
+    expect(out).toContain('DNI 067****');
+  });
+
+  it('DNI suelto (sin nombre pegado) igual se recorta; texto sin PII no se toca', () => {
+    expect(maskHistorialParties('titular con DNI 08701061')).toBe('titular con DNI 087****');
+    expect(maskHistorialParties('Compra-Venta · US$ 21,290.00')).toBe('Compra-Venta · US$ 21,290.00');
+    expect(maskHistorialParties(null)).toBeNull();
   });
 });
 

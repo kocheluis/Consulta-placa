@@ -2,6 +2,7 @@ import {
   buildReport,
   maskOwnerName,
   maskDoc,
+  maskHistorialParties,
   SectionKind,
   SectionStatus,
   SourceId,
@@ -71,7 +72,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const sd = data(sigmRes);
     const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => ({
       type: 'Garantía mobiliaria',
-      creditor: (f.acreedor as string) || null, // del Detalle §3 (acreedor); el deudor §2 NO se expone (PII/L-01)
+      // Acreedor del Detalle §3 (normalmente banco/financiera → intacto; persona con DNI → se
+      // enmascara). El deudor §2 NO se expone (PII/L-01).
+      creditor: maskHistorialParties((f.acreedor as string) || null),
       amount: (f.amount as number) ?? null, // monto de ejecución (Detalle)
       date: (f.fechaInscripcion as string) || null,
       status: String(f.ultimaOperacion ?? '').toUpperCase() || 'VIGENTE',
@@ -357,7 +360,8 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const constituciones = cargas.filter((a) => !esCancelacion(a));
     const gravItems: GravamenItem[] = constituciones.map((a, i) => ({
       type: clip(a.acto, 60) ?? 'Gravamen',
-      creditor: clip(a.participantes, 90),
+      // Participantes: personas (nombre+DNI) enmascaradas; empresas acreedoras intactas.
+      creditor: maskHistorialParties(clip(a.participantes, 90)),
       amount: moneyOrNull(a.precio ?? a.montoPagado),
       date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
       status: i < cancelaciones ? 'LEVANTADO' : 'VIGENTE',
@@ -380,7 +384,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       acciones: g.acciones.map((a) => ({
         act: clip(a.acto, 80),
         price: clip(a.precio || a.montoPagado, 40),
-        parties: clip(a.participantes, 140),
+        // Dueños ANTERIORES = terceros (Ley 29733): personas (nombre+DNI) enmascaradas; las
+        // empresas (acreedores/financieras) y el texto del acto quedan legibles.
+        parties: maskHistorialParties(clip(a.participantes, 140)),
       })),
     }));
     // Transferencias de dominio = compraventas + adjudicaciones (cuenta ACCIONES: un asiento en
