@@ -17,6 +17,7 @@ import type {
   HistorialPayload,
   TransporteInfo,
   VehicleSpecs,
+  GnvPayload,
   IaAnalysis,
   Valuation,
 } from '@app/shared';
@@ -969,6 +970,14 @@ function SectionBody({
     return section ? <TransporteBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
+  if (entry.key === 'gnv') {
+    // Reportes viejos traen GNV como COMING_SOON (buildReport la agregaba de fábrica) → "próximamente",
+    // no "reintentar": la fuente no corrió en esa generación.
+    return section && section.status !== SectionStatus.COMING_SOON
+      ? <GnvBody section={section} onRetry={onRetry} />
+      : <ComingSoon blurb={entry.blurb} />;
+  }
+
   if (entry.key === 'valorizacion') {
     return section ? <ValorizacionBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
@@ -1161,6 +1170,51 @@ function CapturaBody({ section, onRetry }: { section: SectionResult; onRetry: ()
     <StatusLine tone="danger" icon="gavel">Registra orden de captura en Lima (SAT) — verifica con la autoridad</StatusLine>
   ) : (
     <StatusLine tone="success" icon="verified">Sin orden de captura registrada en Lima (SAT)</StatusLine>
+  );
+}
+
+/** GNV (solo vehículos a gas): deuda del crédito de conversión (FISE) + estado de carga (Infogas). */
+function GnvBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const g = section.payload as GnvPayload | undefined;
+  if (!g) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  if (!g.applies) {
+    return (
+      <StatusLine tone="neutral" icon="info">
+        No aplica: el vehículo no registra conversión a gas (GNV/GLP)
+      </StatusLine>
+    );
+  }
+  const soles = (n: number) => `S/ ${n.toLocaleString('es-PE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  return (
+    <div className="flex flex-col gap-3">
+      {g.hasDebt === true ? (
+        <StatusLine tone="warning" icon="local_gas_station">
+          Arrastra deuda del crédito de conversión GNV
+          {g.debtPending != null && g.debtPending > 0 ? ` — ${soles(g.debtPending)} pendiente` : ''}
+          {g.debtOverdue != null && g.debtOverdue > 0 ? ` (${soles(g.debtOverdue)} vencido)` : ''}
+        </StatusLine>
+      ) : g.hasDebt === false ? (
+        <StatusLine tone="success" icon="verified">
+          Sin deuda del crédito de conversión GNV (FISE)
+        </StatusLine>
+      ) : (
+        <StatusLine tone="neutral" icon="help">
+          No se pudo confirmar la deuda del crédito de conversión (FISE no respondió)
+        </StatusLine>
+      )}
+      <DefGrid
+        items={[
+          ['Combustible (Infogas)', g.fuel],
+          ['¿Crédito activo?', g.hasCredit == null ? null : g.hasCredit ? 'Sí' : 'No'],
+          ['Vence cilindro', g.cylinderExpiry],
+          ['Vence revisión anual', g.annualReviewExpiry],
+          ['Habilitado para cargar', g.enabled],
+          ['Financiado', g.financed != null && g.financed > 0 ? soles(g.financed) : null],
+          ['Pagado', g.paid != null && g.paid > 0 ? soles(g.paid) : null],
+        ]}
+      />
+    </div>
   );
 }
 

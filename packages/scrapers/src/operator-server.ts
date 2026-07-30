@@ -60,7 +60,9 @@ const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).f
   // del VPS (validado en vivo jul-2026, ENCONTRADO y SIN_REGISTRO). Ver operator/atu-cdp.ts.
   // 'apeseg-soat' = SOAT en TIEMPO REAL (la SBS está congelada en may-2024). El transform prefiere
   // APESEG; SBS queda para la siniestralidad (accidentes) y para el CAT de taxis (APESEG solo trae SOAT).
-  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm'];
+  // 'fise-gnv'/'infogas-gnv': GATED por combustible — solo consultan si el SPRL confirma vehículo a
+  // gas (gate en operator/index.ts); en los demás salen "No aplica" sin gastar captcha/proxy.
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv'];
 // Fuentes del reporte GRATUITO (pedido tier=BASIC): identidad + SOAT + revisión técnica.
 // SOAT vía APESEG (tiempo real, 1 captcha, rápido). NO se corre SBS en BASIC: su escaneo de
 // siniestralidad son 3 tipos = 3 reCAPTCHA (lento) y es un concepto PRO. El paywall hace lo demás.

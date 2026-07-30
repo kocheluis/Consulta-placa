@@ -132,6 +132,16 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     blurb: 'Si el vehículo está o estuvo registrado para taxi/transporte (uso intensivo).',
   },
   {
+    key: 'gnv',
+    label: 'GNV: deuda de conversión y estado',
+    icon: 'local_gas_station',
+    tier: ReportTier.PRO,
+    sources: ['FISE', 'Infogas'],
+    concept: ScoreConcept.DEBTS,
+    dataKind: SectionKind.GNV,
+    blurb: 'Solo vehículos a gas: si arrastra deuda del crédito de conversión GNV (FISE/MINEM, con montos) y su estado en el sistema de carga (Infogas): crédito, cilindro y revisión anual.',
+  },
+  {
     key: 'gravamenes',
     label: 'Gravámenes / prendas',
     icon: 'account_balance',

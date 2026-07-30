@@ -171,6 +171,39 @@ export interface TransporteInfo {
 }
 
 /**
+ * Payload de la sección GNV — SOLO aplica a vehículos a gas (el combustible sale del asiento
+ * SPRL; el motor no consulta estas fuentes para vehículos que no son GNV/GLP). Combina:
+ *  - FISE/AhorroGNV (MINEM): ¿arrastra DEUDA del crédito de conversión? (montos exactos) —
+ *    dato que SUNARP no da (SUNARP solo muestra que el vehículo ya es a gas).
+ *  - Infogas: estado en el sistema de carga (¿tiene crédito?, vencimiento del cilindro y de la
+ *    revisión anual, habilitación para cargar).
+ */
+export interface GnvPayload {
+  /** false = no aplica: el vehículo no es a gas → no se consultó FISE/Infogas. */
+  applies: boolean;
+  /** ¿Arrastra deuda del crédito de conversión GNV? (FISE). null = no se pudo determinar. */
+  hasDebt: boolean | null;
+  /** S/ pendiente de pago del crédito (FISE `montoPendiente`). */
+  debtPending: number | null;
+  /** S/ VENCIDO (en mora) del crédito (FISE `montoDeudaVencido`). */
+  debtOverdue: number | null;
+  /** S/ financiado originalmente (FISE `costoFinanciamiento`). */
+  financed: number | null;
+  /** S/ ya pagado (FISE `montoPagado`). */
+  paid: number | null;
+  /** Combustible según Infogas (p. ej. "GNV"). */
+  fuel: string | null;
+  /** ¿Tiene crédito activo según Infogas? null = Infogas no respondió. */
+  hasCredit: boolean | null;
+  /** Vencimiento del cilindro (Infogas). */
+  cylinderExpiry: string | null;
+  /** Vencimiento de la revisión anual GNV (Infogas). */
+  annualReviewExpiry: string | null;
+  /** Habilitado para cargar combustible (Infogas, texto tal cual). */
+  enabled: string | null;
+}
+
+/**
  * Payload de la sección IDENTIDAD_ESPECIFICA (asiento registral SUNARP vía Síguelo).
  * Ficha técnica que la Consulta Vehicular GRATUITA no entrega: N° de versión, carrocería,
  * combustible, cilindrada, potencia, dimensiones y pesos. Se toma del asiento más reciente

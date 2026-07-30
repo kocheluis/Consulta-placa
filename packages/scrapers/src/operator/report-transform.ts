@@ -21,6 +21,7 @@ import {
   type AuctionInfo,
   type TransporteInfo,
   type VehicleSpecs,
+  type GnvPayload,
 } from '@app/shared';
 import type { OperatorSourceResult } from './index.js';
 import { agruparAsientos, type AsientoRecord } from './asiento-parser.js';
@@ -284,6 +285,48 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
     } else {
       src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    }
+  }
+
+  // ── GNV (FISE deuda de conversión + Infogas estado) — solo vehículos a gas ──
+  // El gate del motor SALTA estas fuentes para vehículos no-gas y emite SIN_REGISTRO con
+  // `data.aplicable=false` → aquí se distingue "no aplica" (no es a gas) de "sin crédito"
+  // (vehículo gas sin financiamiento FISE). Ambas fuentes se COMBINAN en UNA sección.
+  const fise = by('FISE_GNV');
+  const infogas = by('INFOGAS_GNV');
+  if (fise || infogas) {
+    const fd = data(fise);
+    const gd = data(infogas);
+    const skipped = (r?: OperatorSourceResult): boolean => !!r && r.status === 'SIN_REGISTRO' && (data(r).aplicable === false);
+    const fiseOk = !!fise && (fise.status === 'ENCONTRADO' || fise.status === 'SIN_REGISTRO') && !skipped(fise);
+    const infogasOk = !!infogas && (infogas.status === 'ENCONTRADO' || infogas.status === 'SIN_REGISTRO') && !skipped(infogas);
+    const allSkipped = [fise, infogas].filter(Boolean).every((r) => skipped(r));
+    const emptyGnv: GnvPayload = {
+      applies: true, hasDebt: null, debtPending: null, debtOverdue: null, financed: null, paid: null,
+      fuel: null, hasCredit: null, cylinderExpiry: null, annualReviewExpiry: null, enabled: null,
+    };
+    if (allSkipped) {
+      // Vehículo NO a gas → la sección aplica=false (la web dice "no aplica", no "sin datos").
+      src.push({ kind: SectionKind.GNV, source: SourceId.FISE, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: { ...emptyGnv, applies: false } });
+    } else if (fiseOk || infogasOk) {
+      const pay: GnvPayload = {
+        ...emptyGnv,
+        // FISE manda en la deuda: ENCONTRADO → tieneDeuda; SIN_REGISTRO (real) → nunca tuvo crédito.
+        hasDebt: fiseOk ? (fise!.status === 'ENCONTRADO' ? Boolean(fd.tieneDeuda) : false) : null,
+        debtPending: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.pendiente as number) ?? null) : null,
+        debtOverdue: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.vencido as number) ?? null) : null,
+        financed: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.financiamiento as number) ?? null) : null,
+        paid: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.pagado as number) ?? null) : null,
+        fuel: (gd.combustible as string) ?? null,
+        hasCredit: infogasOk && infogas!.status === 'ENCONTRADO' ? Boolean(gd.tieneCredito) : null,
+        cylinderExpiry: (gd.vencimientoCilindro as string) ?? null,
+        annualReviewExpiry: (gd.vencimientoRevision as string) ?? null,
+        enabled: (gd.habilitado as string) ?? null,
+      };
+      src.push({ kind: SectionKind.GNV, source: fiseOk ? SourceId.FISE : SourceId.INFOGAS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
+    } else {
+      // Ambas corrieron y fallaron (captcha/Cloudflare) → "no disponible / reintentar".
+      src.push({ kind: SectionKind.GNV, source: SourceId.FISE, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     }
   }
 

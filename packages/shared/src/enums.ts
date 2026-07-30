@@ -9,6 +9,10 @@ export const SourceId = {
   ATU: 'ATU',
   ONPE: 'ONPE',
   SIGM: 'SIGM',
+  /** FISE/AhorroGNV (MINEM): deuda del crédito de conversión a GNV. */
+  FISE: 'FISE',
+  /** Infogas: estado del vehículo en el sistema de carga GNV (¿tiene crédito?, vencimientos). */
+  INFOGAS: 'INFOGAS',
 } as const;
 export type SourceId = (typeof SourceId)[keyof typeof SourceId];
 
