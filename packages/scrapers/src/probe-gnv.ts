@@ -36,17 +36,33 @@ import { join } from 'node:path';
   const ids = ['fise-gnv', 'infogas-gnv'].filter((id) => !only || id.includes(only));
   let fails = 0;
   for (const id of ids) {
-    console.log(`\n═══ ${id} · ${plate} ═══`);
+    console.log(`\n═══ ${id} · ${plate} ═══  (cadena acotada: ~90s por egreso, ~5 min máx)`);
+    // TAIL EN VIVO del log de la fuente: sin esto, la cadena parece "colgada" (todo salía al final).
+    const logFile = join(outDir, `${id}.log`);
+    let printed = 0;
+    const tail = (): void => {
+      try {
+        const txt = readFileSync(logFile, 'utf8');
+        if (txt.length > printed) { process.stdout.write(txt.slice(printed)); printed = txt.length; }
+      } catch { /* el log aún no existe */ }
+    };
+    const tailTimer = setInterval(tail, 1000);
+    const t0 = Date.now();
     try {
       const r = await runSingleSource(plate, id, {
         outDir, captchaApiKey: KEY, captchaProvider: process.env.CAPTCHA_PROVIDER, headless: true,
       });
-      console.log(`RESULTADO: ${r.status} · ${r.summary}`);
+      clearInterval(tailTimer);
+      tail(); // vuelca lo que faltaba del log
+      console.log(`\nRESULTADO (${Math.round((Date.now() - t0) / 1000)}s): ${r.status} · ${r.summary}`);
       if (r.data && Object.keys(r.data).length) console.log(JSON.stringify(r.data, null, 2));
       if (r.status === 'ERROR') fails++;
-    } catch (e) { console.error(`ERROR: ${(e as Error).message}`); fails++; }
-    // El log por fuente cuenta la cadena de egresos usada (directo/túnel/proxy).
-    try { console.log(`--- ${id}.log ---\n${readFileSync(join(outDir, `${id}.log`), 'utf8').trim()}`); } catch { /* */ }
+    } catch (e) {
+      clearInterval(tailTimer);
+      tail();
+      console.error(`ERROR: ${(e as Error).message}`);
+      fails++;
+    }
   }
   console.log(`\ncapturas/logs en ${outDir}`);
   process.exit(fails ? 1 : 0);
