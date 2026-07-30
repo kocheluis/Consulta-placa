@@ -3,6 +3,7 @@ import {
   maskOwnerName,
   maskDoc,
   maskHistorialParties,
+  classifyPublicUse,
   SectionKind,
   SectionStatus,
   SourceId,
@@ -113,8 +114,11 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const sd = data(sbs);
   const sbsCat = (sd.cat ?? null) as Record<string, string> | null;
   const sbsSoat = (sd.soat ?? null) as Record<string, string> | null;
-  // ¿Es taxi/transporte? Señal nacional = tipo de servicio del CITV; respaldo = ATU (Lima).
-  const isTaxi = /taxi|transporte\s+(p[uú]blico|especial de personas)|servicio\s+p[uú]blico/i
+  // ¿Es taxi/servicio público? Señales: tipo de uso del ASIENTO (registral, nacional) + tipo de
+  // servicio del CITV + habilitación ATU (Lima/Callao).
+  const especsUse = ((data(by('HISTORIAL')).caracteristicas ?? null) as VehicleSpecs | null);
+  const pubUse = classifyPublicUse(especsUse?.usage, especsUse?.category);
+  const isTaxi = pubUse.isPublic || /taxi|transporte\s+(p[uú]blico|especial de personas)|servicio\s+p[uú]blico/i
     .test(String(data(by('MTC_CITV')).tipoServicio ?? '')) || Boolean(data(by('ATU')).isPublicTransport);
   if (apeseg?.status === 'ENCONTRADO') {
     const d = data(apeseg) as Record<string, string>;
@@ -269,26 +273,31 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     }
   }
 
-  // ── TRANSPORTE (ATU · taxi/transporte) ──
+  // ── TRANSPORTE / USO PÚBLICO (tipo de uso del asiento SUNARP + habilitación ATU Lima/Callao) ──
+  // La señal REGISTRAL (asiento) manda: es nacional y no depende de que ATU responda. Si ATU falló
+  // pero el asiento trae el tipo de uso, la sección IGUAL sale (antes quedaba "no disponible").
   const atu = by('ATU');
-  if (atu) {
-    if (atu.status === 'ENCONTRADO' || atu.status === 'SIN_REGISTRO') {
-      const d = data(atu);
-      // PII minimizada (Ley 29733): se enmascara el titular (nombre + documento) antes de pasar al
-      // reporte del cliente. Empresa → tal cual (razón social/RUC públicos); persona → nombres + apellido
-      // recortado, DNI recortado. El dato crudo solo vive en la fuente del VPS (operador).
-      const pay: TransporteInfo = {
-        isPublicTransport: Boolean(d.isPublicTransport),
-        modality: (d.modalidad as string) ?? null,
-        detail: (d.estado as string) ?? null,
-        holder: maskOwnerName((d.titular as string) ?? null),
-        holderDoc: maskDoc((d.documento as string) ?? null),
-        validUntil: (d.vigencia as string) ?? null,
-      };
-      src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
-    } else {
-      src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
-    }
+  const atuOk = !!atu && (atu.status === 'ENCONTRADO' || atu.status === 'SIN_REGISTRO');
+  const hasRegistralUse = !!especsUse?.usage;
+  if (atuOk || hasRegistralUse) {
+    const d = data(atu);
+    // PII minimizada (Ley 29733): titular ATU (nombre + documento) enmascarado; el dato crudo solo
+    // vive en la fuente del VPS (operador).
+    const pay: TransporteInfo = {
+      isPublicTransport: Boolean(d.isPublicTransport) || pubUse.isPublic,
+      modality: (d.modalidad as string) ?? null,
+      detail: (d.estado as string) ?? null,
+      holder: maskOwnerName((d.titular as string) ?? null),
+      holderDoc: maskDoc((d.documento as string) ?? null),
+      validUntil: (d.vigencia as string) ?? null,
+      registralPublicUse: hasRegistralUse ? pubUse.isPublic : null,
+      registralUsage: especsUse?.usage ?? null,
+      category: especsUse?.category ?? null,
+      serviceKind: pubUse.kind,
+    };
+    src.push({ kind: SectionKind.TRANSPORTE, source: atuOk ? SourceId.ATU : SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
+  } else if (atu) {
+    src.push({ kind: SectionKind.TRANSPORTE, source: SourceId.ATU, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   }
 
   // ── GNV (FISE deuda de conversión + Infogas estado) — solo vehículos a gas ──

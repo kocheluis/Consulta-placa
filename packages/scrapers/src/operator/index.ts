@@ -284,14 +284,24 @@ async function runGnvWithEgress(
     let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const ctx = await browser.newContext({ locale: 'es-PE' });
+      const page = await ctx.newPage();
       // Tope del egreso: si el runner se atasca (goto lento + captcha + reintentos internos), el
       // race devuelve ERROR y el finally cierra el browser → las operaciones del runner abortan.
+      let timedOut = false;
       const r = await Promise.race([
-        withPage(ctx, (p) => runner(p, plate, solver, shot)),
+        runner(page, plate, solver, shot),
         new Promise<OperatorSourceResult>((resolve) => {
-          timer = setTimeout(() => resolve({ source: srcName, label: sourceId, category: 'GNV', status: 'ERROR', summary: `tope del egreso (${Math.round(GNV_EGRESS_TIMEOUT_MS / 1000)}s)`, ms: GNV_EGRESS_TIMEOUT_MS }), GNV_EGRESS_TIMEOUT_MS);
+          timer = setTimeout(() => { timedOut = true; resolve({ source: srcName, label: sourceId, category: 'GNV', status: 'ERROR', summary: `tope del egreso (${Math.round(GNV_EGRESS_TIMEOUT_MS / 1000)}s)`, ms: GNV_EGRESS_TIMEOUT_MS }); }, GNV_EGRESS_TIMEOUT_MS);
         }),
       ]);
+      // DIAGNÓSTICO del tope: dónde quedó la página (un título "Just a moment…" = Cloudflare
+      // bloqueando el headless; el captcha o un portal lento se ven en la captura).
+      if (timedOut) {
+        const title = await page.title().catch(() => '?');
+        await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+        logLine(opts.outDir, sourceId, `tope: la página quedó en "${title}" · ${page.url()} (captura guardada)`);
+      }
+      await page.close().catch(() => {});
       if (r.status !== 'ERROR') { logLine(opts.outDir, sourceId, resultLog(r)); return r; }
       last = r;
       logLine(opts.outDir, sourceId, `egreso "${eg.label}" falló: ${r.summary}`);

@@ -1393,18 +1393,24 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const t = section.payload as TransporteInfo | undefined;
   if (!t) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  const hasAtu = t.modality != null || t.detail != null || t.validUntil != null;
   return (
     <div className="flex flex-col gap-3">
       {t.isPublicTransport ? (
         <StatusLine tone="warning" icon="local_taxi">
-          Registrado para taxi/transporte — uso intensivo (mayor desgaste)
+          Registrado para SERVICIO PÚBLICO{t.serviceKind ? ` — ${t.serviceKind}` : ''} · uso intensivo (mayor desgaste)
         </StatusLine>
       ) : (
-        <StatusLine tone="success" icon="verified">No figura como taxi/transporte</StatusLine>
+        <StatusLine tone="success" icon="verified">
+          Uso particular — no registra servicio público ({t.registralPublicUse != null ? 'asiento SUNARP' : ''}{t.registralPublicUse != null && hasAtu ? ' + ' : ''}{hasAtu || t.registralPublicUse == null ? 'ATU Lima/Callao' : ''})
+        </StatusLine>
       )}
+      {/* La señal registral (asiento) es nacional; la ATU cubre la habilitación de Lima/Callao. */}
       <DefGrid
         items={[
-          ['Modalidad', t.modality],
+          ['Tipo de uso (asiento SUNARP)', t.registralUsage],
+          ['Categoría', t.category],
+          ['Modalidad (ATU)', t.modality],
           ['Vigencia', t.validUntil],
           ['Titular', t.holder],
           ['Documento', t.holderDoc],

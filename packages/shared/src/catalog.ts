@@ -123,13 +123,13 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
   },
   {
     key: 'transporte',
-    label: 'Uso como taxi / transporte',
+    label: 'Uso como servicio público',
     icon: 'local_taxi',
     tier: ReportTier.PRO,
-    sources: ['ATU'],
+    sources: ['SUNARP', 'ATU'],
     concept: ScoreConcept.USAGE,
     dataKind: SectionKind.TRANSPORTE,
-    blurb: 'Si el vehículo está o estuvo registrado para taxi/transporte (uso intensivo).',
+    blurb: 'Si el vehículo está registrado para SERVICIO PÚBLICO (taxi/colectivo M1, mototaxi B-I, microbús M2, ómnibus M3): tipo de uso del asiento SUNARP + habilitación ATU (Lima/Callao). Uso intensivo = mayor desgaste.',
   },
   {
     key: 'gnv',

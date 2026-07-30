@@ -168,6 +168,14 @@ export interface TransporteInfo {
   holderDoc?: string | null;
   /** Vigencia de la habilitación (p. ej. "Habilitado hasta 31/12/2029"). */
   validUntil?: string | null;
+  /** Señal REGISTRAL (asiento SUNARP, "Tipo de uso"): true = servicio público; null = sin dato. */
+  registralPublicUse?: boolean | null;
+  /** Tipo de uso declarado en el asiento, tal cual (p. ej. "Taxis y Colectivos (Categoría M1)"). */
+  registralUsage?: string | null;
+  /** Categoría vehicular del asiento (M1/M2/M3/B-I…). */
+  category?: string | null;
+  /** Clasificación legible del servicio (taxonomía M1 taxi · B-I mototaxi · M2 microbús · M3 bus). */
+  serviceKind?: string | null;
 }
 
 /**
