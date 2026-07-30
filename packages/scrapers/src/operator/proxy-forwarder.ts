@@ -4,16 +4,19 @@ import type { ProxyConfig } from './proxy.js';
 
 /**
  * FORWARDER local de proxy: mini-proxy HTTP en 127.0.0.1 SIN auth que reenvía todo al proxy
- * residencial upstream CON `Proxy-Authorization` (Basic).
+ * residencial upstream CON autenticación. El upstream puede ser:
+ *  - **HTTP** (`http://…`): reenvía el CONNECT agregando `Proxy-Authorization: Basic`.
+ *  - **SOCKS5** (`socks5://…`): habla el protocolo SOCKS5 (RFC 1928) con auth user/pass (RFC 1929)
+ *    por el navegador. ⚠ Chromium NO soporta auth SOCKS5 — este túnel es la única vía. Además
+ *    iProyal corta el CONNECT HTTP a puertos raros (p. ej. FISE :23308) pero su SOCKS5 puede
+ *    dejarlos pasar → el mismo upstream por SOCKS5 alcanza destinos que por HTTP no.
  *
- * ¿Por qué? Chrome NO acepta credenciales en `--proxy-server` (user:pass inline) — por eso las
- * fuentes CDP (ATU/SUNARP…) no podían usar el `ENGINE_PROXY` autenticado de iProyal y quedaba solo
- * la whitelist de IP (que en iProyal salía con país equivocado). Con este túnel, Chrome apunta a
- * `--proxy-server=127.0.0.1:<port>` (sin auth, loopback-only) y el forwarder agrega la auth camino
- * al upstream → cualquier fuente CDP puede salir por el proxy con credenciales (`_country-pe`).
+ * ¿Por qué existe? Chrome no acepta credenciales en `--proxy-server`, y la whitelist de iProyal
+ * salía con país equivocado. Con este túnel, el navegador apunta a `--proxy-server=127.0.0.1:<port>`
+ * (sin auth, loopback-only) y el forwarder pone la auth camino al upstream.
  *
- * Maneja CONNECT (https — el caso real: ATU es https) y requests HTTP planos (absolute-form).
- * Escucha SOLO en 127.0.0.1 y con `unref()` → no expone nada afuera ni bloquea el exit del proceso.
+ * Maneja CONNECT (https — el caso real) y requests HTTP planos (solo con upstream HTTP).
+ * Escucha SOLO en 127.0.0.1 y con `unref()` → no expone nada ni bloquea el exit del proceso.
  */
 export interface ProxyForwarder {
   /** Puerto local asignado (efímero): úsalo como `--proxy-server=127.0.0.1:<port>`. */
@@ -21,51 +24,108 @@ export interface ProxyForwarder {
   close: () => Promise<void>;
 }
 
+/** Handshake SOCKS5 (greeting + auth user/pass + CONNECT dominio:puerto). Llama a `ready(resto)`
+ *  cuando el túnel quedó establecido (resto = bytes de datos que llegaron pegados a la respuesta). */
+function socks5Connect(
+  upSocket: Socket,
+  upstream: ProxyConfig,
+  dstHost: string,
+  dstPort: number,
+  ready: (rest: Buffer) => void,
+  fail: () => void,
+): void {
+  let stage: 'greeting' | 'auth' | 'connect' = 'greeting';
+  let buf = Buffer.alloc(0);
+  const sendConnect = (): void => {
+    const host = Buffer.from(dstHost, 'utf8');
+    upSocket.write(Buffer.concat([
+      Buffer.from([0x05, 0x01, 0x00, 0x03, host.length]), host,
+      Buffer.from([(dstPort >> 8) & 0xff, dstPort & 0xff]),
+    ]));
+    stage = 'connect';
+    buf = Buffer.alloc(0);
+  };
+  upSocket.write(Buffer.from([0x05, 0x02, 0x00, 0x02])); // métodos: sin-auth, user/pass
+  const onData = (d: Buffer): void => {
+    buf = Buffer.concat([buf, d]);
+    if (stage === 'greeting') {
+      if (buf.length < 2) return;
+      const method = buf[1];
+      buf = buf.subarray(2);
+      if (method === 0x02) {
+        const user = Buffer.from(upstream.username ?? '', 'utf8');
+        const pass = Buffer.from(upstream.password ?? '', 'utf8');
+        upSocket.write(Buffer.concat([Buffer.from([0x01, user.length]), user, Buffer.from([pass.length]), pass]));
+        stage = 'auth';
+      } else if (method === 0x00) sendConnect();
+      else fail(); // 0xFF = sin método aceptable
+    } else if (stage === 'auth') {
+      if (buf.length < 2) return;
+      const ok = buf[1] === 0x00;
+      buf = buf.subarray(2);
+      if (!ok) return fail();
+      sendConnect();
+    } else {
+      // Respuesta del CONNECT: VER STATUS RSV ATYP BND.ADDR BND.PORT (longitud según ATYP).
+      if (buf.length < 4) return;
+      if (buf[1] !== 0x00) return fail();
+      const atyp = buf[3]!;
+      const need = 4 + (atyp === 0x01 ? 4 : atyp === 0x04 ? 16 : 1 + (buf[4] ?? 0)) + 2;
+      if (buf.length < need) return;
+      upSocket.off('data', onData); // el pipe toma el control desde aquí
+      ready(buf.subarray(need));
+    }
+  };
+  upSocket.on('data', onData);
+}
+
 export async function startProxyForwarder(upstream: ProxyConfig, listenPort = 0): Promise<ProxyForwarder> {
-  const u = new URL(upstream.server); // p. ej. http://geo.iproyal.com:12321
+  const u = new URL(upstream.server); // http://host:port ó socks5://host:port
   const upHost = u.hostname;
   const upPort = Number(u.port || 80);
+  const isSocks = /^socks/i.test(u.protocol);
   const auth = upstream.username
     ? `Basic ${Buffer.from(`${upstream.username}:${upstream.password ?? ''}`).toString('base64')}`
     : null;
 
   const server: Server = createServer();
 
-  // CONNECT (túnel TLS): reenvía el CONNECT al upstream con auth y, tras su "200", empalma los sockets.
+  // CONNECT (túnel TLS): establece el túnel contra el upstream (HTTP CONNECT o SOCKS5) y empalma.
   server.on('connect', (req, clientSocket: Socket, head: Buffer) => {
-    const upSocket = netConnect(upPort, upHost, () => {
+    const [dstHost = '', dstPortRaw = ''] = String(req.url ?? '').split(':');
+    const dstPort = Number(dstPortRaw || 443);
+    const fail = (): void => { clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n'); upSocket.destroy(); };
+    const established = (rest: Buffer): void => {
+      clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
+      if (head?.length) upSocket.write(head);
+      if (rest.length) clientSocket.write(rest);
+      upSocket.pipe(clientSocket);
+      clientSocket.pipe(upSocket);
+    };
+    const upSocket: Socket = netConnect(upPort, upHost, () => {
+      if (isSocks) { socks5Connect(upSocket, upstream, dstHost, dstPort, established, fail); return; }
       const lines = [`CONNECT ${req.url} HTTP/1.1`, `Host: ${req.url}`];
       if (auth) lines.push(`Proxy-Authorization: ${auth}`);
       upSocket.write(`${lines.join('\r\n')}\r\n\r\n`);
-    });
-    let established = false;
-    let buf = Buffer.alloc(0);
-    upSocket.on('data', (d: Buffer) => {
-      if (established) return; // ya empalmado: el pipe se encarga
-      buf = Buffer.concat([buf, d]);
-      const idx = buf.indexOf('\r\n\r\n');
-      if (idx === -1) return;
-      const header = buf.subarray(0, idx).toString();
-      const rest = buf.subarray(idx + 4);
-      if (/^HTTP\/1\.[01] 200/.test(header)) {
-        established = true;
-        clientSocket.write('HTTP/1.1 200 Connection Established\r\n\r\n');
-        if (head?.length) upSocket.write(head);
-        if (rest.length) clientSocket.write(rest);
-        upSocket.pipe(clientSocket);
-        clientSocket.pipe(upSocket);
-      } else {
-        // Upstream rechazó (407 auth, 403…): se lo contamos al cliente como 502 y cerramos.
-        clientSocket.end('HTTP/1.1 502 Bad Gateway\r\n\r\n');
-        upSocket.destroy();
-      }
+      let buf = Buffer.alloc(0);
+      const onData = (d: Buffer): void => {
+        buf = Buffer.concat([buf, d]);
+        const idx = buf.indexOf('\r\n\r\n');
+        if (idx === -1) return;
+        upSocket.off('data', onData);
+        if (/^HTTP\/1\.[01] 200/.test(buf.subarray(0, idx).toString())) established(buf.subarray(idx + 4));
+        else fail(); // upstream rechazó (407 auth, 403 puerto…)
+      };
+      upSocket.on('data', onData);
     });
     upSocket.on('error', () => clientSocket.destroy());
     clientSocket.on('error', () => upSocket.destroy());
   });
 
-  // HTTP plano (absolute-form): reenvía la request al upstream agregando la auth.
+  // HTTP plano (absolute-form): solo con upstream HTTP (con SOCKS respondemos 501 — no aplica:
+  // todas nuestras fuentes van por https/CONNECT).
   server.on('request', (req, res) => {
+    if (isSocks) { res.statusCode = 501; res.end(); return; }
     const headers: Record<string, string | string[] | undefined> = { ...req.headers };
     if (auth) headers['proxy-authorization'] = auth;
     const pr = httpRequest({ host: upHost, port: upPort, method: req.method, path: req.url, headers }, (up) => {
@@ -86,20 +146,19 @@ export async function startProxyForwarder(upstream: ProxyConfig, listenPort = 0)
   return { port, close: () => new Promise((r) => server.close(() => r())) };
 }
 
-// ── Forwarder COMPARTIDO del proceso ────────────────────────────────────────────────────────────
-// UN solo túnel por upstream para todo el motor (ATU por CDP + fuentes ligeras GNV): se crea al
-// primer uso y se recicla si cambia el ENGINE_PROXY. Los navegadores apuntan a 127.0.0.1:<port>.
-let shared: ProxyForwarder | null = null;
-let sharedKey = '';
+// ── Forwarders COMPARTIDOS del proceso ──────────────────────────────────────────────────────────
+// UN túnel por upstream (HTTP y SOCKS5 son upstreams distintos) para todo el motor (ATU + GNV):
+// se crean al primer uso y se reciclan si cambian las credenciales/el server.
+const shared = new Map<string, ProxyForwarder>();
 
 /** Devuelve `127.0.0.1:<port>` del forwarder compartido hacia `upstream` (lo crea si hace falta). */
 export async function sharedForwarderArg(upstream: ProxyConfig, log?: (m: string) => void): Promise<string> {
-  const key = `${upstream.server}|${upstream.username ?? ''}`;
-  if (!shared || sharedKey !== key) {
-    if (shared) await shared.close().catch(() => {});
-    shared = await startProxyForwarder(upstream);
-    sharedKey = key;
-    log?.(`forwarder local 127.0.0.1:${shared.port} → ${upstream.server} (túnel con auth)`);
+  const key = `${upstream.server}|${upstream.username ?? ''}|${upstream.password ?? ''}`;
+  let fwd = shared.get(key);
+  if (!fwd) {
+    fwd = await startProxyForwarder(upstream);
+    shared.set(key, fwd);
+    log?.(`forwarder local 127.0.0.1:${fwd.port} → ${upstream.server} (túnel con auth)`);
   }
-  return `127.0.0.1:${shared.port}`;
+  return `127.0.0.1:${fwd.port}`;
 }

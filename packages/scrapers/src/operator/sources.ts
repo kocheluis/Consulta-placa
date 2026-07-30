@@ -720,7 +720,9 @@ export async function runFiseGnv(
   const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
   const money = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
   try {
-    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // goto 25s (no 60): desde IP datacenter el :23308 a veces NI RESPONDE (filtrado) — cortar rápido
+    // deja tiempo para que la cadena de egresos pruebe el túnel/SOCKS dentro de su presupuesto.
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 25000 });
     // consultaId es un hidden que el servidor pinta; lo reenviamos tal cual (puede ir vacío).
     const consultaId = await page.locator('#consultaId').inputValue().catch(() => '');
     let row: Record<string, unknown> | null = null;

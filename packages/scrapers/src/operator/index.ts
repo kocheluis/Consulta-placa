@@ -222,10 +222,11 @@ export async function runSingleSource(
 
 /**
  * Egresos de red de las fuentes GNV (mismo orden pedido que ATU): 1) DIRECTO con la IP del VPS
- * (gratis; puede pasar — el v3/Cloudflare varían), 2) TÚNEL local con auth → ENGINE_PROXY, 3)
- * ENGINE_PROXY con auth NATIVA de Playwright. 2 y 3 van al MISMO upstream por tuberías distintas;
- * ⚠ iProyal puede cortar el CONNECT a puertos raros (FISE usa :23308) → si eso pasa, ambos caen
- * rápido y queda lo que dio el directo. Se evalúa al llamar (lee el env vigente).
+ * (gratis; puede pasar — el v3/Cloudflare varían), 2) TÚNEL HTTP local con auth → ENGINE_PROXY,
+ * 3) TÚNEL SOCKS5 → mismo upstream (iProyal corta el CONNECT HTTP a puertos raros — FISE usa
+ * :23308 — pero su SOCKS5 puede dejarlos pasar; Chromium no habla auth SOCKS5, el forwarder sí),
+ * 4) ENGINE_PROXY con auth NATIVA de Playwright. Override del endpoint SOCKS con env
+ * `ENGINE_PROXY_SOCKS` (default: mismo host:port con esquema socks5). Se evalúa al llamar.
  */
 function gnvEgressChain(): Array<{ label: string; proxy: () => Promise<ProxyConfig | undefined> }> {
   const chain: Array<{ label: string; proxy: () => Promise<ProxyConfig | undefined> }> = [
@@ -234,6 +235,9 @@ function gnvEgressChain(): Array<{ label: string; proxy: () => Promise<ProxyConf
   const cfg = parseProxy(process.env.ENGINE_PROXY);
   if (cfg?.username) {
     chain.push({ label: `túnel local → ${cfg.server}`, proxy: async () => ({ server: `http://${await sharedForwarderArg(cfg)}` }) });
+    const socks = parseProxy(process.env.ENGINE_PROXY_SOCKS)
+      ?? { ...cfg, server: cfg.server.replace(/^[a-z0-9]+:\/\//i, 'socks5://') };
+    chain.push({ label: `túnel SOCKS5 → ${socks.server}`, proxy: async () => ({ server: `http://${await sharedForwarderArg(socks)}` }) });
     chain.push({ label: `proxy ${cfg.server} (auth nativa)`, proxy: async () => cfg });
   } else if (cfg) {
     chain.push({ label: `proxy ${cfg.server} (whitelist)`, proxy: async () => cfg });
@@ -241,8 +245,14 @@ function gnvEgressChain(): Array<{ label: string; proxy: () => Promise<ProxyConf
   return chain;
 }
 
+// Tope por EGRESO (corta cuelgues de captcha/goto dentro de un intento) y presupuesto TOTAL de la
+// cadena (no seguir probando egresos si ya se gastó el tiempo de la fuente — SRC_TIMEOUT ≈ 4 min).
+const GNV_EGRESS_TIMEOUT_MS = Math.max(30_000, Number(process.env.GNV_EGRESS_TIMEOUT_MS ?? 90_000));
+const GNV_CHAIN_BUDGET_MS = Math.max(60_000, Number(process.env.GNV_CHAIN_BUDGET_MS ?? 200_000));
+
 /** Corre una fuente GNV probando la cadena de egresos EN ORDEN hasta que una responda (≠ ERROR).
- *  Chromium headless se relanza por egreso (barato); el resultado bueno corta la cadena. */
+ *  Chromium headless se relanza por egreso (barato); el resultado bueno corta la cadena. Cada
+ *  egreso tiene tope duro (el close del browser aborta al runner) y la cadena un presupuesto total. */
 async function runGnvWithEgress(
   plate: string,
   sourceId: string,
@@ -253,18 +263,31 @@ async function runGnvWithEgress(
 ): Promise<OperatorSourceResult> {
   const chain = gnvEgressChain();
   const srcName = sourceId.toUpperCase().replace(/-/g, '_');
+  const t0 = Date.now();
   let last: OperatorSourceResult | null = null;
   for (let i = 0; i < chain.length; i++) {
     const eg = chain[i]!;
+    if (i > 0 && Date.now() - t0 > GNV_CHAIN_BUDGET_MS) {
+      logLine(opts.outDir, sourceId, `presupuesto de la cadena agotado (${Math.round(GNV_CHAIN_BUDGET_MS / 1000)}s) → no pruebo más egresos`);
+      break;
+    }
     if (i > 0) logLine(opts.outDir, sourceId, `egreso ${i + 1}/${chain.length} → ${eg.label}`);
     let proxy: ProxyConfig | undefined;
     try { proxy = await eg.proxy(); }
     catch (e) { logLine(opts.outDir, sourceId, `egreso "${eg.label}": no se pudo preparar (${(e as Error).message}) → salto`); continue; }
     if (proxy) logLine(opts.outDir, sourceId, `vía ${eg.label}`);
     const browser = await chromium.launch({ headless: opts.headless ?? true, ...(proxy ? { proxy } : {}) });
+    let timer: ReturnType<typeof setTimeout> | undefined;
     try {
       const ctx = await browser.newContext({ locale: 'es-PE' });
-      const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
+      // Tope del egreso: si el runner se atasca (goto lento + captcha + reintentos internos), el
+      // race devuelve ERROR y el finally cierra el browser → las operaciones del runner abortan.
+      const r = await Promise.race([
+        withPage(ctx, (p) => runner(p, plate, solver, shot)),
+        new Promise<OperatorSourceResult>((resolve) => {
+          timer = setTimeout(() => resolve({ source: srcName, label: sourceId, category: 'GNV', status: 'ERROR', summary: `tope del egreso (${Math.round(GNV_EGRESS_TIMEOUT_MS / 1000)}s)`, ms: GNV_EGRESS_TIMEOUT_MS }), GNV_EGRESS_TIMEOUT_MS);
+        }),
+      ]);
       if (r.status !== 'ERROR') { logLine(opts.outDir, sourceId, resultLog(r)); return r; }
       last = r;
       logLine(opts.outDir, sourceId, `egreso "${eg.label}" falló: ${r.summary}`);
@@ -272,6 +295,7 @@ async function runGnvWithEgress(
       last = { source: srcName, label: sourceId, category: 'GNV', status: 'ERROR', summary: (e as Error).message, ms: 0 };
       logLine(opts.outDir, sourceId, `egreso "${eg.label}" reventó: ${(e as Error).message}`);
     } finally {
+      if (timer) clearTimeout(timer);
       await browser.close().catch(() => {});
     }
   }
