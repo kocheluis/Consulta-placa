@@ -16,7 +16,7 @@ import { killEngineChrome } from './chrome-path.js';
 import { superbidLookup, metaGet } from '../db/repo.js';
 import { peruStamp } from './time.js';
 import { sprlSlots } from './sprl-slots.js';
-import { parseProxy, proxyForSource, type ProxyConfig } from './proxy.js';
+import { parseProxy, proxyForSource, withStickySession, type ProxyConfig } from './proxy.js';
 import { sharedForwarderArg } from './proxy-forwarder.js';
 import {
   runSatCaptura,
@@ -232,11 +232,15 @@ function gnvEgressChain(): Array<{ label: string; proxy: () => Promise<ProxyConf
   const chain: Array<{ label: string; proxy: () => Promise<ProxyConfig | undefined> }> = [
     { label: 'directo (IP del VPS)', proxy: async () => undefined },
   ];
-  const cfg = parseProxy(process.env.ENGINE_PROXY);
+  const raw = parseProxy(process.env.ENGINE_PROXY);
+  // Sticky: fija UNA IP de salida por proceso (sin ella iProyal rota por conexión y el
+  // reCAPTCHA/Cloudflare ven IPs distintas dentro de una misma consulta → rechazo).
+  const cfg = raw ? withStickySession(raw) : undefined;
   if (cfg?.username) {
-    chain.push({ label: `túnel local → ${cfg.server}`, proxy: async () => ({ server: `http://${await sharedForwarderArg(cfg)}` }) });
-    const socks = parseProxy(process.env.ENGINE_PROXY_SOCKS)
+    chain.push({ label: `túnel local → ${cfg.server} (sticky)`, proxy: async () => ({ server: `http://${await sharedForwarderArg(cfg)}` }) });
+    const socksRaw = parseProxy(process.env.ENGINE_PROXY_SOCKS)
       ?? { ...cfg, server: cfg.server.replace(/^[a-z0-9]+:\/\//i, 'socks5://') };
+    const socks = withStickySession(socksRaw);
     chain.push({ label: `túnel SOCKS5 → ${socks.server}`, proxy: async () => ({ server: `http://${await sharedForwarderArg(socks)}` }) });
     chain.push({ label: `proxy ${cfg.server} (auth nativa)`, proxy: async () => cfg });
   } else if (cfg) {

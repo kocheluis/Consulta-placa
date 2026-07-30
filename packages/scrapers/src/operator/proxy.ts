@@ -73,3 +73,20 @@ export function proxySources(): Set<string> {
 export function proxyForSource(sourceId: string): ProxyConfig | undefined {
   return proxySources().has(sourceId) ? parseProxy(process.env.ENGINE_PROXY) : undefined;
 }
+
+// ID de sesión sticky POR PROCESO: todas las fuentes comparten la misma IP de salida mientras el
+// motor viva (consistencia que el reCAPTCHA premia); IP nueva en cada reinicio/deploy.
+const STICKY_ID = Math.random().toString(36).slice(2, 10);
+
+/**
+ * Fija una sesión STICKY de iProyal: sin ella, iProyal rota la IP de salida POR CONEXIÓN → el
+ * reCAPTCHA v3 ve IPs distintas DENTRO de una misma consulta (la página por una, el token de
+ * Google por otra) y baja el score. Con opciones estilo iProyal en el password (`…_country-…`),
+ * agrega `_session-<id>_lifetime-30m` (una sola IP de salida por ~30 min, renovable). Si el
+ * password no tiene ese formato (otro proveedor) o ya trae `_session-`, devuelve el cfg tal cual.
+ */
+export function withStickySession(cfg: ProxyConfig): ProxyConfig {
+  const pass = cfg.password ?? '';
+  if (!/_country-/i.test(pass) || /_session-/i.test(pass)) return cfg;
+  return { ...cfg, password: `${pass}_session-${STICKY_ID}_lifetime-30m` };
+}

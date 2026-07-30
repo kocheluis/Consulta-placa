@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseProxy, proxyServerArg, proxyForSource, proxySources } from './proxy.js';
+import { parseProxy, proxyServerArg, proxyForSource, proxySources, withStickySession } from './proxy.js';
 
 describe('parseProxy (formatos de iProyal)', () => {
   it('host:port:user:pass (export típico)', () => {
@@ -77,5 +77,22 @@ describe('proxyForSource (gate PROXY_SOURCES + ENGINE_PROXY)', () => {
     delete process.env.PROXY_SOURCES;
     expect(proxyForSource('atu')).toBeUndefined();
     restore();
+  });
+});
+
+describe('withStickySession (fija la IP de salida de iProyal)', () => {
+  it('password estilo iProyal (_country-) → agrega _session-<id>_lifetime-30m', () => {
+    const s = withStickySession({ server: 'http://geo.iproyal.com:32325', username: 'u', password: 'clave_country-pe' });
+    expect(s.password).toMatch(/^clave_country-pe_session-[a-z0-9]+_lifetime-30m$/);
+    // Mismo proceso → mismo id (todas las fuentes comparten UNA IP de salida).
+    const s2 = withStickySession({ server: 'http://geo.iproyal.com:32325', username: 'u', password: 'otra_country-pe' });
+    expect(s2.password!.split('_session-')[1]).toBe(s.password!.split('_session-')[1]);
+  });
+
+  it('ya sticky o sin formato iProyal → tal cual (no doble-sesión, no romper otros proveedores)', () => {
+    const ya = { server: 'http://h:1', username: 'u', password: 'p_country-pe_session-abc_lifetime-10m' };
+    expect(withStickySession(ya)).toEqual(ya);
+    const otro = { server: 'http://h:1', username: 'u', password: 'clave-simple' };
+    expect(withStickySession(otro)).toEqual(otro);
   });
 });

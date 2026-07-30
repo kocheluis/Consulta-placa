@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
 import { parseAtuFields } from './sources.js';
-import { parseProxy, proxyServerArg } from './proxy.js';
+import { parseProxy, proxyServerArg, withStickySession } from './proxy.js';
 import { sharedForwarderArg } from './proxy-forwarder.js';
 
 /**
@@ -72,8 +72,11 @@ export interface AtuEgress {
  */
 export function atuEgressChain(): AtuEgress[] {
   const chain: AtuEgress[] = [{ label: 'directo (IP del VPS)', proxy: async () => '' }];
-  const cfg = parseProxy(process.env.ENGINE_PROXY);
-  if (cfg?.username) chain.push({ label: `túnel local → ${cfg.server}`, proxy: (log) => sharedForwarderArg(cfg, log) });
+  const raw = parseProxy(process.env.ENGINE_PROXY);
+  // Sticky: SIN sesión fija, iProyal rota la IP por conexión y el v3 ve IPs distintas dentro de
+  // una misma consulta → score bajo aunque el túnel funcione. withStickySession fija UNA salida.
+  const cfg = raw ? withStickySession(raw) : undefined;
+  if (cfg?.username) chain.push({ label: `túnel local → ${cfg.server} (sticky)`, proxy: (log) => sharedForwarderArg(cfg, log) });
   else if (cfg) chain.push({ label: `proxy ${proxyServerArg(cfg)} (whitelist)`, proxy: async () => proxyServerArg(cfg) ?? '' });
   const explicit = process.env.ATU_PROXY || process.env.CDP_PROXY || '';
   if (explicit) chain.push({ label: `proxy explícito ${explicit}`, proxy: async () => explicit });
@@ -255,10 +258,13 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       let proxyArg = '';
       try { proxyArg = await eg.proxy(log); }
       catch (e) { log(`egreso "${eg.label}": no se pudo preparar (${(e as Error).message}) → salto al siguiente`); continue; }
-      // 1er egreso con los reintentos normales; los fallback con 1 (2 intentos) para no exceder
-      // el tope de tiempo de la fuente cuando la cadena es larga.
-      const retries = i === 0 ? Math.max(0, opts.retries ?? 2) : 1;
-      const r = await attemptAtu(plate, { port, profileDir, chrome, proxyArg, retries, warmupMs, shotPath: opts.shotPath, log });
+      const retries = Math.max(0, opts.retries ?? 2); // 3 intentos por egreso (el v3 necesita madurar)
+      // Egresos de FALLBACK con perfil FRESCO: el perfil que el egreso anterior acaba de quemar
+      // (3 rechazos seguidos) arrastra su historial al relanzar — un perfil nuevo por IP nueva es
+      // el patrón "usuario nuevo residencial", el que mejor puntúa (así pasó el probe del 29-jul).
+      const prof = i === 0 ? profileDir : `${profileDir}-e${i + 1}`;
+      if (i > 0) log(`perfil fresco para este egreso: ${prof}`);
+      const r = await attemptAtu(plate, { port, profileDir: prof, chrome, proxyArg, retries, warmupMs, shotPath: opts.shotPath, log });
       if (r.ok) {
         if (i > 0) log(`✓ resuelto por "${eg.label}" (el Chrome queda parqueado con este egreso)`);
         return r;
