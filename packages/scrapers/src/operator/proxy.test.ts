@@ -45,21 +45,22 @@ describe('proxyForSource (gate PROXY_SOURCES + ENGINE_PROXY)', () => {
     if (saved.ps === undefined) delete process.env.PROXY_SOURCES; else process.env.PROXY_SOURCES = saved.ps;
   };
 
-  it('atu/fise/infogas entran por defecto; las demás fuentes no', () => {
+  it('fise/infogas entran por defecto; atu y el resto salen directo (v3 de ATU pasa nativo del VPS)', () => {
     process.env.ENGINE_PROXY = 'geo.iproyal.com:12321:usuario:clave';
     delete process.env.PROXY_SOURCES;
-    expect([...proxySources()].sort()).toEqual(['atu', 'fise-gnv', 'infogas-gnv']);
-    expect(proxyForSource('atu')?.server).toBe('http://geo.iproyal.com:12321');
-    expect(proxyForSource('atu')?.username).toBe('usuario');
-    expect(proxyForSource('sunarp')).toBeUndefined(); // el resto sale directo (IP del VPS)
+    expect([...proxySources()].sort()).toEqual(['fise-gnv', 'infogas-gnv']);
+    expect(proxyForSource('fise-gnv')?.server).toBe('http://geo.iproyal.com:12321');
+    expect(proxyForSource('fise-gnv')?.username).toBe('usuario');
+    expect(proxyForSource('atu')).toBeUndefined(); // opt-in (proxy cobra por datos y ATU no lo necesita)
+    expect(proxyForSource('sunarp')).toBeUndefined();
     restore();
   });
 
-  it('PROXY_SOURCES explícito reemplaza el default (saca a atu si no está)', () => {
+  it('PROXY_SOURCES explícito reemplaza el default (mete a atu si se pide)', () => {
     process.env.ENGINE_PROXY = 'geo.iproyal.com:12321';
-    process.env.PROXY_SOURCES = 'fise-gnv';
-    expect(proxyForSource('atu')).toBeUndefined();
-    expect(proxyForSource('fise-gnv')?.server).toBe('http://geo.iproyal.com:12321');
+    process.env.PROXY_SOURCES = 'fise-gnv,infogas-gnv,atu';
+    expect(proxyForSource('atu')?.server).toBe('http://geo.iproyal.com:12321');
+    expect(proxyForSource('sbs-soat')).toBeUndefined();
     restore();
   });
 

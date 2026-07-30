@@ -54,12 +54,14 @@ export function proxyServerArg(cfg?: ProxyConfig): string | undefined {
 }
 
 /**
- * Fuentes que SALEN por el proxy residencial compartido (`ENGINE_PROXY`). Default: las que el
- * reCAPTCHA/Cloudflare rechaza desde IP datacenter — FISE, Infogas y ATU (v3 puntúa por reputación
- * de IP). Override con env `PROXY_SOURCES` (coma-separado). Las demás fuentes usan la IP del VPS
- * directo (peruana en LightNode → SUNARP/SIGM/SBS/SAT pasan nativo, sin gastar datos del proxy).
+ * Fuentes que SALEN por el proxy residencial compartido (`ENGINE_PROXY`). Default: solo las que
+ * el reCAPTCHA/Cloudflare rechaza desde IP datacenter — FISE e Infogas. ATU NO va por defecto:
+ * su v3 PASA nativo desde la IP del VPS (LightNode Perú; validado en vivo 29-jul-2026 — el "ATU
+ * roto" era un ATU_PROXY socks5 huérfano) y el proxy cobra por datos. Si su reputación decae,
+ * opt-in con `PROXY_SOURCES=fise-gnv,infogas-gnv,atu` (el camino CDP→forwarder ya está cableado).
+ * Las demás fuentes usan la IP del VPS directo (SUNARP/SIGM/SBS/SAT pasan nativo).
  */
-const DEFAULT_PROXY_SOURCES = 'fise-gnv,infogas-gnv,atu';
+const DEFAULT_PROXY_SOURCES = 'fise-gnv,infogas-gnv';
 export function proxySources(): Set<string> {
   return new Set((process.env.PROXY_SOURCES ?? DEFAULT_PROXY_SOURCES).split(',').map((s) => s.trim()).filter(Boolean));
 }
