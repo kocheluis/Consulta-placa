@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
 import { parseAtuFields } from './sources.js';
-import { proxyForSource, proxyServerArg } from './proxy.js';
+import { parseProxy, proxyServerArg, type ProxyConfig } from './proxy.js';
 import { startProxyForwarder, type ProxyForwarder } from './proxy-forwarder.js';
 
 /**
@@ -12,12 +12,19 @@ import { startProxyForwarder, type ProxyForwarder } from './proxy-forwarder.js';
  * ATU protege la consulta con **reCAPTCHA v3 (invisible, por score)**. Un token de
  * CapSolver o un navegador headless puntúan bajo → ATU responde "Verificar re-captcha"
  * y no devuelve datos. En cambio, un **Chrome real** (sin banderas de automatización) desde
- * una **IP residencial** deja que el `grecaptcha.execute()` NATIVO genere un token con score
- * alto → ATU sí responde. Playwright se conecta por CDP (no lanza el navegador) y NO inyecta
- * ningún token: solo llena la placa y pulsa Buscar; el reCAPTCHA lo resuelve el propio sitio.
+ * una **IP con buena reputación** deja que el `grecaptcha.execute()` NATIVO genere un token
+ * con score alto → ATU sí responde. Playwright se conecta por CDP (no lanza el navegador) y
+ * NO inyecta ningún token: solo llena la placa y pulsa Buscar.
  *
- * OJO: depende de la reputación de la IP. Desde el VPS (datacenter) el score será bajo; corre
- * este source desde la PC del operador (IP residencial) o con un proxy residencial.
+ * EGRESO DE RED — cadena de FALLBACK (orden pedido por el operador):
+ *  1. DIRECTO con la IP del VPS — el v3 pasa nativo desde LightNode Perú (validado en vivo
+ *     29-jul-2026) y no gasta datos de proxy.
+ *  2. TÚNEL local → `ENGINE_PROXY` (forwarder con auth: Chrome no acepta user:pass en
+ *     `--proxy-server`) — gasta datos del proxy residencial.
+ *  3. PROXY explícito `ATU_PROXY`/`CDP_PROXY` (whitelist / socks, p. ej. un gost local).
+ * El proxy solo puede fijarse AL LANZAR Chrome → cada egreso fallido mata el Chrome y relanza
+ * con el siguiente. El Chrome del egreso que FUNCIONÓ queda parqueado (reputación caliente) →
+ * los reportes siguientes entran directo por ese camino.
  */
 
 const URL = 'https://soluciones.atu.gob.pe/ConsultaVehiculo';
@@ -28,7 +35,9 @@ export interface CdpAtuOptions {
   port?: number;
   /** Perfil de Chrome (persiste reputación/cookies entre placas). */
   profileDir?: string;
-  /** Cuántos reintentos si el reCAPTCHA rechaza por score (default 2 → 3 intentos). */
+  /** Cuántos reintentos si el reCAPTCHA rechaza por score (default 2 → 3 intentos). Aplica al
+   *  PRIMER egreso; los egresos de fallback usan 1 reintento (2 intentos) para no exceder el
+   *  tope de tiempo de la fuente. */
   retries?: number;
   /** "Reposo" tras cargar la página antes de la 1ª consulta (default 3000ms): da tiempo a que
    *  cargue el script del reCAPTCHA y suma señal de interacción. NO evita el cold-start del v3
@@ -47,55 +56,69 @@ export interface CdpAtuResult {
   error?: string;
 }
 
-// Forwarder local para ENGINE_PROXY con credenciales: Chrome NO acepta user:pass en --proxy-server,
-// así que se abre un mini-proxy en 127.0.0.1 (sin auth) que reenvía al upstream CON auth. Singleton
-// por proceso: el Chrome de ATU queda parqueado usándolo entre placas; si cambia el ENGINE_PROXY,
-// se recicla.
+// ── Egresos de red (cadena de fallback) ─────────────────────────────────────────────────────────
+
+// Forwarder local para ENGINE_PROXY con credenciales. Singleton por proceso (se recicla si cambia
+// el upstream): el Chrome de ATU queda parqueado usándolo entre placas.
 let atuForwarder: ProxyForwarder | null = null;
 let atuForwarderKey = '';
-
-/**
- * Resuelve el `--proxy-server` para el Chrome de ATU:
- *  1. `ATU_PROXY`/`CDP_PROXY` explícito (host:port por WHITELIST de IP) — prioridad, camino previo.
- *  2. `ENGINE_PROXY` compartido, si 'atu' está en PROXY_SOURCES (default sí): sin credenciales va
- *     directo; CON credenciales pasa por el forwarder local (túnel con auth).
- * '' = sin proxy (comportamiento de siempre: IP del VPS).
- */
-async function resolveAtuProxy(log: (m: string) => void): Promise<string> {
-  const explicit = process.env.ATU_PROXY || process.env.CDP_PROXY || '';
-  if (explicit) return explicit;
-  const cfg = proxyForSource('atu');
-  if (!cfg) return '';
-  if (!cfg.username) return proxyServerArg(cfg) ?? '';
-  const key = `${cfg.server}|${cfg.username}`;
+async function forwarderArg(cfg: ProxyConfig, log: (m: string) => void): Promise<string> {
+  const key = `${cfg.server}|${cfg.username ?? ''}`;
   if (!atuForwarder || atuForwarderKey !== key) {
     if (atuForwarder) await atuForwarder.close().catch(() => {});
     atuForwarder = await startProxyForwarder(cfg);
     atuForwarderKey = key;
-    log(`forwarder local 127.0.0.1:${atuForwarder.port} → ${cfg.server} (con auth; Chrome no acepta user:pass)`);
+    log(`forwarder local 127.0.0.1:${atuForwarder.port} → ${cfg.server} (túnel con auth)`);
   }
   return `127.0.0.1:${atuForwarder.port}`;
 }
 
-/** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio en la URL de ATU. */
-async function connectOrLaunch(port: number, profileDir: string, chrome: string, log: (m: string) => void): Promise<Browser> {
+export interface AtuEgress {
+  label: string;
+  /** Resuelve el valor de `--proxy-server` ('' = directo). LAZY: el túnel solo se abre si este
+   *  egreso llega a intentarse. */
+  proxy: (log: (m: string) => void) => Promise<string>;
+}
+
+/**
+ * Cadena de egresos a intentar EN ORDEN: directo → túnel ENGINE_PROXY → proxy explícito.
+ * Se evalúa al llamar (lee el env vigente). ATU NO usa el gate PROXY_SOURCES: el proxy aquí es
+ * FALLBACK automático (si ENGINE_PROXY existe, está disponible), no un modo fijo por fuente.
+ */
+export function atuEgressChain(): AtuEgress[] {
+  const chain: AtuEgress[] = [{ label: 'directo (IP del VPS)', proxy: async () => '' }];
+  const cfg = parseProxy(process.env.ENGINE_PROXY);
+  if (cfg?.username) chain.push({ label: `túnel local → ${cfg.server}`, proxy: (log) => forwarderArg(cfg, log) });
+  else if (cfg) chain.push({ label: `proxy ${proxyServerArg(cfg)} (whitelist)`, proxy: async () => proxyServerArg(cfg) ?? '' });
+  const explicit = process.env.ATU_PROXY || process.env.CDP_PROXY || '';
+  if (explicit) chain.push({ label: `proxy explícito ${explicit}`, proxy: async () => explicit });
+  return chain;
+}
+
+/** Mata el Chrome de ATU del puerto (CDP `Browser.close`, cross-platform) para poder relanzarlo
+ *  con otro egreso — el `--proxy-server` solo puede cambiarse al lanzar. */
+async function killAtuChrome(port: number, log: (m: string) => void): Promise<void> {
   try {
     const b = await chromium.connectOverCDP(`http://localhost:${port}`);
-    log(`reusando Chrome CDP en :${port} (reputación persistida)`);
-    // El proxy se aplica AL LANZAR Chrome: uno ya parqueado conserva el proxy (o la falta de él) de
-    // su lanzamiento. Aviso para no perseguir fantasmas si acaban de configurar el proxy.
-    if (process.env.ATU_PROXY || process.env.CDP_PROXY || proxyForSource('atu')) {
-      log(`⚠ proxy configurado pero Chrome ya estaba abierto: aplica el del LANZAMIENTO original. Si lo acabas de configurar: pkill -f "remote-debugging-port=${port}" y reintenta.`);
-    }
+    const s = await b.newBrowserCDPSession();
+    await s.send('Browser.close').catch(() => {});
+    await b.close().catch(() => {});
+    log(`Chrome :${port} cerrado (relanzo con el siguiente egreso)`);
+  } catch { /* ya no estaba corriendo */ }
+  await wait(1000); // deja que el SO suelte el puerto
+}
+
+/** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio con el egreso dado. */
+async function connectOrLaunch(port: number, profileDir: string, chrome: string, log: (m: string) => void, proxyArg: string): Promise<Browser> {
+  try {
+    const b = await chromium.connectOverCDP(`http://localhost:${port}`);
+    // Un Chrome parqueado conserva el egreso de SU lanzamiento (el proxy no se puede cambiar en
+    // caliente): normalmente es el egreso que FUNCIONÓ la última vez → reusarlo es lo deseado.
+    log(`reusando Chrome CDP en :${port} (reputación y egreso del lanzamiento original)`);
     return b;
   } catch {
-    log(`lanzando Chrome limpio (CDP :${port})…`);
-    // Proxy RESIDENCIAL: el reCAPTCHA v3 de ATU puntúa por reputación de IP → desde el VPS
-    // (datacenter) el score es bajo y rechaza. ATU_PROXY/CDP_PROXY (whitelist) o ENGINE_PROXY
-    // (credenciales → forwarder local). Sin proxy → sin cambio (IP del VPS).
-    const proxy = await resolveAtuProxy(log);
-    if (proxy) log(`vía proxy residencial ${proxy}`);
-    const flags = [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, ...chromeFlags(), ...(proxy ? [`--proxy-server=${proxy}`] : []), URL];
+    log(`lanzando Chrome limpio (CDP :${port})${proxyArg ? ` vía ${proxyArg}` : ' — directo'}…`);
+    const flags = [`--remote-debugging-port=${port}`, `--user-data-dir=${profileDir}`, ...chromeFlags(), ...(proxyArg ? [`--proxy-server=${proxyArg}`] : []), URL];
     const proc = spawn(chrome, flags, { detached: false, stdio: 'ignore' });
     proc.on('error', (e) => log(`spawn chrome: ${e.message}`));
     for (let i = 0; i < 20; i++) {
@@ -117,29 +140,32 @@ async function acquirePortLock(port: number): Promise<() => void> {
   return release;
 }
 
-export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}): Promise<CdpAtuResult> {
-  const log = opts.log ?? (() => {});
-  const plate = plateRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  const chrome = findChrome();
-  if (!chrome) return { ok: false, status: 'ERROR', error: 'No encontré chrome.exe. Instala Google Chrome.' };
-  const port = opts.port ?? Number(process.env.CDP_ATU_PORT ?? 9226);
-  const profileDir = opts.profileDir ?? process.env.CDP_ATU_PROFILE ?? `${process.cwd()}/.cdp-atu-profile`;
-  const retries = Math.max(0, opts.retries ?? 2);
+interface AtuAttemptOpts {
+  port: number;
+  profileDir: string;
+  chrome: string;
+  proxyArg: string;
+  retries: number;
+  warmupMs: number;
+  shotPath?: string;
+  log: (m: string) => void;
+}
 
-  const releaseLock = await acquirePortLock(port);
+/** UN pase completo del flujo ATU (cookies → placa → Buscar → v3 nativo) con un egreso dado. */
+async function attemptAtu(plate: string, a: AtuAttemptOpts): Promise<CdpAtuResult> {
+  const { log } = a;
   let browser: Browser | null = null;
   try {
-    browser = await connectOrLaunch(port, profileDir, chrome, log);
+    browser = await connectOrLaunch(a.port, a.profileDir, a.chrome, log, a.proxyArg);
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
     let navErr = '';
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => { navErr = (e as Error).message; });
-    // Proxy muerto / túnel roto (ERR_PROXY_CONNECTION_FAILED, ERR_TUNNEL, ERR_SOCKS…): Chrome no carga
-    // NADA — sin este corte, los reintentos queman ~90s para acabar culpando (mal) al reCAPTCHA v3.
-    // Caso real: un ATU_PROXY=socks5://localhost:1080 huérfano (gost apagado) tapando al ENGINE_PROXY.
+    // Proxy muerto / túnel roto (ERR_PROXY_CONNECTION_FAILED, ERR_TUNNEL, ERR_SOCKS…): Chrome no
+    // carga NADA — corta YA para que la cadena pase al siguiente egreso sin quemar reintentos.
     if (/ERR_(PROXY|TUNNEL|SOCKS)/i.test(navErr)) {
       const code = /net::\S+/.exec(navErr)?.[0] ?? navErr;
-      return { ok: false, status: 'ERROR', error: `el proxy configurado no responde (${code}). Revisa ATU_PROXY/CDP_PROXY/ENGINE_PROXY en el env (¿quedó un socks5://localhost viejo sin su forwarder corriendo?).` };
+      return { ok: false, status: 'ERROR', error: `el egreso no responde (${code})` };
     }
 
     // Banner de cookies: si NO se acepta, el portal no deja escribir la placa.
@@ -160,15 +186,14 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
     // interacción. OJO: el v3 de ATU necesita DOS execute() (el 1º "calienta" el score y el 2º
     // pasa); eso lo resuelve el bucle de reintentos, no el reposo. En PRODUCCIÓN el Chrome queda
     // vivo entre placas → tras la 1ª placa la sesión ya está madura y la 1ª consulta pasa directo.
-    const warmupMs = Math.max(0, opts.warmupMs ?? 3000);
     await acceptCookies();
     await humanize();
-    log(`reposo inicial ${warmupMs}ms + gestos…`);
-    await wait(warmupMs);
+    log(`reposo inicial ${a.warmupMs}ms + gestos…`);
+    await wait(a.warmupMs);
 
-    for (let attempt = 0; attempt <= retries; attempt++) {
+    for (let attempt = 0; attempt <= a.retries; attempt++) {
       if (attempt > 0) {
-        log(`recarga ${attempt}/${retries} (madurando el score del v3)…`);
+        log(`recarga ${attempt}/${a.retries} (madurando el score del v3)…`);
         await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       }
       await wait(1200);
@@ -201,7 +226,7 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       // El value del textarea g-recaptcha-response se cuela como un campo larguísimo sin espacios:
       // lo quitamos del detalle para no guardar ese token basura en el reporte del operador.
       const detalle = fieldVals.split(' | ').filter((v) => !(v.length > 80 && /^[A-Za-z0-9_-]+$/.test(v))).join(' | ');
-      if (opts.shotPath) await page.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
+      if (a.shotPath) await page.screenshot({ path: a.shotPath, fullPage: true }).catch(() => {});
       const blob = `${body} | ${detalle}`;
       if (/no\s*registrad/i.test(blob)) {
         return { ok: true, status: 'SIN_REGISTRO', data: { isPublicTransport: false, detalleCampos: detalle } };
@@ -215,13 +240,50 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
         },
       };
     }
-    if (opts.shotPath) await page.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
-    return { ok: false, status: 'ERROR', error: `reCAPTCHA v3 rechazó la IP tras ${retries + 1} intento(s) — el score de la IP del VPS (datacenter) es bajo. Requiere IP residencial: configura ATU_PROXY (proxy residencial con IP whitelisteada) o corre esta fuente desde la PC.` };
+    if (a.shotPath) await page.screenshot({ path: a.shotPath, fullPage: true }).catch(() => {});
+    return { ok: false, status: 'ERROR', error: `reCAPTCHA v3 rechazó tras ${a.retries + 1} intento(s) con este egreso` };
   } catch (e) {
     return { ok: false, status: 'ERROR', error: (e as Error).message };
   } finally {
     // Desconecta CDP pero NO mata el Chrome → conserva reputación/cookies para la próxima placa.
+    // (Si este egreso falló, la cadena lo mata aparte con killAtuChrome para relanzar.)
     if (browser) await browser.close().catch(() => {});
+  }
+}
+
+export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}): Promise<CdpAtuResult> {
+  const log = opts.log ?? (() => {});
+  const plate = plateRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const chrome = findChrome();
+  if (!chrome) return { ok: false, status: 'ERROR', error: 'No encontré chrome.exe. Instala Google Chrome.' };
+  const port = opts.port ?? Number(process.env.CDP_ATU_PORT ?? 9226);
+  const profileDir = opts.profileDir ?? process.env.CDP_ATU_PROFILE ?? `${process.cwd()}/.cdp-atu-profile`;
+  const warmupMs = Math.max(0, opts.warmupMs ?? 3000);
+
+  const releaseLock = await acquirePortLock(port);
+  try {
+    const chain = atuEgressChain();
+    let last: CdpAtuResult = { ok: false, status: 'ERROR', error: 'sin egresos configurados' };
+    for (let i = 0; i < chain.length; i++) {
+      const eg = chain[i]!;
+      if (i > 0) log(`egreso ${i + 1}/${chain.length} → ${eg.label}`);
+      let proxyArg = '';
+      try { proxyArg = await eg.proxy(log); }
+      catch (e) { log(`egreso "${eg.label}": no se pudo preparar (${(e as Error).message}) → salto al siguiente`); continue; }
+      // 1er egreso con los reintentos normales; los fallback con 1 (2 intentos) para no exceder
+      // el tope de tiempo de la fuente cuando la cadena es larga.
+      const retries = i === 0 ? Math.max(0, opts.retries ?? 2) : 1;
+      const r = await attemptAtu(plate, { port, profileDir, chrome, proxyArg, retries, warmupMs, shotPath: opts.shotPath, log });
+      if (r.ok) {
+        if (i > 0) log(`✓ resuelto por "${eg.label}" (el Chrome queda parqueado con este egreso)`);
+        return r;
+      }
+      last = r;
+      log(`egreso "${eg.label}" falló: ${r.error ?? r.status}`);
+      if (i < chain.length - 1) await killAtuChrome(port, log); // el proxy solo cambia relanzando
+    }
+    return { ...last, error: `${last.error ?? 'sin datos'} · egresos agotados: ${chain.map((e) => e.label).join(' → ')}` };
+  } finally {
     releaseLock();
   }
 }
