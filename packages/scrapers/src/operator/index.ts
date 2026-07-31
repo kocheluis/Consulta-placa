@@ -6,6 +6,7 @@ import { createCaptchaSolver, type CaptchaSolver } from '../captcha/index.js';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { scrapeAtuViaCdp } from './atu-cdp.js';
 import { scrapeSigmViaCdp } from './sigm-cdp.js';
+import { scrapeInfogasViaCdp } from './infogas-cdp.js';
 import { runHistorialRegistral } from './historial.js';
 import { runHistorialPool, runHistorialPoolLive, type HistorialResult } from './historial-pool.js';
 import { runLightLane } from './source-lane.js';
@@ -199,7 +200,15 @@ export async function runSingleSource(
   if (sourceId === 'superbid') return await runSuperbidSource(plate, shot, opts);
   const runner = SOURCE_RUNNERS[sourceId];
   if (!runner) throw new Error(`Fuente desconocida: ${sourceId}`);
-  // GNV (FISE/Infogas): CADENA de egresos con fallback automático (directo → túnel → proxy),
+  // Infogas: Cloudflare bloquea el headless ("Un momento…", validado 30-jul) → Chrome REAL por
+  // CDP (:9230) con la misma cadena de egresos de ATU; reusa runInfogas sobre esa página.
+  if (sourceId === 'infogas-gnv') {
+    const t0 = Date.now();
+    const r = await scrapeInfogasViaCdp(plate, solver, shot, (m) => logLine(opts.outDir, sourceId, m));
+    logLine(opts.outDir, sourceId, resultLog(r));
+    return { ...r, ms: r.ms || Date.now() - t0 };
+  }
+  // FISE: CADENA de egresos headless con fallback automático (directo → túnel → SOCKS5 → proxy),
   // el mismo patrón que ATU. Ignora el gate PROXY_SOURCES: el proxy aquí es fallback, no modo fijo.
   if (GNV_SOURCES.has(sourceId)) return await runGnvWithEgress(plate, sourceId, runner, solver, shot, opts);
   // El Chrome del motor se libera al FINAL del job (runJob/runOperatorReport), NO por

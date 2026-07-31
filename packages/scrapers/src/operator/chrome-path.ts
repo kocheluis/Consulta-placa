@@ -78,6 +78,7 @@ export function killEngineChrome(): void {
     Number(process.env.CDP_SUPERBID_PORT ?? 9226),
     Number(process.env.CDP_ATU_PORT ?? 9226), // ATU (CDP reCAPTCHA v3)
     Number(process.env.CDP_SIGM_PORT ?? 9227), // SIGM (CDP Turnstile)
+    Number(process.env.CDP_INFOGAS_PORT ?? 9230), // Infogas (CDP Cloudflare; 9229 = probe ATU)
   ])];
   for (const p of ports) {
     try { execFile('pkill', ['-f', `remote-debugging-port=${p}`], () => {}); } catch { /* noop */ }
