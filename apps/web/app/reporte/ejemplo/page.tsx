@@ -271,10 +271,6 @@ export default function ReporteEjemploPage() {
             <ReportItem status="success" label="Sin gravámenes ni prendas" value="No registra deuda garantizada" icon="lock_open" />
           </SectionCard>
 
-          <SectionCard title="Multas electorales (ONPE)" icon="how_to_vote" level={3} plan={plan} badge={<Badge tone="success" size="sm">Al día</Badge>} onUpgrade={setPlan}>
-            <ReportItem status="success" label="Sin multas electorales del propietario" icon="check_circle" />
-          </SectionCard>
-
           <SectionCard title="Valorización de mercado" icon="payments" level={3} plan={plan} badge={<Badge tone="info" size="sm" icon={null}>Estimado</Badge>} onUpgrade={setPlan}>
             <div className="flex flex-col gap-1.5">
               {[['Uso bajo', 'S/ 56,000 – 62,500'], ['Uso promedio', 'S/ 52,000 – 58,000'], ['Uso alto', 'S/ 47,000 – 52,000']].map(([u, r]) => (

@@ -44,7 +44,6 @@ const FEATURES: { label: string; plans: PlanId[] }[] = [
   { label: 'Orden de captura (SAT)', plans: ['pro', 'ultra'] },
   { label: 'Descarga en PDF', plans: ['pro', 'ultra'] },
   { label: 'Gravámenes (SBS)', plans: ['ultra'] },
-  { label: 'Multas electorales (ONPE)', plans: ['ultra'] },
   { label: 'Valorización de mercado', plans: ['ultra'] },
   { label: 'Análisis con IA', plans: ['ultra'] },
   { label: 'Alertas de vencimiento', plans: ['ultra'] },

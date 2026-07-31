@@ -161,17 +161,8 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     dataKind: SectionKind.HISTORIAL,
     blurb: 'Línea de tiempo de asientos registrales: compraventas, precios declarados, partes y banderas (aseguradora/remate/financiera).',
   },
-  {
-    key: 'multas_electorales',
-    label: 'Multas electorales',
-    icon: 'how_to_vote',
-    tier: ReportTier.PRO,
-    sources: ['ONPE'],
-    concept: ScoreConcept.DEBTS,
-    dataKind: SectionKind.MULTAS_ELECTORALES,
-    blurb: 'Multas electorales del titular (por DNI, con su consentimiento).',
-    comingSoon: true,
-  },
+  // (Multas electorales (ONPE) retirada del reporte: su captcha del JNE no es viable con OCR local
+  //  y no se entrega — no se lista para no anunciar un dato que no damos. Backend/parser conservados.)
   // ── ULTRA: valorización + IA ────────────────────────────────────────
   // (El "análisis de odómetro" se retiró: el kilometraje NO es público en Perú — el MTC no lo
   //  expone por placa, confirmado por probe. No se puede ofrecer un gráfico km-vs-tiempo online.)

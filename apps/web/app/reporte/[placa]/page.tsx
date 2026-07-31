@@ -682,7 +682,7 @@ function PaidPanel({
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">
-            {unlockedUltra ? 'Reporte Ultra' : 'Reporte Pro'}
+            Reporte PRO/ULTRA
           </h2>
           <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
             {unlockedUltra
