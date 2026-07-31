@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
-import { spawn } from 'node:child_process';
+import { spawn, execFile } from 'node:child_process';
+import { platform } from 'node:os';
 import { chromium, type Browser } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
 import { runInfogas, type OperatorSourceResult } from './sources.js';
@@ -26,9 +27,13 @@ async function killChrome(port: number, log: (m: string) => void): Promise<void>
     const s = await b.newBrowserCDPSession();
     await s.send('Browser.close').catch(() => {});
     await b.close().catch(() => {});
-    log(`Chrome :${port} cerrado (relanzo con el siguiente egreso)`);
-  } catch { /* no estaba */ }
-  await wait(1000);
+  } catch { /* no conectó (puede seguir vivo igual) */ }
+  // Backstop DETERMINISTA (Linux/VPS): el close por CDP a veces falla en silencio justo tras
+  // desconectar Playwright → el siguiente egreso "reusaba" el Chrome viejo SIN su proxy. pkill
+  // por patrón de puerto garantiza que el relanzamiento aplique el egreso nuevo.
+  if (platform() === 'linux') { try { execFile('pkill', ['-f', `remote-debugging-port=${port}`], () => {}); } catch { /* */ } }
+  await wait(1500);
+  log(`Chrome :${port} cerrado (relanzo con el siguiente egreso)`);
 }
 
 export async function scrapeInfogasViaCdp(

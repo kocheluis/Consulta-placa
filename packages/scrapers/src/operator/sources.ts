@@ -785,7 +785,10 @@ export async function runInfogas(
   const URL = 'https://vh.infogas.com.pe/';
   const txt = async (sel: string): Promise<string> => (await page.locator(sel).first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
   try {
-    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000, referer: 'https://infogas.com.pe/' });
+    // goto SIN throw: vh.infogas.com.pe deja recursos colgando y su domcontentloaded puede no
+    // disparar NUNCA (visto en VPS: el form ya estaba visible y el goto igual venció a los 60s).
+    // La señal real de "listo" es el input de placa, no el evento de carga.
+    await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 45000, referer: 'https://infogas.com.pe/' }).catch(() => {});
     const plateInput = page.locator('#inp_ck_plate');
     await plateInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
     for (let i = 1; i <= 3; i++) {
