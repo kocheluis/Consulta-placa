@@ -13,8 +13,9 @@
 //   curl -O https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-celular.mjs
 //
 // USO:
-//   node fise-relay-celular.mjs http://IP-DEL-VPS:3010 EL_TOKEN
+//   node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
 //   (el token debe coincidir con FISE_RELAY_TOKEN en /root/placape.env del VPS)
+//   ⚠ Puerto 3011 = listener PÚBLICO del relay (el 3010 es la consola, solo loopback/túnel SSH).
 //
 // MANTENERLO VIVO:
 //   - termux-wake-lock   (evita que Android duerma a Termux)
@@ -24,7 +25,7 @@
 const [, , BASE_RAW, TOKEN] = process.argv;
 if (!BASE_RAW || !TOKEN) {
   console.error('Uso: node fise-relay-celular.mjs <URL-del-VPS> <token>');
-  console.error('Ej.: node fise-relay-celular.mjs http://149.104.66.122:3010 abc123');
+  console.error('Ej.: node fise-relay-celular.mjs http://149.104.66.122:3011 abc123');
   process.exit(1);
 }
 const BASE = BASE_RAW.replace(/\/+$/, '');

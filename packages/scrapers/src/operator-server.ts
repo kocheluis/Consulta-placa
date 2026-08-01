@@ -1018,6 +1018,43 @@ server.on('error', (e: NodeJS.ErrnoException) => {
 server.once('listening', onListen);
 server.listen(PORT, '127.0.0.1');
 
+// ── Listener PÚBLICO del relay FISE ─────────────────────────────────────────────────────────────
+// El server principal bindea a loopback A PROPÓSITO (la consola no tiene login; se entra por túnel
+// SSH / reverse proxy) — pero el celular del relay necesita alcanzar sus endpoints desde internet.
+// Este segundo listener EXPONE SOLO /api/fise-relay/* (token obligatorio, ver fise-relay.ts) en
+// 0.0.0.0:FISE_RELAY_PORT (default 3011). Solo se abre si FISE_RELAY_TOKEN está configurado; la
+// consola y el resto de la API siguen inaccesibles desde afuera.
+const RELAY_PORT = Number(process.env.FISE_RELAY_PORT ?? 3011);
+if (process.env.FISE_RELAY_TOKEN) {
+  const relayServer = createServer(async (req, res) => {
+    try {
+      const url = new URL(req.url ?? '/', `http://localhost:${RELAY_PORT}`);
+      if (url.pathname === '/api/fise-relay/next' && req.method === 'GET') {
+        const r = relayNext(url.searchParams.get('token') ?? req.headers['x-relay-token']);
+        return sendJson(res, r.code, r.body);
+      }
+      if (url.pathname === '/api/fise-relay/result' && req.method === 'POST') {
+        const body = await readBody(req);
+        const r = relayResult(url.searchParams.get('token') ?? req.headers['x-relay-token'] ?? body.token, body);
+        return sendJson(res, r.code, r.body);
+      }
+      if (url.pathname === '/api/fise-relay/status' && req.method === 'GET') return sendJson(res, 200, fiseRelayStatus());
+      return sendJson(res, 404, { error: 'solo /api/fise-relay/*' });
+    } catch (e) { return sendJson(res, 500, { error: (e as Error).message }); }
+  });
+  let relayTries = 0;
+  relayServer.on('error', (e: NodeJS.ErrnoException) => {
+    if (e.code === 'EADDRINUSE' && relayTries < 3) {
+      relayTries++;
+      console.error(`[fise-relay] EADDRINUSE en :${RELAY_PORT} (intento ${relayTries}/3) → libero y reintento…`);
+      freePort(RELAY_PORT);
+      setTimeout(() => relayServer.listen(RELAY_PORT, '0.0.0.0'), 1500);
+    } else console.warn(`[fise-relay] no pude escuchar en :${RELAY_PORT}: ${e.message} (el relay queda sin listener público)`);
+  });
+  relayServer.once('listening', () => console.log(`[fise-relay] listener público en 0.0.0.0:${RELAY_PORT} (solo /api/fise-relay/*, token obligatorio)`));
+  relayServer.listen(RELAY_PORT, '0.0.0.0');
+}
+
 const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Consola del operador · PlacaPe</title>
 <style>

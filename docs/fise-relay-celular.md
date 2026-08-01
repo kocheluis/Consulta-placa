@@ -42,6 +42,12 @@ reactiva solo (sin reiniciar nada).
 
 Sin `FISE_RELAY_TOKEN` los endpoints del relay quedan **deshabilitados** (403 siempre).
 
+**Puertos:** la consola (`:3010`) bindea a **loopback** (sin login; se entra por túnel SSH) y NO se
+toca. Con `FISE_RELAY_TOKEN` configurado, el motor abre un **listener público aparte** en
+`0.0.0.0:3011` (`FISE_RELAY_PORT`) que sirve **únicamente** `/api/fise-relay/*` con token — a eso
+apunta el celular. Verificar que escucha: `ss -tlnp | grep 3011`. Si el proveedor del VPS
+(LightNode) o `ufw` filtran puertos entrantes, abrir el 3011/tcp.
+
 ## Setup — Celular (Android + Termux, una vez)
 
 1. Instalar **Termux** (F-Droid recomendado; la versión de Play está desactualizada).
@@ -50,10 +56,10 @@ Sin `FISE_RELAY_TOKEN` los endpoints del relay quedan **deshabilitados** (403 si
    pkg install nodejs-lts
    curl -O https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-celular.mjs
    ```
-3. Arrancar el worker (URL del operator-server del VPS + el token del paso VPS-1):
+3. Arrancar el worker (puerto **3011** — el listener público del relay — + el token del paso VPS-1):
    ```bash
    termux-wake-lock
-   node fise-relay-celular.mjs http://IP-DEL-VPS:3010 EL_TOKEN
+   node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
    ```
 4. **Mantenerlo vivo**: Ajustes Android → Batería → Termux → *Sin restricciones* (excluir de la
    optimización). Celular enchufado. Ideal: un celular viejo dedicado, en el Wi-Fi de casa.
@@ -65,6 +71,7 @@ El worker imprime cada job que ejecuta. Si el VPS se cae o no hay red, reintenta
 | Variable | Default | Qué hace |
 |---|---|---|
 | `FISE_RELAY_TOKEN` | *(vacío = relay OFF)* | Token compartido VPS↔celular. |
+| `FISE_RELAY_PORT` | `3011` | Puerto del listener público (solo `/api/fise-relay/*`). |
 | `FISE_RELAY_TIMEOUT_MS` | `45000` | Tope de espera por job (VPS). |
 | `FISE_RELAY_ALIVE_MS` | `120000` | Ventana del heartbeat: sin poll en este lapso → celular "caído". |
 | `FISE_CHAIN_FALLBACK` | *(off)* | `1` = volver a la vieja cadena de egresos headless (hoy inútil). |
