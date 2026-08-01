@@ -51,15 +51,28 @@ async function killChrome(port: number): Promise<void> {
 
     let browser: Browser | null = null;
     try {
+      await killChrome(PORT); // limpia cualquier Chrome viejo del puerto/perfil (singleton lock) antes de lanzar
       console.log(`   lanzando Chrome (CDP :${PORT})${proxyArg ? ` vía ${proxyArg}` : ' — directo (IP del VPS)'}…`);
+      // Captura la salida de Chrome (stderr) para diagnosticar por qué NO levanta (OOM, falta display,
+      // lib faltante, etc.). Con stdio:'ignore' esto quedaba invisible.
+      let chromeOut = '';
       const proc = spawn(
         chrome,
         [`--remote-debugging-port=${PORT}`, `--user-data-dir=${process.cwd()}/.cdp-fise-probe-e${i + 1}`, ...chromeFlags(), ...(proxyArg ? [`--proxy-server=${proxyArg}`] : []), 'about:blank'],
-        { detached: false, stdio: 'ignore' },
+        { detached: false, stdio: ['ignore', 'pipe', 'pipe'] },
       );
+      proc.stdout?.on('data', (d) => { chromeOut += d.toString(); });
+      proc.stderr?.on('data', (d) => { chromeOut += d.toString(); });
       proc.on('error', (e) => console.log(`   spawn chrome: ${e.message}`));
-      for (let k = 0; k < 20 && !browser; k++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${PORT}`); } catch { /* aún no */ } }
-      if (!browser) { console.log('   ✗ no conecté al Chrome CDP'); await killChrome(PORT); continue; }
+      proc.on('exit', (code, sig) => { if (code !== null || sig) console.log(`   ⚠ Chrome terminó temprano (code=${code} sig=${sig})`); });
+      for (let k = 0; k < 30 && !browser; k++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${PORT}`); } catch { /* aún no */ } }
+      if (!browser) {
+        console.log('   ✗ no conecté al Chrome CDP (21s). Salida de Chrome:');
+        const tail = chromeOut.trim().split('\n').slice(-25).join('\n');
+        console.log(tail ? tail.replace(/^/gm, '     | ') : '     | (Chrome no imprimió nada en stdout/stderr)');
+        await killChrome(PORT);
+        continue;
+      }
 
       const ctx = browser.contexts()[0] ?? (await browser.newContext());
       const page = ctx.pages()[0] ?? (await ctx.newPage());
