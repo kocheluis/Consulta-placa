@@ -35,10 +35,10 @@ Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los ries
 | pm2 en boot | `pm2-root` **enabled** | ✅ resuelto (sobrevive reinicios) |
 | RAM | **3.9 GB** + 3.9 GB swap | ✅ ampliado desde 2 GB |
 | Disco | 50 GB, 30 % usado (15 GB) | ✅ holgado |
-| Procesos pm2 | `xvfb` online, `operador` online (**8 restarts**), `superbid-delta` **STOPPED** | ⚠️ índice diario detenido; motor con historial de reinicios |
+| Procesos pm2 | `xvfb` + `operador` online; `superbid-delta` "stopped" = **normal** (cron en reposo, indexa a diario, verificado 1-ago); `backup-db` **RETIRADO** (1-ago) | ✅ superbid ok; backup por decisión fuera |
 | Puertos públicos | 22, 80, 443; consola `3010` y CDP `9222/9224` **solo en 127.0.0.1** | ✅ superficie acotada; SSH abierto al mundo |
 | Firewall host | **ufw inactivo** | ⚠️ sin firewall de host |
-| Backups `/root/data` | solo 1 copia **manual** del 2026-06-26; **sin backup automático ni offsite** | 🔴 dato perecible sin respaldo |
+| Backups `/root/data` | **sin backup** — `backup-db` retirado por decisión (1-ago-2026); reportes en Supabase, índice Superbid reconstruible | ⚪ riesgo aceptado (ver I-02) |
 
 ---
 
@@ -58,7 +58,7 @@ Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los ries
 | S-05 | Índice Superbid (cron diario): verificar que dispare cada día | Scraping | Baja | Medio | ⚪ Baja | CONTROLADO |
 | S-06 | Errores de OCR / datos de baja calidad (249 boletas sin texto) | Scraping | Media | Medio | 🟡 Media | ABIERTO |
 | I-01 | VPS único = punto único de falla (sin redundancia) | Infra | Media | Crítico | 🔴 Crítica | ABIERTO |
-| I-02 | Sin backup automático ni offsite de DB + boletas | Infra | Media | Crítico | 🔴 Crítica | ABIERTO |
+| I-02 | Sin backup de DB + boletas (`backup-db` retirado por decisión) | Infra | Media | Crítico | ⚪ Aceptado | ACEPTADO |
 | I-03 | Capacidad: 1 vCPU, ~3–5 min/reporte, SPRL serializa | Infra | Alta | Alto | 🟠 Alta | CONTROLADO |
 | I-04 | Dependencia de Supabase (límites/pausa de plan, cuota) | Infra | Media | Alto | 🟠 Alta | ABIERTO |
 | I-05 | Caddy/TLS/sslip.io para la consola; Basic Auth únicamente | Infra | Baja | Medio | ⚪ Baja | MITIGADO |
@@ -258,15 +258,18 @@ Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los ries
 - **Indicador:** caída del host; sin respuesta en `:443`/consola.
 - **Estado:** ABIERTO.
 
-#### I-02 · Sin backup automático ni offsite 🔴
-- **Causa:** verificado — solo existe **una copia manual** de `placape.db` (2026-06-26). No
-  hay backup programado ni offsite de `/root/data` (DB + **552 MB de boletas perecibles**).
-  Falla de disco / borrado accidental = **pérdida total** del índice y la evidencia.
-- **Impacto:** pérdida irrecuperable de boletas (no se pueden volver a bajar) e índice.
-- **Mitigación:** **backup diario automatizado** de `placape.db` + `boletas/` a **object
-  storage offsite** (S3/Backblaze/R2) con retención; snapshot del VPS; probar la restauración.
-- **Indicador:** ausencia de backup reciente; alerta de disco.
-- **Estado:** ABIERTO — **acción inmediata** (ya hay una copia local en esta PC como respaldo puntual).
+#### I-02 · Sin backup automático ni offsite — RIESGO ACEPTADO (1-ago-2026)
+- **Causa:** no hay backup programado de `/root/data` (DB + boletas). El proceso `backup-db`
+  (cron pm2 `0 5 * * *` → `/root/backup-db.sh`) **existía pero nunca corrió** (logs vacíos).
+- **Decisión del dueño (1-ago-2026):** el backup **no es necesario** → `backup-db` **RETIRADO**
+  (pm2 delete + `rm /root/backup-db.sh`). Racional: los **reportes viven en Supabase** (con su
+  propio respaldo); el **índice Superbid es reconstruible** con `superbid-scan.ts --full`.
+- **Residual asumido:** ante falla de disco/borrado del VPS se **pierden las boletas PDF**
+  (~552 MB, perecibles — no se pueden volver a descargar). Se acepta.
+- **Nota de cumplimiento:** si el `placape.db` local llegara a contener **datos personales**,
+  el deber de seguridad de la Ley 29733 podría exigir respaldo igualmente — revisar si se
+  reactiva. Por ahora el índice Superbid guarda placas enmascaradas, no perfiles.
+- **Estado:** ACEPTADO (proceso retirado).
 
 #### I-03 · Capacidad / throughput 🟠
 - **Causa:** 1 vCPU; reporte completo ~3–5 min (historial SPRL ~170–240 s domina); SPRL
@@ -426,8 +429,8 @@ Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los ries
 
 Orden por severidad y esfuerzo:
 
-1. **S-05 / O-02:** reactivar `superbid-delta` y poner una **alerta** si el cron no corre. *(rápido)*
-2. **I-02:** backup **diario automatizado y offsite** de `placape.db` + `boletas/`. *(rápido)*
+1. **O-02:** `superbid-delta` corre bien (verificado 1-ago); resta una **alerta** por si el cron deja de disparar. *(rápido)*
+2. ~~**I-02:** backup diario offsite~~ — **descartado por decisión (1-ago-2026):** `backup-db` retirado; riesgo aceptado (reportes en Supabase, índice reconstruible).
 3. **SEC-02:** activar `ufw` + `fail2ban` + SSH solo-llave. *(rápido)*
 4. **S-03 / S-02:** alertas de **saldo** CapSolver y SPRL. *(rápido)*
 5. **L-04:** formalizar RUC/Nuevo RUS + comprobante + separar el Yape personal. *(legal)*
