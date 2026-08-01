@@ -508,7 +508,7 @@ function ReportView({
 /* ── Panel por nivel (BASIC / PRO / ULTRA) ────────────────────────── */
 const TIER_PANEL_META: Record<string, { name: string; short: string; icon: string; price?: string; desc: string; accent: string }> = {
   [ReportTier.BASIC]: {
-    name: 'Reporte gratis', short: 'Gratis', icon: 'bolt',
+    name: 'Reporte Basic', short: 'Basic', icon: 'bolt',
     desc: 'Identidad del vehículo, propietario, SOAT y revisión técnica.',
     accent: 'bg-azul-50 text-primary',
   },
