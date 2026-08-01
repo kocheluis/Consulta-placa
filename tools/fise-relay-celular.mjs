@@ -94,10 +94,34 @@ if (BASE_RAW === 'test') {
   process.exit(0);
 }
 
+// MODO TEST-INFOGAS:  node fise-relay-celular.mjs test-infogas
+// ¿Esta red pasa el Cloudflare de Infogas con HTTP PLANO (sin navegador)? Si sí, Infogas también
+// podría servirse por este relay (hoy va por Chrome real en el VPS). Señal determinista del
+// challenge: header `cf-mitigated: challenge` (además del title "Un momento…").
+if (BASE_RAW === 'test-infogas') {
+  const URL_IG = 'https://vh.infogas.com.pe/';
+  console.log(`[${ts()}] probando ${URL_IG} desde esta red…`);
+  const t0 = Date.now();
+  try {
+    const { page } = await fiseGet(URL_IG);
+    const dt = ((Date.now() - t0) / 1000).toFixed(2);
+    const title = (/<title[^>]*>([^<]*)</i.exec(page.text)?.[1] ?? '').trim();
+    const mitigated = page.headers['cf-mitigated'] ?? null;
+    const hasForm = /inp_ck_plate|n_placa/.test(page.text);
+    console.log(`HTTP ${page.status} en ${dt}s (${page.text.length} bytes) · title="${title}"${mitigated ? ` · cf-mitigated=${mitigated}` : ''}`);
+    if (hasForm) console.log('✅ el FORM de placa está en el HTML — Cloudflare NO bloqueó: Infogas sería viable por este relay');
+    else if (mitigated || /un momento|just a moment|attention required/i.test(`${title} ${page.text.slice(0, 600)}`)) console.log('❌ Cloudflare devolvió el challenge — sin navegador no pasa desde esta red');
+    else console.log('⚠ respuesta no reconocida (ni form ni challenge) — pásame el title/status para analizarla');
+  } catch (e) {
+    console.error(`❌ falló: ${errDetail(e)}`);
+  }
+  process.exit(0);
+}
+
 if (!BASE_RAW || !TOKEN) {
   console.error('Uso: node fise-relay-celular.mjs <URL-del-VPS> <token>');
   console.error('Ej.: node fise-relay-celular.mjs http://149.104.66.122:3011 abc123');
-  console.error('Test de red (sin VPS): node fise-relay-celular.mjs test');
+  console.error('Test de red (sin VPS): node fise-relay-celular.mjs test | test-infogas');
   process.exit(1);
 }
 const BASE = BASE_RAW.replace(/\/+$/, '');
