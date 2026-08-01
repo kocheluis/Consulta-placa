@@ -23,17 +23,45 @@
 //   - Celular enchufado al cargador; ideal: uno viejo dedicado en el Wi-Fi de casa.
 
 const [, , BASE_RAW, TOKEN] = process.argv;
-if (!BASE_RAW || !TOKEN) {
-  console.error('Uso: node fise-relay-celular.mjs <URL-del-VPS> <token>');
-  console.error('Ej.: node fise-relay-celular.mjs http://149.104.66.122:3011 abc123');
-  process.exit(1);
-}
-const BASE = BASE_RAW.replace(/\/+$/, '');
 
 const PAGE = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
 const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ts = () => new Date().toISOString().slice(11, 19);
+
+// "fetch failed" de undici esconde la causa real en e.cause (EAI_AGAIN, ECONNREFUSED, cert…):
+// desenrollamos la cadena para ver el código de red de verdad.
+const errDetail = (e) => {
+  const parts = [];
+  for (let x = e; x; x = x.cause) parts.push(x.code ?? x.message ?? String(x));
+  return [...new Set(parts)].join(' ← ');
+};
+
+// MODO TEST:  node fise-relay-celular.mjs test
+// Prueba la conexión del CELULAR → FISE directamente (sin VPS): dice si esta red alcanza el portal.
+if (BASE_RAW === 'test') {
+  console.log(`[${ts()}] probando ${PAGE} desde esta red…`);
+  const t0 = Date.now();
+  try {
+    const r = await fetch(PAGE, { redirect: 'follow', signal: AbortSignal.timeout(20000) });
+    const html = await r.text();
+    const dt = ((Date.now() - t0) / 1000).toFixed(2);
+    console.log(`✅ HTTP ${r.status} en ${dt}s (${html.length} bytes)`);
+    console.log(`   consultaId presente: ${/consultaId/.test(html) ? 'sí' : 'no'} — esta red SÍ alcanza FISE`);
+  } catch (e) {
+    console.error(`❌ falló en ${((Date.now() - t0) / 1000).toFixed(2)}s: ${errDetail(e)}`);
+    console.error('   Esta red NO alcanza FISE. Prueba apagando el Wi-Fi (solo datos) o al revés, y repite el test.');
+  }
+  process.exit(0);
+}
+
+if (!BASE_RAW || !TOKEN) {
+  console.error('Uso: node fise-relay-celular.mjs <URL-del-VPS> <token>');
+  console.error('Ej.: node fise-relay-celular.mjs http://149.104.66.122:3011 abc123');
+  console.error('Test de red (sin VPS): node fise-relay-celular.mjs test');
+  process.exit(1);
+}
+const BASE = BASE_RAW.replace(/\/+$/, '');
 
 // Consulta FISE completa: GET inicio (cookies de sesión + consultaId) → POST buscarSaldo con el
 // token v3 que ya resolvió el VPS. Devuelve el JSON crudo; el parseo de montos vive en el VPS.
@@ -70,7 +98,7 @@ for (;;) {
       console.log(`[${ts()}] job ${job.id} · placa ${job.plate}…`);
       let out;
       try { out = { id: job.id, ok: true, ...(await consulta(job)) }; }
-      catch (e) { out = { id: job.id, ok: false, error: String(e?.message ?? e) }; }
+      catch (e) { out = { id: job.id, ok: false, error: errDetail(e) }; }
       await fetch(`${BASE}/api/fise-relay/result?token=${encodeURIComponent(TOKEN)}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
