@@ -798,7 +798,6 @@ export async function runInfogas(
   const t0 = Date.now();
   const base = { source: 'INFOGAS_GNV', label: 'Infogas · Estado GNV / crédito', category: 'GNV' };
   const URL = 'https://vh.infogas.com.pe/';
-  const txt = async (sel: string): Promise<string> => (await page.locator(sel).first().innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
   try {
     // goto SIN throw: vh.infogas.com.pe deja recursos colgando y su domcontentloaded puede no
     // disparar NUNCA (visto en VPS: el form ya estaba visible y el goto igual venció a los 60s).
@@ -818,13 +817,19 @@ export async function runInfogas(
         try { const w = window as unknown as { vcc?: (t: string) => void }; if (w.vcc) w.vcc(tok); } catch { /* noop */ }
       }, token).catch(() => {});
       await page.locator('#btn_ck_plate').click().catch(() => {});
-      // Sondea hasta que aparezca el panel de resultado (.box_plate) o el error (.error_plate).
+      // Sondea el RESULTADO por CONTENIDO, no por clase: Infogas cambió el DOM y `.box_plate`/
+      // `.plate_item_*` ya no matchean aunque el resultado SÍ se pinta (visto en BRA514 1-ago-2026:
+      // la página mostraba GNV-C / venc. cilindro / ¿crédito? completos pero el scraper timeouteaba).
+      // "listo" = aparece el encabezado "Placa de vehículo" + una etiqueta conocida; error = texto de
+      // "no encontrado" o el `.error_plate` clásico.
       let state = '';
       for (let k = 0; k < 30; k++) {
         state = await page.evaluate(() => {
-          const vis = (el: Element | null): boolean => !!el && !el.classList.contains('d-none') && (el as HTMLElement).offsetParent !== null;
-          if (vis(document.querySelector('.box_plate'))) return 'ok';
-          if (vis(document.querySelector('.error_plate'))) return 'err';
+          const body = (document.body.innerText || '').replace(/\s+/g, ' ');
+          if (/placa de veh[ií]culo/i.test(body) && /(tipo de combustible|habilitado para consumir|tiene\s+cr[eé]dito)/i.test(body)) return 'ok';
+          if (/no ha podido ser encontrad|no se (ha\s+)?encontr|no figura|placa no v[aá]lida|no es un veh[ií]culo/i.test(body)) return 'err';
+          const errBox = document.querySelector('.error_plate') as HTMLElement | null;
+          if (errBox && errBox.offsetParent !== null) return 'err';
           return '';
         }).catch(() => '');
         if (state) break;
@@ -836,13 +841,38 @@ export async function runInfogas(
       }
       if (state === 'ok') {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        const [esgnv, havc, pvci, pran, vhab] = await Promise.all([
-          txt('.plate_item_esgnv'), txt('.plate_item_havc'), txt('.plate_item_pvci'), txt('.plate_item_pran'), txt('.plate_item_vhab'),
-        ]);
-        const tieneCredito = /s[ií]\b|^s$|true|1/i.test(havc);
+        // Extracción TOLERANTE: 1) clases viejas (.plate_item_*) si aún existieran; 2) por ETIQUETA
+        // (busca el texto de la etiqueta y toma el valor del hermano siguiente o del contenedor).
+        const fields = await page.evaluate(() => {
+          const clean = (s: string | null | undefined): string => (s || '').replace(/\s+/g, ' ').trim();
+          const byClass = (sel: string): string => { const el = document.querySelector(sel); return el ? clean((el as HTMLElement).innerText) : ''; };
+          const byLabel = (rx: RegExp): string => {
+            const nodes = Array.from(document.querySelectorAll('p,span,div,h1,h2,h3,h4,h5,h6,label,td,strong,b'));
+            for (const el of nodes) {
+              const t = clean(el.textContent);
+              if (t.length > 60 || !rx.test(t)) continue;
+              let sib = el.nextElementSibling as HTMLElement | null;
+              while (sib && !clean(sib.textContent)) sib = sib.nextElementSibling as HTMLElement | null;
+              if (sib) { const v = clean(sib.textContent); if (v && !rx.test(v) && v.length < 40) return v; }
+              const parent = el.parentElement;
+              if (parent) { const pv = clean(parent.textContent).replace(clean(el.textContent), '').trim(); if (pv && pv.length < 40) return pv; }
+            }
+            return '';
+          };
+          const pick = (sel: string, rx: RegExp): string => byClass(sel) || byLabel(rx);
+          return {
+            esgnv: pick('.plate_item_esgnv', /tipo de combustible/i),
+            havc: pick('.plate_item_havc', /tiene\s+cr[eé]dito/i),
+            pvci: pick('.plate_item_pvci', /vencimiento de cilindro/i),
+            pran: pick('.plate_item_pran', /vencimiento de revisi[oó]n/i),
+            vhab: pick('.plate_item_vhab', /habilitado para consumir/i),
+          };
+        }).catch(() => ({ esgnv: '', havc: '', pvci: '', pran: '', vhab: '' }));
+        const { esgnv, havc, pvci, pran, vhab } = fields;
+        const tieneCredito = /^s[ií]/i.test(havc.trim());
         return {
           ...base, status: 'ENCONTRADO',
-          summary: `GNV: ${esgnv || '—'} · ¿crédito?: ${havc || '—'}${vhab ? ` · ${vhab}` : ''}`,
+          summary: `GNV: ${esgnv || '—'} · ¿crédito?: ${havc || '—'}${vhab ? ` · habilitado: ${vhab}` : ''}`,
           data: { combustible: esgnv || null, tieneCredito, credito: havc || null, vencimientoCilindro: pvci || null, vencimientoRevision: pran || null, habilitado: vhab || null },
           screenshot: shot, ms: Date.now() - t0,
         };
@@ -850,7 +880,9 @@ export async function runInfogas(
       // ni resultado ni error → reCAPTCHA rechazado o Cloudflare → reintenta con captcha nuevo
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Sin resultado (captcha/Cloudflare) tras 3 intentos', screenshot: shot, ms: Date.now() - t0 };
+    // Diagnóstico si vuelve a fallar: deja el texto visible de la página (por si el DOM cambió otra vez).
+    const dump = (await page.evaluate(() => (document.body.innerText || '').replace(/\s+/g, ' ').slice(0, 400)).catch(() => '')) || '';
+    return { ...base, status: 'ERROR', summary: `Sin resultado (captcha/Cloudflare) tras 3 intentos${dump ? ` · página: "${dump.slice(0, 160)}"` : ''}`, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
