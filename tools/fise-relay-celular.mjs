@@ -22,19 +22,52 @@
 //   - Ajustes Android → Batería → Termux → "Sin restricciones" / excluir de optimización
 //   - Celular enchufado al cargador; ideal: uno viejo dedicado en el Wi-Fi de casa.
 
-const [, , BASE_RAW, TOKEN] = process.argv;
+import { request as httpsRequest } from 'node:https';
 
-// El servidor de FISE manda su certificado SIN la cadena intermedia completa: los navegadores la
-// resuelven solos (por eso el portal "carga" en Chrome), pero Node es estricto y rechaza con
-// UNABLE_TO_VERIFY_LEAF_SIGNATURE (visto en Termux, 31-jul-2026). Se relaja la verificación TLS:
-// el ÚNICO tráfico https de este worker es FISE (el VPS va por http plano) y lo que viaja es data
-// pública (placa → montos del crédito GNV). Node imprime un warning al arrancar — es esperado.
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+const [, , BASE_RAW, TOKEN] = process.argv;
 
 const PAGE = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
 const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ts = () => new Date().toISOString().slice(11, 19);
+
+// HTTP hacia FISE con node:https y `rejectUnauthorized: false` EXPLÍCITO: el servidor del MINEM
+// manda su certificado SIN la cadena intermedia (los navegadores la resuelven solos, por eso el
+// portal "carga" en Chrome; Node estricto rechaza con UNABLE_TO_VERIFY_LEAF_SIGNATURE — visto en
+// Termux 31-jul-2026). Solo aplica a FISE (el VPS va por http plano) y la data es pública.
+function fiseFetch(url, { method = 'GET', headers = {}, body = null, timeoutMs = 25000 } = {}) {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(url, { method, headers, rejectUnauthorized: false, timeout: timeoutMs }, (res) => {
+      const chunks = [];
+      res.on('data', (c) => chunks.push(c));
+      res.on('end', () => resolve({
+        status: res.statusCode ?? 0,
+        headers: res.headers,
+        setCookies: res.headers['set-cookie'] ?? [],
+        text: Buffer.concat(chunks).toString('utf8'),
+      }));
+    });
+    req.on('timeout', () => req.destroy(new Error(`timeout ${timeoutMs}ms`)));
+    req.on('error', reject);
+    if (body) req.write(body);
+    req.end();
+  });
+}
+
+// GET con hasta 3 redirecciones, ACUMULANDO cookies de cada salto (JSESSIONID puede venir en un 302).
+async function fiseGet(startUrl) {
+  let url = startUrl;
+  const cookies = [];
+  let page = null;
+  for (let hop = 0; hop < 4; hop++) {
+    page = await fiseFetch(url, { headers: cookies.length ? { Cookie: cookies.join('; ') } : {} });
+    cookies.push(...page.setCookies.map((c) => c.split(';')[0]));
+    const loc = page.headers.location;
+    if (page.status >= 300 && page.status < 400 && loc) { url = new URL(loc, url).href; continue; }
+    break;
+  }
+  return { page, cookies };
+}
 
 // "fetch failed" de undici esconde la causa real en e.cause (EAI_AGAIN, ECONNREFUSED, cert…):
 // desenrollamos la cadena para ver el código de red de verdad.
@@ -50,11 +83,10 @@ if (BASE_RAW === 'test') {
   console.log(`[${ts()}] probando ${PAGE} desde esta red…`);
   const t0 = Date.now();
   try {
-    const r = await fetch(PAGE, { redirect: 'follow', signal: AbortSignal.timeout(20000) });
-    const html = await r.text();
+    const { page, cookies } = await fiseGet(PAGE);
     const dt = ((Date.now() - t0) / 1000).toFixed(2);
-    console.log(`✅ HTTP ${r.status} en ${dt}s (${html.length} bytes)`);
-    console.log(`   consultaId presente: ${/consultaId/.test(html) ? 'sí' : 'no'} — esta red SÍ alcanza FISE`);
+    console.log(`✅ HTTP ${page.status} en ${dt}s (${page.text.length} bytes, ${cookies.length} cookie(s))`);
+    console.log(`   consultaId presente: ${/consultaId/.test(page.text) ? 'sí' : 'no'} — esta red SÍ alcanza FISE`);
   } catch (e) {
     console.error(`❌ falló en ${((Date.now() - t0) / 1000).toFixed(2)}s: ${errDetail(e)}`);
     console.error('   Esta red NO alcanza FISE. Prueba apagando el Wi-Fi (solo datos) o al revés, y repite el test.');
@@ -73,24 +105,20 @@ const BASE = BASE_RAW.replace(/\/+$/, '');
 // Consulta FISE completa: GET inicio (cookies de sesión + consultaId) → POST buscarSaldo con el
 // token v3 que ya resolvió el VPS. Devuelve el JSON crudo; el parseo de montos vive en el VPS.
 async function consulta(job) {
-  const r1 = await fetch(PAGE, { redirect: 'follow', signal: AbortSignal.timeout(25000) });
-  const setCookies = typeof r1.headers.getSetCookie === 'function' ? r1.headers.getSetCookie() : [];
-  const cookie = (setCookies ?? []).map((c) => c.split(';')[0]).join('; ');
-  const html = await r1.text();
-  const consultaId = /id="consultaId"[^>]*value="([^"]*)"/.exec(html)?.[1]
-    ?? /name="consultaId"[^>]*value="([^"]*)"/.exec(html)?.[1] ?? '';
-  const r2 = await fetch(ENDPOINT, {
+  const { page, cookies } = await fiseGet(PAGE);
+  const consultaId = /id="consultaId"[^>]*value="([^"]*)"/.exec(page.text)?.[1]
+    ?? /name="consultaId"[^>]*value="([^"]*)"/.exec(page.text)?.[1] ?? '';
+  const r2 = await fiseFetch(ENDPOINT, {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
       'X-Requested-With': 'XMLHttpRequest',
       Referer: PAGE,
-      ...(cookie ? { Cookie: cookie } : {}),
+      ...(cookies.length ? { Cookie: cookies.join('; ') } : {}),
     },
     body: JSON.stringify({ placaVehiculo: job.plate, consultaId, codigoVerificacion: job.captchaToken, tiempoSession: 8, countBusqueda: 1 }),
-    signal: AbortSignal.timeout(25000),
   });
-  return { httpStatus: r2.status, bodyText: await r2.text() };
+  return { httpStatus: r2.status, bodyText: r2.text };
 }
 
 console.log(`[${ts()}] worker FISE encendido → ${BASE} (Ctrl+C para salir)`);
