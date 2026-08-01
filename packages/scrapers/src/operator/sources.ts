@@ -841,48 +841,47 @@ export async function runInfogas(
       }
       if (state === 'ok') {
         await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-        // Extracción TOLERANTE: 1) clases viejas (.plate_item_*) si aún existieran; 2) por ETIQUETA
-        // (busca el texto de la etiqueta y toma el valor del hermano siguiente o del contenedor).
-        const fields = await page.evaluate(() => {
+        // Extracción por las clases estables .plate_item_* (confirmadas en el DOM real de BRA514,
+        // 1-ago-2026: <p>etiqueta</p><h5><span class="plate_item_*">valor</span></h5>). Usa
+        // textContent, NO innerText: innerText depende del layout y en el Chrome CDP en background a
+        // veces vuelve vacío aunque el valor esté en el DOM (era la causa del "todo vacío"). byLabel
+        // queda de respaldo por si alguna clase desapareciera; salta nodos ocultos para NO filtrar el
+        // bloque .d-none con .plate_item_ip (IP interna del server) mal-rotulado "Vencimiento…".
+        type Gnv = { esgnv: string; havc: string; pvci: string; pran: string; vhab: string };
+        const grab = (): Promise<Gnv> => page.evaluate(() => {
           const clean = (s: string | null | undefined): string => (s || '').replace(/\s+/g, ' ').trim();
-          // Cualquiera de las etiquetas conocidas → para no confundir el valor de un campo con la
-          // etiqueta del campo siguiente (el layout es una fila de columnas etiqueta/valor).
-          const KNOWN = /tipo de combustible|tiene\s+cr[eé]dito|habilitado para consumir|vencimiento de cilindro|vencimiento de revisi[oó]n/i;
-          const byClass = (sel: string): string => { const el = document.querySelector(sel); return el ? clean((el as HTMLElement).innerText) : ''; };
+          const byClass = (sel: string): string => { const el = document.querySelector(sel) as HTMLElement | null; return el ? clean(el.textContent) : ''; };
           const byLabel = (rx: RegExp): string => {
-            const nodes = Array.from(document.querySelectorAll('p,span,label,h3,h4,h5,h6,strong,b,td,li,div')) as HTMLElement[];
-            let best: HTMLElement | null = null;
-            for (const el of nodes) {
-              const t = clean(el.textContent);
-              if (t.length > 60 || !rx.test(t)) continue;
-              // PREFIERE la HOJA cuyo texto es SOLO la etiqueta (el <p> de la etiqueta), no el
-              // contenedor "etiqueta + valor" — así el hermano siguiente es el valor real.
-              if (!el.querySelector('*') && t.length <= 45) { best = el; break; }
-              if (!best) best = el; // fallback: el contenedor más chico que matchea
+            const ps = Array.from(document.querySelectorAll('.box_plate p, p')) as HTMLElement[];
+            for (const p of ps) {
+              if (p.querySelector('*') || !rx.test(clean(p.textContent))) continue;
+              if (p.offsetParent === null) continue; // salta .d-none (IP interna mal-rotulada)
+              let sib = p.nextElementSibling as HTMLElement | null;
+              while (sib && !clean(sib.textContent)) sib = sib.nextElementSibling as HTMLElement | null;
+              const v = sib ? clean(sib.textContent) : '';
+              if (v && v.length < 40) return v;
             }
-            if (!best) return '';
-            let sib = best.nextElementSibling as HTMLElement | null;
-            while (sib && !clean(sib.textContent)) sib = sib.nextElementSibling as HTMLElement | null;
-            if (sib) { const v = clean(sib.textContent); if (v && v.length < 40 && !KNOWN.test(v)) return v; }
-            const parent = best.parentElement;
-            if (parent) { const pv = clean(parent.textContent).replace(clean(best.textContent), '').trim(); if (pv && pv.length < 40 && !KNOWN.test(pv)) return pv; }
             return '';
           };
           const pick = (sel: string, rx: RegExp): string => byClass(sel) || byLabel(rx);
           return {
-            esgnv: pick('.plate_item_esgnv', /tipo de combustible/i),
+            esgnv: pick('.plate_item_esgnv', /tipo de combustible|es gnv/i),
             havc: pick('.plate_item_havc', /tiene\s+cr[eé]dito/i),
             pvci: pick('.plate_item_pvci', /vencimiento de cilindro/i),
             pran: pick('.plate_item_pran', /vencimiento de revisi[oó]n/i),
             vhab: pick('.plate_item_vhab', /habilitado para consumir/i),
           };
         }).catch(() => ({ esgnv: '', havc: '', pvci: '', pran: '', vhab: '' }));
+        const allEmpty = (f: Gnv): boolean => !f.esgnv && !f.havc && !f.pvci && !f.pran && !f.vhab;
+        // Reintenta ante vacío: el primer evaluate puede correr en la micro-ventana en que el contexto
+        // se recreó o el AJAX aún no pintó los <span> (antes reventaba y caía al .catch → todo vacío).
+        let fields = await grab();
+        for (let k = 0; k < 4 && allEmpty(fields); k++) { await wait(700); fields = await grab(); }
         const { esgnv, havc, pvci, pran, vhab } = fields;
-        // Página detectada como resultado (state='ok') pero NINGÚN campo extraído → el DOM volvió a
-        // cambiar (etiquetas re-rotuladas / valores en otro nodo). En vez de devolver ENCONTRADO vacío
-        // en silencio (visto en BRA514 1-ago: "GNV: — · ¿crédito?: —"), VUELCA el HTML real del
-        // contenedor de resultados al summary para poder fijar el selector correcto de una vez.
-        if (!esgnv && !havc && !pvci && !pran && !vhab) {
+        // Si TRAS los reintentos sigue todo vacío → el DOM cambió de verdad: VUELCA el HTML real del
+        // contenedor de resultados al summary para fijar el selector correcto de una vez (red de
+        // seguridad; fue lo que reveló que las clases .plate_item_* seguían vigentes).
+        if (allEmpty(fields)) {
           const dom = await page.evaluate(() => {
             const all = Array.from(document.querySelectorAll('*')) as HTMLElement[];
             let best: HTMLElement | null = null; let bestLen = Infinity;
