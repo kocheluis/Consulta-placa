@@ -845,18 +845,27 @@ export async function runInfogas(
         // (busca el texto de la etiqueta y toma el valor del hermano siguiente o del contenedor).
         const fields = await page.evaluate(() => {
           const clean = (s: string | null | undefined): string => (s || '').replace(/\s+/g, ' ').trim();
+          // Cualquiera de las etiquetas conocidas → para no confundir el valor de un campo con la
+          // etiqueta del campo siguiente (el layout es una fila de columnas etiqueta/valor).
+          const KNOWN = /tipo de combustible|tiene\s+cr[eé]dito|habilitado para consumir|vencimiento de cilindro|vencimiento de revisi[oó]n/i;
           const byClass = (sel: string): string => { const el = document.querySelector(sel); return el ? clean((el as HTMLElement).innerText) : ''; };
           const byLabel = (rx: RegExp): string => {
-            const nodes = Array.from(document.querySelectorAll('p,span,div,h1,h2,h3,h4,h5,h6,label,td,strong,b'));
+            const nodes = Array.from(document.querySelectorAll('p,span,label,h3,h4,h5,h6,strong,b,td,li,div')) as HTMLElement[];
+            let best: HTMLElement | null = null;
             for (const el of nodes) {
               const t = clean(el.textContent);
               if (t.length > 60 || !rx.test(t)) continue;
-              let sib = el.nextElementSibling as HTMLElement | null;
-              while (sib && !clean(sib.textContent)) sib = sib.nextElementSibling as HTMLElement | null;
-              if (sib) { const v = clean(sib.textContent); if (v && !rx.test(v) && v.length < 40) return v; }
-              const parent = el.parentElement;
-              if (parent) { const pv = clean(parent.textContent).replace(clean(el.textContent), '').trim(); if (pv && pv.length < 40) return pv; }
+              // PREFIERE la HOJA cuyo texto es SOLO la etiqueta (el <p> de la etiqueta), no el
+              // contenedor "etiqueta + valor" — así el hermano siguiente es el valor real.
+              if (!el.querySelector('*') && t.length <= 45) { best = el; break; }
+              if (!best) best = el; // fallback: el contenedor más chico que matchea
             }
+            if (!best) return '';
+            let sib = best.nextElementSibling as HTMLElement | null;
+            while (sib && !clean(sib.textContent)) sib = sib.nextElementSibling as HTMLElement | null;
+            if (sib) { const v = clean(sib.textContent); if (v && v.length < 40 && !KNOWN.test(v)) return v; }
+            const parent = best.parentElement;
+            if (parent) { const pv = clean(parent.textContent).replace(clean(best.textContent), '').trim(); if (pv && pv.length < 40 && !KNOWN.test(pv)) return pv; }
             return '';
           };
           const pick = (sel: string, rx: RegExp): string => byClass(sel) || byLabel(rx);

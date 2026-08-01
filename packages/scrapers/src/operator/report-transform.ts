@@ -329,11 +329,12 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         debtOverdue: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.vencido as number) ?? null) : null,
         financed: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.financiamiento as number) ?? null) : null,
         paid: fiseOk && fise!.status === 'ENCONTRADO' ? ((fd.pagado as number) ?? null) : null,
-        fuel: (gd.combustible as string) ?? null,
+        // || null (no ?? null): un string VACÍO del scraper NO debe pintar una fila en blanco.
+        fuel: (gd.combustible as string) || null,
         hasCredit: infogasOk && infogas!.status === 'ENCONTRADO' ? Boolean(gd.tieneCredito) : null,
-        cylinderExpiry: (gd.vencimientoCilindro as string) ?? null,
-        annualReviewExpiry: (gd.vencimientoRevision as string) ?? null,
-        enabled: (gd.habilitado as string) ?? null,
+        cylinderExpiry: (gd.vencimientoCilindro as string) || null,
+        annualReviewExpiry: (gd.vencimientoRevision as string) || null,
+        enabled: (gd.habilitado as string) || null,
       };
       src.push({ kind: SectionKind.GNV, source: fiseOk ? SourceId.FISE : SourceId.INFOGAS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
     } else {
