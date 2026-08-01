@@ -848,44 +848,42 @@ export async function runInfogas(
         // queda de respaldo por si alguna clase desapareciera; salta nodos ocultos para NO filtrar el
         // bloque .d-none con .plate_item_ip (IP interna del server) mal-rotulado "Vencimiento…".
         type Gnv = { esgnv: string; havc: string; pvci: string; pran: string; vhab: string; _diag: string };
-        // Extracción INSTRUMENTADA en un SOLO evaluate: extrae por clase (.plate_item_*, textContent) Y
-        // reporta diagnóstico en el MISMO contexto (cuántos .box_plate/.plate_item_* ve, qué devuelve
-        // textContent/innerText del span, si hay frames, y si algo lanzó). Antes salía "todo vacío" y
-        // no sabíamos si el evaluate reventaba (→ .catch) o veía otro documento. try/catch INTERNO para
-        // que un throw NO se disfrace de vacío. byLabel de respaldo si la clase desapareciera.
+        // Extracción por clase .plate_item_* (textContent), TODO INLINE — SIN funciones-helper con
+        // nombre. tsx/esbuild (keepNames) envuelve cada `const fn = () => …` en `__name(fn,"fn")`, y
+        // `__name` NO existe en el navegador → el evaluate reventaba con "__name is not defined" y el
+        // .catch lo disfrazaba de "todo vacío" (causa raíz confirmada en BRA514, 1-ago-2026, vía DIAG).
+        // Respaldo por etiqueta (<p>Etiqueta</p> + <h5>valor</h5>), también inline y saltando nodos
+        // ocultos, por si alguna clase se fuera (evita el bloque .d-none con .plate_item_ip = IP interna).
         const grab = (): Promise<Gnv> => page.evaluate(() => {
-          const empty: Gnv = { esgnv: '', havc: '', pvci: '', pran: '', vhab: '', _diag: '' };
+          const out: Gnv = { esgnv: '', havc: '', pvci: '', pran: '', vhab: '', _diag: '' };
           try {
-            const clean = (s: string | null | undefined): string => (s || '').replace(/\s+/g, ' ').trim();
-            const byClass = (sel: string): string => { const el = document.querySelector(sel) as HTMLElement | null; return el ? clean(el.textContent) : ''; };
-            const byLabel = (rx: RegExp): string => {
-              const ps = Array.from(document.querySelectorAll('.box_plate p, p')) as HTMLElement[];
+            out.esgnv = (document.querySelector('.plate_item_esgnv')?.textContent || '').replace(/\s+/g, ' ').trim();
+            out.havc = (document.querySelector('.plate_item_havc')?.textContent || '').replace(/\s+/g, ' ').trim();
+            out.pvci = (document.querySelector('.plate_item_pvci')?.textContent || '').replace(/\s+/g, ' ').trim();
+            out.pran = (document.querySelector('.plate_item_pran')?.textContent || '').replace(/\s+/g, ' ').trim();
+            out.vhab = (document.querySelector('.plate_item_vhab')?.textContent || '').replace(/\s+/g, ' ').trim();
+            if (!out.esgnv || !out.havc || !out.pvci || !out.pran || !out.vhab) {
+              const ps = Array.from(document.querySelectorAll('.box_plate p')) as HTMLElement[];
               for (const p of ps) {
-                if (p.querySelector('*') || !rx.test(clean(p.textContent))) continue;
-                if (p.offsetParent === null) continue; // salta .d-none (IP interna mal-rotulada)
+                if (p.querySelector('*') || p.offsetParent === null) continue; // hoja visible (salta .d-none)
+                const label = (p.textContent || '').replace(/\s+/g, ' ').trim();
                 let sib = p.nextElementSibling as HTMLElement | null;
-                while (sib && !clean(sib.textContent)) sib = sib.nextElementSibling as HTMLElement | null;
-                const v = sib ? clean(sib.textContent) : '';
-                if (v && v.length < 40) return v;
+                while (sib && !(sib.textContent || '').trim()) sib = sib.nextElementSibling as HTMLElement | null;
+                const val = sib ? (sib.textContent || '').replace(/\s+/g, ' ').trim() : '';
+                if (!val || val.length >= 40) continue;
+                if (!out.esgnv && /tipo de combustible|es gnv/i.test(label)) out.esgnv = val;
+                else if (!out.havc && /tiene\s+cr[eé]dito/i.test(label)) out.havc = val;
+                else if (!out.pvci && /vencimiento de cilindro/i.test(label)) out.pvci = val;
+                else if (!out.pran && /vencimiento de revisi[oó]n/i.test(label)) out.pran = val;
+                else if (!out.vhab && /habilitado para consumir/i.test(label)) out.vhab = val;
               }
-              return '';
-            };
-            const pick = (sel: string, rx: RegExp): string => byClass(sel) || byLabel(rx);
-            const out: Gnv = {
-              esgnv: pick('.plate_item_esgnv', /tipo de combustible|es gnv/i),
-              havc: pick('.plate_item_havc', /tiene\s+cr[eé]dito/i),
-              pvci: pick('.plate_item_pvci', /vencimiento de cilindro/i),
-              pran: pick('.plate_item_pran', /vencimiento de revisi[oó]n/i),
-              vhab: pick('.plate_item_vhab', /habilitado para consumir/i),
-              _diag: '',
-            };
-            const box = document.querySelectorAll('.box_plate').length;
-            const items = document.querySelectorAll('[class*="plate_item_"]').length;
+            }
             const el = document.querySelector('.plate_item_esgnv') as HTMLElement | null;
-            const raw = el ? `tc="${clean(el.textContent)}" it="${clean(el.innerText)}"` : 'null';
-            out._diag = `box=${box} items=${items} frames=${(window as Window).frames.length} esgnv:${raw}`;
-            return out;
-          } catch (e) { empty._diag = 'THREW:' + String((e as Error)?.message || e); return empty; }
+            out._diag = 'box=' + document.querySelectorAll('.box_plate').length
+              + ' items=' + document.querySelectorAll('[class*="plate_item_"]').length
+              + ' frames=' + window.length + ' esgnv=' + (el ? '"' + (el.textContent || '').trim() + '"' : 'null');
+          } catch (e) { out._diag = 'THREW:' + String((e as Error)?.message || e); }
+          return out;
         }).catch((e: unknown) => ({ esgnv: '', havc: '', pvci: '', pran: '', vhab: '', _diag: 'REJECT:' + String((e as Error)?.message || e) } as Gnv));
         const allEmpty = (f: Gnv): boolean => !f.esgnv && !f.havc && !f.pvci && !f.pran && !f.vhab;
         // Reintenta ante vacío: el primer evaluate puede correr en la micro-ventana en que el contexto
