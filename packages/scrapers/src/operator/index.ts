@@ -560,6 +560,28 @@ const gnvDepFail = (srcId: string): OperatorSourceResult => ({
 });
 
 /**
+ * Señal de combustible a gas ROBUSTA para el gate GNV. `caracteristicas.fuel` es del asiento MÁS
+ * RECIENTE que traiga ficha técnica, y puede NO reflejar la conversión (la ficha vigente dice
+ * "GASOLINA" aunque el vehículo se convirtió, o el asiento de conversión no reimprime la ficha).
+ * Caso real: BRA514 tiene crédito GNV en Infogas pero su ficha no marcaba gas → el gate la saltaba.
+ * Fix: si la ficha no es gas, se recorre el timeline y basta UNA ficha histórica a gas o un asiento
+ * de CONVERSIÓN A GNV/GLP (el "Cambio de Características") para confirmarlo. Devuelve una cadena que
+ * `isGasVehicle` reconoce, o la ficha cruda (null/no-gas) si nada delata gas.
+ */
+export function gasFuelSignal(
+  result: { caracteristicas?: { fuel?: string | null } | null; timeline?: Array<{ acto?: string; caracteristicas?: { fuel?: string | null } | null }> } | null | undefined,
+): string | null {
+  const ficha = result?.caracteristicas?.fuel ?? null;
+  if (isGasVehicle(ficha)) return ficha;
+  const RX_CONV_GAS = /CONVERSI[OÓ]N.*(GNV|GLP|GAS\s*NATURAL)|BI[\s-]*COMBUSTIBLE|\bGNV\b|\bGLP\b/i;
+  for (const t of result?.timeline ?? []) {
+    if (isGasVehicle(t?.caracteristicas?.fuel)) return t!.caracteristicas!.fuel!;
+    if (t?.acto && RX_CONV_GAS.test(t.acto)) return `GNV (conversión registral: ${t.acto.replace(/\s+/g, ' ').trim().slice(0, 48)})`;
+  }
+  return ficha; // null o no-gas → el gate saltará (vehículo confirmado sin gas)
+}
+
+/**
  * Arma los CARRILES del lote (para orchestrateBatch) cableando los runners reales: historial
  * en 2 hilos SPRL (runHistorialPool), cada fuente ligera transpuesta (runLightLane, reúso de
  * navegador) y sunarp/atu/superbid por placa. La UNIÓN de fuentes cubre BASIC y PRO/ULTRA; el
@@ -576,7 +598,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
     const outBy = new Map(plates.map((p) => [p.plate, p.outDir]));
     await runHistorialPool(plates.map((p) => p.plate), {
       onResult: (pr) => {
-        fuelGate.resolve(pr.plate, pr.result?.caracteristicas?.fuel ?? null); // libera el gate GNV
+        fuelGate.resolve(pr.plate, gasFuelSignal(pr.result)); // libera el gate GNV (gas robusto: ficha + conversión)
         report(pr.plate, mapHistorial(pr.result, pr.ms, join(outBy.get(pr.plate) ?? '', 'historial.png')));
       },
     });
@@ -675,7 +697,7 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
         onEngineLog: (m) => console.log(`[historial-cont] ${m}`), // heartbeat/enfriamiento/failover → pm2 logs
         // heartbeatMs / cooldownMs: default desde el entorno (HISTORIAL_HEARTBEAT_MS / HISTORIAL_LOCKOUT_COOLDOWN_MS).
         onResult: (pr) => {
-          fuelGate.resolve(pr.plate, pr.result?.caracteristicas?.fuel ?? null); // libera el gate GNV
+          fuelGate.resolve(pr.plate, gasFuelSignal(pr.result)); // libera el gate GNV (gas robusto: ficha + conversión)
           report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png')));
         },
       });
