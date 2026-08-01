@@ -39,16 +39,40 @@ describe('maskOwnerName (PII del titular, Ley 29733)', () => {
 });
 
 describe('maskHistorialParties (dueños ANTERIORES en los asientos del historial)', () => {
-  it('caso real BEM617: personas (nombre+DNI) enmascaradas; roles y estado civil visibles', () => {
+  it('caso real BEM617: apellidos+DNI enmascarados; nombre de pila, roles y estado civil visibles', () => {
     const raw = 'SOCIEDAD CONYUGAL AGREDA VILLANUEVA DE VARGAS OLINDA QUERY DNI 32775111 Casado VARGAS RODRIGUEZ CESAR ERNESTO DNI 06725079 Casado';
     const out = maskHistorialParties(raw)!;
     expect(out).not.toContain('32775111');
     expect(out).not.toContain('06725079');
-    expect(out).not.toMatch(/VILLANUEVA|RODRIGUEZ|ERNESTO|OLINDA/); // nombres/apellidos ocultos
+    expect(out).not.toMatch(/VILLANUEVA|RODRIGUEZ|OLINDA|CESAR\b/); // apellidos (y nombres previos al último) ocultos
+    expect(out).toContain('QUERY'); // último token sin coma = nombre de pila → visible
+    expect(out).toContain('ERNESTO');
     expect(out).toContain('DNI 327****');
     expect(out).toContain('DNI 067****');
     expect(out).toContain('SOCIEDAD CONYUGAL'); // régimen visible (contexto, no PII)
     expect(out).toContain('Casado'); // estado civil visible
+  });
+
+  it('caso real M5U034: "PERSONA NATURAL" es etiqueta (visible) y el nombre de pila se muestra', () => {
+    const out = maskHistorialParties('PERSONA NATURAL BALLADARES LARA YOLANDA DNI 16412345 Soltero')!;
+    expect(out).toContain('PERSONA NATURAL'); // tipo de persona: NO es un nombre
+    expect(out).toContain('YOLANDA'); // nombre de pila visible
+    expect(out).not.toMatch(/BALLADARES|LARA\b|16412345/); // apellidos y DNI ocultos
+    expect(out).toContain('DNI 164****');
+    expect(out).toContain('Soltero');
+  });
+
+  it('con coma ("APELLIDOS, NOMBRES") los nombres tras la coma quedan visibles', () => {
+    const out = maskHistorialParties('GARCIA TORRES, MARIA ELENA DNI 06725079')!;
+    expect(out).toContain('MARIA ELENA');
+    expect(out).not.toMatch(/GARCIA|TORRES/);
+    expect(out).toContain('DNI 067****');
+  });
+
+  it('un solo token de nombre → se enmascara (no sabemos si es apellido)', () => {
+    const out = maskHistorialParties('GARCIA DNI 12345678')!;
+    expect(out).not.toContain('GARCIA');
+    expect(out).toContain('DNI 123****');
   });
 
   it('empresa acreedora (sin DNI) → INTACTA', () => {
@@ -56,11 +80,12 @@ describe('maskHistorialParties (dueños ANTERIORES en los asientos del historial
     expect(maskHistorialParties(raw)).toBe(raw);
   });
 
-  it('mixto empresa + persona: solo la persona se enmascara', () => {
+  it('mixto empresa + persona: solo los apellidos de la persona se enmascaran', () => {
     const out = maskHistorialParties('Deudor: VARGAS RODRIGUEZ, CESAR ERNESTO DNI 06725079 · Acreedor: BANCO SANTANDER PERU S.A.')!;
     expect(out).toContain('BANCO SANTANDER PERU S.A.'); // razón social intacta
     expect(out).toContain('Deudor:'); // rol visible
-    expect(out).not.toMatch(/RODRIGUEZ|ERNESTO/);
+    expect(out).not.toMatch(/RODRIGUEZ/);
+    expect(out).toContain('CESAR ERNESTO'); // nombres tras la coma → visibles
     expect(out).toContain('DNI 067****');
   });
 

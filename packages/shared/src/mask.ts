@@ -50,28 +50,37 @@ export function maskOwnerName(raw: string | null | undefined): string | null {
   return name.replace(/,/g, ' ').split(' ').filter(Boolean).map(maskToken).join(' ');
 }
 
-// Tokens que NO son parte del nombre (roles, estado civil, régimen, conectores): se conservan
-// tal cual y ayudan a que la máscara no se coma contexto útil del asiento.
+// Tokens que NO son parte del nombre (roles, estado civil, régimen, tipo de persona, conectores):
+// se conservan tal cual y ayudan a que la máscara no se coma contexto útil del asiento.
 const RX_STOP_TOKEN =
-  /^(?:DEUDOR|ACREEDOR|COMPRADOR|VENDEDOR|TITULAR|PROPIETARIO|REPRESENTANTE|APODERADO|SUCESI[OÓ]N|SOCIEDAD|CONYUGAL|CASAD[OA]|SOLTER[OA]|VIUD[OA]|DIVORCIAD[OA]|Y|E|DEL?|LA|LOS|LAS)[.,:]?$/i;
+  /^(?:DEUDOR|ACREEDOR|COMPRADOR|VENDEDOR|TITULAR|PROPIETARIO|REPRESENTANTE|APODERADO|SUCESI[OÓ]N|PERSONA|NATURAL|JUR[IÍ]DICA|SOCIEDAD|CONYUGAL|CASAD[OA]|SOLTER[OA]|VIUD[OA]|DIVORCIAD[OA]|Y|E|DEL?|LA|LOS|LAS)[.,:]?$/i;
 
 /**
  * Enmascara la PII de PERSONAS dentro del texto libre de participantes de un ASIENTO (historial):
  * los dueños ANTERIORES del vehículo no necesitan ser identificables (Ley 29733). Regla ANCLADA AL
  * DOCUMENTO: en los asientos las personas naturales van siempre con su DNI/CE — se enmascaran los
- * tokens del nombre que lo acompañan (3 letras + ****) y el número (3 dígitos + ****). Las EMPRESAS
- * (acreedores tipo "BBVA CONSUMER FINANCE…", sin DNI) y el texto del acto/montos quedan INTACTOS —
- * anclar al documento evita enmascarar razones sociales por error. Roles/estado civil ("Deudor:",
- * "Casado", "SOCIEDAD CONYUGAL") se conservan como contexto.
+ * APELLIDOS (3 letras + ****) y el número (3 dígitos + ****), pero el NOMBRE DE PILA queda VISIBLE
+ * (pedido del dueño 1-ago-2026: un nombre solo no identifica y mantiene el reporte legible):
+ *  - con coma ("APELLIDOS, NOMBRES"): todo lo que sigue a la última coma es nombre → visible;
+ *  - sin coma (formato SUNARP apellidos-primero): el ÚLTIMO token es nombre de pila → visible
+ *    (solo si hay ≥2 tokens de nombre; con uno solo no sabemos si es apellido y se enmascara).
+ * Las EMPRESAS (acreedores tipo "BBVA CONSUMER FINANCE…", sin DNI) y el texto del acto/montos
+ * quedan INTACTOS — anclar al documento evita enmascarar razones sociales por error. Roles/estado
+ * civil/tipo ("Deudor:", "Casado", "PERSONA NATURAL", "SOCIEDAD CONYUGAL") se conservan como contexto.
  */
 export function maskHistorialParties(raw: string | null | undefined): string | null {
   if (!raw) return null;
-  // 1) Nombre pegado a su documento: "APELLIDOS[,] NOMBRES DNI 06725079" → tokens a 3+**** + nº recortado.
+  // 1) Nombre pegado a su documento: "APELLIDOS[,] NOMBRES DNI 06725079" → apellidos a 3+**** + nº recortado.
   const RX_NAME_DOC =
     /((?:[A-ZÁÉÍÓÚÑÜ][A-Za-zÁÉÍÓÚÑÜáéíóúñü'.-]*,?\s+){1,6})(D\.?\s?N\.?\s?I\.?|DNI|C\.?\s?E\.?|CE|CARNE\s+DE\s+EXTRANJER[IÍ]A)\s*:?\s*(\d{6,9})/g;
   let out = raw.replace(RX_NAME_DOC, (_m, names: string, doc: string, num: string) => {
-    const masked = String(names).trim().split(/\s+/).map((t) => {
-      if (RX_STOP_TOKEN.test(t)) return t; // rol/estado civil/conector → visible
+    const toks = String(names).trim().split(/\s+/);
+    const lastComma = toks.reduce((acc, t, i) => (t.endsWith(',') ? i : acc), -1);
+    const nameIdx = toks.map((t, i) => (RX_STOP_TOKEN.test(t) ? -1 : i)).filter((i) => i >= 0);
+    const lastNameTok = nameIdx.length >= 2 ? nameIdx[nameIdx.length - 1] : -1;
+    const masked = toks.map((t, i) => {
+      if (RX_STOP_TOKEN.test(t)) return t; // rol/estado civil/etiqueta/conector → visible
+      if (lastComma >= 0 ? i > lastComma : i === lastNameTok) return t; // nombre de pila → visible
       const comma = t.endsWith(',') ? ',' : '';
       return `${maskToken(t.replace(/,+$/, ''))}${comma}`;
     }).join(' ');
