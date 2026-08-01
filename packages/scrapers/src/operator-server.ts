@@ -583,8 +583,10 @@ function startContinuousRunner(): void {
         const fullSources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
         let jobSources: string[] = [...fullSources];
         let reuse: OperatorSourceResult[] = [];
-        if (memoryEnabled) {
-          // MEMORIA ON: reúso parcial por fuente (no corre el motor completo; solo las fallidas/faltantes).
+        if (memoryEnabled && !force) {
+          // MEMORIA ON y NO es "Re-generar": reúso parcial por fuente (solo re-corre las fallidas/faltantes).
+          // force ⇒ el operador pidió datos FRESCOS explícitamente → salta también la memoria (antes la
+          // rama de memoria ignoraba force y "Re-generar" devolvía fuentes cacheadas dentro del TTL).
           const plan = await planMemoryReuse(p.placa, fullSources).catch(() => null);
           if (plan) {
             if (!plan.rerun.length) { console.log(`[memoria] ${p.placa}: todo fresco (<${memoryTtlH}h) → reúso completo, 0 re-corridas`); await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue; }
