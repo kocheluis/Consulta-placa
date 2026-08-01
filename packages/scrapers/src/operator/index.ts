@@ -519,21 +519,36 @@ export interface BatchLaneOpts {
 const GNV_SOURCES = new Set(['fise-gnv', 'infogas-gnv']);
 
 /** Señal de combustible por placa: el carril de historial la RESUELVE al terminar; los carriles GNV
- *  la ESPERAN (tope 8 min → null = no confirmado → se salta). Un gate por corrida/pipeline. */
-function makeFuelGate(): { resolve: (plate: string, fuel: string | null) => void; wait: (plate: string) => Promise<string | null> } {
-  const waiters = new Map<string, { promise: Promise<string | null>; resolve: (f: string | null) => void }>();
-  const signal = (plate: string): { promise: Promise<string | null>; resolve: (f: string | null) => void } => {
+ *  la ESPERAN (tope 8 min → null = no confirmado → se salta).
+ *
+ *  ⚠ El motor CONTINUO vive TODO el turno y este gate persiste con él: su Map keyed por placa NO se
+ *  limpiaba, así que re-consultar la misma placa REUSABA el fuel de la 1ª corrida (una promesa se
+ *  resuelve una sola vez). BUG BRA514: la 1ª corrida (historial caído) resolvió `null`; cada
+ *  re-generación posterior sacaba el gas correcto (el reporte lo mostraba) pero el `resolve` era
+ *  no-op y el carril GNV recibía el `null` viejo → saltaba FISE/Infogas en 0.0s. Fix: `arm(plate)`
+ *  re-arma la señal en el submit (sincrónico, antes de rutear) → cada corrida ve una señal fresca. */
+interface FuelWaiter { promise: Promise<string | null>; resolve: (f: string | null) => void; settled: boolean }
+function makeFuelGate(): {
+  arm: (plate: string) => void;
+  resolve: (plate: string, fuel: string | null) => void;
+  wait: (plate: string) => Promise<string | null>;
+} {
+  const waiters = new Map<string, FuelWaiter>();
+  const create = (): FuelWaiter => {
+    let resolve!: (f: string | null) => void;
+    const promise = new Promise<string | null>((r) => { resolve = r; });
+    return { promise, resolve, settled: false };
+  };
+  const signal = (plate: string): FuelWaiter => {
     let w = waiters.get(plate);
-    if (!w) {
-      let resolve!: (f: string | null) => void;
-      const promise = new Promise<string | null>((r) => { resolve = r; });
-      w = { promise, resolve };
-      waiters.set(plate, w);
-    }
+    if (!w) { w = create(); waiters.set(plate, w); }
     return w;
   };
   return {
-    resolve: (plate, fuel) => signal(plate).resolve(fuel),
+    // Corrida NUEVA de la placa → señal fresca (descarta el valor de una corrida anterior). Solo se
+    // llama en Pipeline.submit (sincrónico, antes de rutear a los carriles) → sin carrera.
+    arm: (plate) => { waiters.set(plate, create()); },
+    resolve: (plate, fuel) => { const w = signal(plate); if (!w.settled) { w.settled = true; w.resolve(fuel); } },
     wait: (plate) => Promise.race([
       signal(plate).promise,
       new Promise<string | null>((r) => { setTimeout(() => r(null), 8 * 60 * 1000); }),
@@ -670,7 +685,7 @@ export interface ContinuousLaneOpts extends BatchLaneOpts {
  * A diferencia de `buildBatchLanes` (un carril por fuente sobre un conjunto FIJO), estos carriles no
  * terminan: viven mientras el canal siga abierto y admiten placas nuevas continuamente.
  */
-export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
+export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: PipelineLane[]; armFuelGate: (plate: string) => void } {
   const baseOpts = (outDir: string): OperatorReportOptions => ({ outDir, captchaProvider: opts.captchaProvider, captchaApiKey: opts.captchaApiKey, headless: opts.headless ?? true });
   const K = Math.max(1, opts.lightConcurrency ?? 2);
 
@@ -744,7 +759,9 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
     },
   };
 
-  return [historialLane, lightLane];
+  // armFuelGate lo llama Pipeline.submit (una vez por corrida, antes de rutear) → re-consultar una
+  // placa arranca con señal de combustible FRESCA (no reusa la de una corrida anterior).
+  return { lanes: [historialLane, lightLane], armFuelGate: (plate: string) => fuelGate.arm(plate) };
 }
 
 async function runSuperbidSource(

@@ -95,4 +95,21 @@ describe('Pipeline (motor continuo)', () => {
     expect(done).toHaveLength(1);
     expect(done[0]!.results.length).toBe(1); // parcial: solo 'a'
   });
+
+  it('onSubmit se dispara por CORRIDA (incl. re-consulta de la misma placa tras cerrar)', async () => {
+    const armed: string[] = [];
+    const p = new Pipeline({
+      lanes: [lane('a', ['a'])],
+      onSubmit: (plate) => armed.push(plate),
+      onJobDone: async () => {},
+    });
+    expect(p.submit(job('j1', 'P1', ['a']))).toBe(true);
+    await new Promise((r) => setTimeout(r, 5)); // deja que P1 complete y se finalice (sale de byPlate)
+    expect(p.submit(job('j2', 'P1', ['a']))).toBe(true); // re-consulta: ya no está en vuelo → admitida
+    // dedup NO dispara onSubmit (no es una corrida nueva)
+    expect(p.submit(job('j3', 'P2', ['a']))).toBe(true);
+    expect(p.submit(job('j4', 'P2', ['a']))).toBe(false); // P2 en vuelo → rechazada, sin re-armar
+    await p.close();
+    expect(armed).toEqual(['P1', 'P1', 'P2']); // 2 corridas de P1 (re-arma cada vez) + 1 de P2
+  });
 });

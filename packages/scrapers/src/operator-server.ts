@@ -544,8 +544,10 @@ const contPedidoById = new Map<string, Pedido>();    // id → Pedido (para fina
  *  arma la 1ª vez que el motor está encendido y hay trabajo; los Chrome SPRL quedan calientes. */
 function getPipeline(): Pipeline {
   if (pipeline) return pipeline;
+  const cont = buildContinuousLanes({ captchaApiKey: KEY, captchaProvider: PROVIDER, headless: true, lightConcurrency: ENGINE_LIGHT_CONCURRENCY });
   pipeline = new Pipeline({
-    lanes: buildContinuousLanes({ captchaApiKey: KEY, captchaProvider: PROVIDER, headless: true, lightConcurrency: ENGINE_LIGHT_CONCURRENCY }),
+    lanes: cont.lanes,
+    onSubmit: cont.armFuelGate, // re-arma el gate GNV por corrida (fix re-consulta: no reusa fuel viejo)
     jobTimeoutMs: JOB_TIMEOUT_MS, // historial colgado / ambos slots bloqueados → cierre parcial
     onProgress: (job) => { const j = contJobs.get(job.id); if (j) { j.results = job.results; j.percent = job.percent; } },
     onJobDone: async (job) => {

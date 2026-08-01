@@ -51,6 +51,10 @@ export interface PipelineOpts {
   /** Un pedido juntó TODAS sus fuentes → ensamblar/publicar/entregar. */
   onJobDone: (job: PipelineJob) => Promise<void>;
   onProgress?: (job: PipelineJob) => void;
+  /** Se admite un pedido (pasó el dedup, ANTES de rutear a los carriles). Sincrónico. Lo usan los
+   *  carriles para re-armar estado por-corrida (p. ej. el gate de combustible GNV, que persiste toda
+   *  la vida del motor y debe empezar fresco en cada re-consulta de la misma placa). */
+  onSubmit?: (plate: string) => void;
   /** Normaliza el nombre de fuente para deduplicar (SUNARP vs sunarp vs SAT_CAPTURA/sat-captura). */
   norm?: (s: string) => string;
   /** Tope por pedido: si no juntó sus fuentes en este tiempo (p. ej. historial colgado/ambos slots
@@ -99,6 +103,7 @@ export class Pipeline {
   submit(job: PipelineJob): boolean {
     if (this.byPlate.has(job.plate)) return false;
     this.byPlate.set(job.plate, job);
+    this.opts.onSubmit?.(job.plate); // re-arma estado por-corrida (gate GNV) ANTES de rutear → sin carrera
     const item: PipelineItem = { plate: job.plate, outDir: job.outDir, sources: job.sources };
     let routed = 0;
     for (const { lane, q } of this.channels) {
