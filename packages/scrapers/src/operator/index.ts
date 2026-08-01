@@ -19,6 +19,7 @@ import { peruStamp } from './time.js';
 import { sprlSlots } from './sprl-slots.js';
 import { parseProxy, proxyForSource, withStickySession, type ProxyConfig } from './proxy.js';
 import { sharedForwarderArg } from './proxy-forwarder.js';
+import { fiseRelayAlive, runFiseViaRelay } from './fise-relay.js';
 import {
   runSatCaptura,
   runCallao,
@@ -208,8 +209,23 @@ export async function runSingleSource(
     logLine(opts.outDir, sourceId, resultLog(r));
     return { ...r, ms: r.ms || Date.now() - t0 };
   }
-  // FISE: CADENA de egresos headless con fallback automático (directo → túnel → SOCKS5 → proxy),
-  // el mismo patrón que ATU. Ignora el gate PROXY_SOURCES: el proxy aquí es fallback, no modo fijo.
+  // FISE: INALCANZABLE desde el VPS (probado con Chrome real 31-jul-2026: el MINEM filtra la IP
+  // datacenter y iProyal rechaza el CONNECT al :23308 por HTTP y SOCKS5) → va por el RELAY
+  // RESIDENCIAL (celular Termux con polling, ver fise-relay.ts). Si el celular no late, falla AL
+  // INSTANTE en vez de quemar los ~200s de la cadena muerta; la cadena headless queda solo como
+  // rescate opt-in con FISE_CHAIN_FALLBACK=1 (por si algún día cambia el bloqueo).
+  if (sourceId === 'fise-gnv' && process.env.FISE_CHAIN_FALLBACK !== '1') {
+    if (fiseRelayAlive()) {
+      const r = await runFiseViaRelay(plate, solver, (m) => logLine(opts.outDir, sourceId, m));
+      logLine(opts.outDir, sourceId, resultLog(r));
+      return r;
+    }
+    const r: OperatorSourceResult = { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV', status: 'ERROR', summary: 'relay residencial (celular) sin señal — FISE bloquea la IP del VPS', ms: 0 };
+    logLine(opts.outDir, sourceId, resultLog(r));
+    return r;
+  }
+  // Infogas (y FISE con FISE_CHAIN_FALLBACK=1): CADENA de egresos headless con fallback automático
+  // (directo → túnel → SOCKS5 → proxy), el mismo patrón que ATU. Ignora el gate PROXY_SOURCES.
   if (GNV_SOURCES.has(sourceId)) return await runGnvWithEgress(plate, sourceId, runner, solver, shot, opts);
   // El Chrome del motor se libera al FINAL del job (runJob/runOperatorReport), NO por
   // fuente: así no se mata el Chrome de las fuentes que corren en paralelo.

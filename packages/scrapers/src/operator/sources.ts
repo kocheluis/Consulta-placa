@@ -707,7 +707,40 @@ export function isGasVehicle(fuel: string | null | undefined): boolean {
 //        montoDeudaVencido, montoCuotasTeorico, esPerdidaDescuentoProvincia('S'/'N'), recaudos[] }] }
 // numeroDocumento null = el vehículo NO tuvo crédito de conversión (SIN_REGISTRO). El reCAPTCHA es v3
 // (score): desde IP datacenter puede rechazar (como ATU) → status!=0; se reintenta y, si persiste, error.
-const FISE_SITEKEY = '6LcSA7wUAAAAANXcrpjhO3zy5UPsRYWlWGPRk5w1';
+export const FISE_SITEKEY = '6LcSA7wUAAAAANXcrpjhO3zy5UPsRYWlWGPRk5w1';
+export const FISE_PAGE_URL = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
+export const FISE_ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
+
+/** Interpreta la fila de `buscarSaldo` → resultado de la fuente. COMPARTIDO entre el runner
+ *  headless (abajo) y el relay residencial (fise-relay.ts): misma respuesta, mismo parseo. */
+export function parseFiseSaldo(
+  row: Record<string, unknown> | null,
+  base: { source: string; label: string; category: string },
+  t0: number,
+  shot?: string,
+): OperatorSourceResult {
+  const money = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  const extra = shot ? { screenshot: shot } : {};
+  // numeroDocumento null = el vehículo no figura con crédito de conversión GNV.
+  if (!row || row.numeroDocumento == null) {
+    return { ...base, status: 'SIN_REGISTRO', summary: 'Sin crédito de conversión GNV (no figura financiamiento)', data: {}, ...extra, ms: Date.now() - t0 };
+  }
+  const pendiente = money(row.montoPendiente);
+  const vencido = money(row.montoDeudaVencido);
+  const financiamiento = money(row.costoFinanciamiento);
+  const pagado = money(row.montoPagado);
+  const perdioDescuento = String(row.esPerdidaDescuentoProvincia ?? '').toUpperCase() === 'S';
+  const tieneDeuda = pendiente > 0;
+  const summary = tieneDeuda
+    ? `Deuda de conversión GNV: S/ ${pendiente.toFixed(2)} pendiente${vencido > 0 ? ` · S/ ${vencido.toFixed(2)} vencido` : ''}`
+    : `Crédito de conversión GNV cancelado (financiado S/ ${financiamiento.toFixed(2)})`;
+  return {
+    ...base, status: 'ENCONTRADO', summary,
+    data: { tieneDeuda, financiamiento, pagado, pendiente, vencido, montoCuotasTeorico: money(row.montoCuotasTeorico), perdioDescuento, recaudos: Array.isArray(row.recaudos) ? row.recaudos.length : 0 },
+    ...extra, ms: Date.now() - t0,
+  };
+}
+
 export async function runFiseGnv(
   page: Page,
   plate: string,
@@ -716,9 +749,8 @@ export async function runFiseGnv(
 ): Promise<OperatorSourceResult> {
   const t0 = Date.now();
   const base = { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV' };
-  const PAGE_URL = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
-  const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
-  const money = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  const PAGE_URL = FISE_PAGE_URL;
+  const ENDPOINT = FISE_ENDPOINT;
   try {
     // goto 25s (no 60): desde IP datacenter el :23308 a veces NI RESPONDE (filtrado) — cortar rápido
     // deja tiempo para que la cadena de egresos pruebe el túnel/SOCKS dentro de su presupuesto.
@@ -742,24 +774,7 @@ export async function runFiseGnv(
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     if (!responded) return { ...base, status: 'ERROR', summary: 'reCAPTCHA v3 rechazado / sin respuesta (3 intentos)', screenshot: shot, ms: Date.now() - t0 };
-    // numeroDocumento null = el vehículo no figura con crédito de conversión GNV.
-    if (!row || row.numeroDocumento == null) {
-      return { ...base, status: 'SIN_REGISTRO', summary: 'Sin crédito de conversión GNV (no figura financiamiento)', data: {}, screenshot: shot, ms: Date.now() - t0 };
-    }
-    const pendiente = money(row.montoPendiente);
-    const vencido = money(row.montoDeudaVencido);
-    const financiamiento = money(row.costoFinanciamiento);
-    const pagado = money(row.montoPagado);
-    const perdioDescuento = String(row.esPerdidaDescuentoProvincia ?? '').toUpperCase() === 'S';
-    const tieneDeuda = pendiente > 0;
-    const summary = tieneDeuda
-      ? `Deuda de conversión GNV: S/ ${pendiente.toFixed(2)} pendiente${vencido > 0 ? ` · S/ ${vencido.toFixed(2)} vencido` : ''}`
-      : `Crédito de conversión GNV cancelado (financiado S/ ${financiamiento.toFixed(2)})`;
-    return {
-      ...base, status: 'ENCONTRADO', summary,
-      data: { tieneDeuda, financiamiento, pagado, pendiente, vencido, montoCuotasTeorico: money(row.montoCuotasTeorico), perdioDescuento, recaudos: Array.isArray(row.recaudos) ? row.recaudos.length : 0 },
-      screenshot: shot, ms: Date.now() - t0,
-    };
+    return parseFiseSaldo(row, base, t0, shot);
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }

@@ -13,6 +13,7 @@ import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
 import { publishReport, fetchReport, fetchReportsMeta } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
+import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.js';
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
 import { SectionKind, SectionStatus, type Report } from '@app/shared';
@@ -662,6 +663,18 @@ const server = createServer(async (req, res) => {
       return res.end(HTML);
     }
     if (path === '/api/sources' && req.method === 'GET') return sendJson(res, 200, OPERATOR_SOURCES);
+    // Relay residencial de FISE (celular Termux, ver operator/fise-relay.ts): el worker hace
+    // polling aquí con su token (env FISE_RELAY_TOKEN; sin él los endpoints quedan deshabilitados).
+    if (path === '/api/fise-relay/next' && req.method === 'GET') {
+      const r = relayNext(url.searchParams.get('token') ?? req.headers['x-relay-token']);
+      return sendJson(res, r.code, r.body);
+    }
+    if (path === '/api/fise-relay/result' && req.method === 'POST') {
+      const body = await readBody(req);
+      const r = relayResult(url.searchParams.get('token') ?? req.headers['x-relay-token'] ?? body.token, body);
+      return sendJson(res, r.code, r.body);
+    }
+    if (path === '/api/fise-relay/status' && req.method === 'GET') return sendJson(res, 200, fiseRelayStatus());
     // Fuentes activas del motor automático (elegibles desde la consola). GET → catálogo + activas;
     // POST {sources:[ids]} → fija el override (vacío = volver al default AUTO_SOURCES). Solo afecta PRO/ULTRA.
     if (path === '/api/auto-sources' && req.method === 'GET') {
