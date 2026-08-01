@@ -541,12 +541,22 @@ function makeFuelGate(): { resolve: (plate: string, fuel: string | null) => void
   };
 }
 
-/** Resultado "no aplica" de una fuente GNV (vehículo no-gas). `data.aplicable=false` le dice al
- *  transform que fue un SALTO del gate (≠ "sin crédito" de un vehículo que SÍ es a gas). */
-const gnvSkip = (srcId: string, fuel: string | null): OperatorSourceResult => ({
+/** Resultado "no aplica" de una fuente GNV (vehículo CONFIRMADO no-gas). `data.aplicable=false` le
+ *  dice al transform que fue un SALTO del gate (≠ "sin crédito" de un vehículo que SÍ es a gas). */
+const gnvSkip = (srcId: string, fuel: string): OperatorSourceResult => ({
   source: srcId.toUpperCase().replace(/-/g, '_'), label: srcId, category: 'GNV', status: 'SIN_REGISTRO',
-  summary: fuel ? `No aplica: el vehículo no es a gas (SPRL: ${fuel})` : 'No aplica: no se confirmó combustible a gas (SPRL)',
+  summary: `No aplica: el vehículo no es a gas (SPRL: ${fuel})`,
   data: { aplicable: false, fuel }, ms: 0,
+});
+
+/** Resultado "NO ejecutada" de una fuente GNV: la DEPENDENCIA (historial → señal de combustible)
+ *  falló o no corrió, así que NO SABEMOS si el vehículo es a gas. ERROR honesto (antes salía
+ *  SIN_REGISTRO "No aplica", que aparentaba una consulta hecha): en la consola sale en rojo con
+ *  Reintentar — el retry corre la fuente DIRECTO (sin gate), útil tras reintentar el historial. */
+const gnvDepFail = (srcId: string): OperatorSourceResult => ({
+  source: srcId.toUpperCase().replace(/-/g, '_'), label: srcId, category: 'GNV', status: 'ERROR',
+  summary: 'no ejecutada: sin señal de combustible (el historial falló o no corrió) — omitida para no gastar captcha',
+  data: { aplicable: null }, ms: 0,
 });
 
 /**
@@ -580,6 +590,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
       lanes.push({ sources: [id], run: async (plates, report) => {
         for (const p of plates) {
           const fuel = await fuelGate.wait(p.plate);
+          if (fuel == null) { report(p.plate, gnvDepFail(id)); continue; } // dependencia caída ≠ "no aplica"
           if (!isGasVehicle(fuel)) { report(p.plate, gnvSkip(id, fuel)); continue; }
           try { report(p.plate, await runSingleSource(p.plate, id, baseOpts(p.outDir))); }
           catch (e) { report(p.plate, { source: id.toUpperCase().replace(/-/g, '_'), label: id, category: 'GNV', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
@@ -700,10 +711,8 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): PipelineLane[] {
             // así no se gasta captcha en un vehículo que no aplica (FISE/Infogas son solo para GNV).
             if (GNV_SOURCES.has(t.src)) {
               const fuel = await fuelGate.wait(t.plate);
-              if (!isGasVehicle(fuel)) {
-                report(t.plate, gnvSkip(t.src, fuel));
-                continue;
-              }
+              if (fuel == null) { report(t.plate, gnvDepFail(t.src)); continue; } // dependencia caída ≠ "no aplica"
+              if (!isGasVehicle(fuel)) { report(t.plate, gnvSkip(t.src, fuel)); continue; }
             }
             report(t.plate, await runSingleSource(t.plate, t.src, baseOpts(t.outDir)));
           } catch (e) { report(t.plate, { source: t.src.toUpperCase(), label: t.src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
