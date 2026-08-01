@@ -878,6 +878,30 @@ export async function runInfogas(
           };
         }).catch(() => ({ esgnv: '', havc: '', pvci: '', pran: '', vhab: '' }));
         const { esgnv, havc, pvci, pran, vhab } = fields;
+        // Página detectada como resultado (state='ok') pero NINGÚN campo extraído → el DOM volvió a
+        // cambiar (etiquetas re-rotuladas / valores en otro nodo). En vez de devolver ENCONTRADO vacío
+        // en silencio (visto en BRA514 1-ago: "GNV: — · ¿crédito?: —"), VUELCA el HTML real del
+        // contenedor de resultados al summary para poder fijar el selector correcto de una vez.
+        if (!esgnv && !havc && !pvci && !pran && !vhab) {
+          const dom = await page.evaluate(() => {
+            const all = Array.from(document.querySelectorAll('*')) as HTMLElement[];
+            let best: HTMLElement | null = null; let bestLen = Infinity;
+            for (const el of all) {
+              const t = (el.innerText || '').replace(/\s+/g, ' ');
+              if (/placa de veh[ií]culo/i.test(t) && /(combustible|habilitado|cr[eé]dito|cilindro|revisi[oó]n)/i.test(t)) {
+                const h = el.outerHTML || '';
+                if (h.length < bestLen) { best = el; bestLen = h.length; }
+              }
+            }
+            const src = best ? best.outerHTML : document.body.innerHTML;
+            return (src || '').replace(/\s+/g, ' ').slice(0, 1800);
+          }).catch(() => '');
+          return {
+            ...base, status: 'ENCONTRADO',
+            summary: `ENCONTRADO pero extracción vacía (DOM cambió) · DUMP: ${dom}`,
+            data: {}, screenshot: shot, ms: Date.now() - t0,
+          };
+        }
         const tieneCredito = /^s[ií]/i.test(havc.trim());
         return {
           ...base, status: 'ENCONTRADO',
