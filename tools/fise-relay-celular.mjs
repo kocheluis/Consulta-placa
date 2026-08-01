@@ -24,6 +24,13 @@
 
 const [, , BASE_RAW, TOKEN] = process.argv;
 
+// El servidor de FISE manda su certificado SIN la cadena intermedia completa: los navegadores la
+// resuelven solos (por eso el portal "carga" en Chrome), pero Node es estricto y rechaza con
+// UNABLE_TO_VERIFY_LEAF_SIGNATURE (visto en Termux, 31-jul-2026). Se relaja la verificación TLS:
+// el ÚNICO tráfico https de este worker es FISE (el VPS va por http plano) y lo que viaja es data
+// pública (placa → montos del crédito GNV). Node imprime un warning al arrancar — es esperado.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const PAGE = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
 const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
