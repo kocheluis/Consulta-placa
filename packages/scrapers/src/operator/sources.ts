@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-import type { Page, Frame, Locator } from 'playwright';
+import type { Page, Frame, Locator, Response } from 'playwright';
 import type { CaptchaSolver } from '../captcha/index.js';
 import type { PapeletaDetalle } from '@app/shared';
 
@@ -314,27 +314,51 @@ export async function runApeseg(
     const capInput = fl.locator('#captcha, input[placeholder*="aptcha" i]').first();
     const img = fl.locator('img.captcha-img, img[class*="aptcha" i]').first();
 
+    // INSTRUMENTACIÓN (para NO asumir la causa): el SPA encadena captcha→verify→login→certificados.
+    // Un listener registra el status de cada eslabón; por intento anotamos si aparecieron placa/captcha
+    // y qué status trajo /certificados. Así el ERROR distingue: drift de selectores (pv/iv=0) ·
+    // captcha mal leído / verify rechaza (verify≠200) · anti-bot IP datacenter (verify/login=403) ·
+    // endpoint cambiado (certs nunca dispara pese a verify=200).
+    const api: Record<string, number> = {};
+    const onResp = (r: Response): void => {
+      const u = r.url();
+      const k = /captcha\/verify/i.test(u) ? 'verify'
+        : /\/certificados\/placa\//i.test(u) ? 'certs'
+          : /consulta-soat\/api\/login/i.test(u) ? 'login'
+            : /captcha-api\/api\/captcha/i.test(u) ? 'captcha' : '';
+      if (k) api[k] = r.status();
+    };
+    page.on('response', onResp);
+    const diag: string[] = [];
+    let capErr = '';
     let certs: Array<Record<string, unknown>> | null = null;
     for (let i = 1; i <= 4 && !certs; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(2000); } // captcha nuevo
-      await placaInput.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
-      await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+      const pv = await placaInput.waitFor({ state: 'visible', timeout: 20000 }).then(() => 1).catch(() => 0);
+      const iv = await img.waitFor({ state: 'visible', timeout: 15000 }).then(() => 1).catch(() => 0);
       await wait(500);
       await placaInput.fill(plate).catch(() => {});
-      const cap = await readCaptcha(solver, img);
+      // readCaptcha LANZA si la imagen no cargó → lo atrapamos por intento (antes abortaba los 4).
+      let cap = '';
+      try { cap = await readCaptcha(solver, img); } catch (e) { capErr = (e as Error).message; }
       await capInput.fill(cap).catch(() => {});
       // Si el captcha es válido, el SPA encadena verify→login→certificados. Capturamos ESA respuesta
       // (el JSON que queremos). Si el captcha falla, no se dispara y el waitForResponse expira → reintenta.
       const respP = page.waitForResponse((r) => /\/certificados\/placa\//i.test(r.url()), { timeout: 15000 }).catch(() => null);
       await fl.locator('button:has-text("Consultar"), button[type="submit"]').first().click().catch(() => {});
       const resp = await respP;
+      diag.push(`a${i}[pv=${pv} iv=${iv} cap="${cap}"(${cap.length}) certs=${resp ? resp.status() : 'none'}]`);
       if (resp && resp.status() === 200) {
         const j: unknown = await resp.json().catch(() => null);
         if (Array.isArray(j)) certs = j as Array<Record<string, unknown>>;
       }
     }
+    page.off('response', onResp);
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    if (!certs) return { ...base, status: 'ERROR', summary: 'captcha/API sin respuesta (4 intentos)', screenshot: shot, ms: Date.now() - t0 };
+    if (!certs) {
+      const detail = `${diag.join(' ')} · api:${JSON.stringify(api)}${capErr ? ` · capErr:${capErr}` : ''}`;
+      return { ...base, status: 'ERROR', summary: `captcha/API sin respuesta (4) · ${detail}`, screenshot: shot, ms: Date.now() - t0 };
+    }
     if (certs.length === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin SOAT en APESEG', data: {}, screenshot: shot, ms: Date.now() - t0 };
 
     // APESEG ya marca `Estado`: preferimos la póliza VIGENTE; si no hay, la de fin de vigencia más reciente.

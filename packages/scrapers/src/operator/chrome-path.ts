@@ -66,6 +66,12 @@ export function killEngineChrome(): void {
   // reiniciar, y el re-abrir forzaba cold-login (→ lockout por IP). Lo llamaban entre pedidos el
   // dedup (tryReuseReport), Cancelar y las corridas manuales. El pool cierra los suyos al apagarse.
   const keepSprlWarm = process.env.KEEP_SPRL_WARM === '1';
+  // KEEP_ATU_WARM=1 (lo pone el MOTOR CONTINUO): NO mata el Chrome de ATU (:9226). El reCAPTCHA v3 de
+  // ATU puntúa por REPUTACIÓN del perfil: matarlo entre reportes deja el perfil FRÍO cada vez → score
+  // bajo → "Verificar re-captcha" (círculo vicioso visto en CJL279). Mantenerlo tibio + el keep-alive
+  // (atu-keepalive) maduran el score. :9226 lo comparte Superbid, que en el reporte es lookup en DB
+  // (sin navegador) → gatear el puerto es seguro.
+  const keepAtuWarm = process.env.KEEP_ATU_WARM === '1';
   const ports = [...new Set([
     ...(keepSunarpWarm ? [] : [Number(process.env.CDP_SUNARP_PORT ?? 9222)]),
     ...(keepSprlWarm ? [] : [
@@ -73,10 +79,12 @@ export function killEngineChrome(): void {
       Number(process.env.CDP_SPRL_PORT_2 ?? 9225), // 2ª cuenta SPRL (si no, su Chrome quedaría huérfano)
       Number(process.env.CDP_SPRL_PORT_3 ?? 9228), // 3ª cuenta SPRL (backup). 9228: 9226/9227 = Superbid/ATU/SIGM
     ]),
-    // Superbid en el reporte es lookup en DB (sin navegador); puerto propio 9226 SOLO para no
-    // aliasar el 9225 de la 2ª cuenta SPRL (si algún día vuelve a abrir Chrome, no la mata).
-    Number(process.env.CDP_SUPERBID_PORT ?? 9226),
-    Number(process.env.CDP_ATU_PORT ?? 9226), // ATU (CDP reCAPTCHA v3)
+    ...(keepAtuWarm ? [] : [
+      // Superbid en el reporte es lookup en DB (sin navegador); puerto propio 9226 SOLO para no
+      // aliasar el 9225 de la 2ª cuenta SPRL (si algún día vuelve a abrir Chrome, no la mata).
+      Number(process.env.CDP_SUPERBID_PORT ?? 9226),
+      Number(process.env.CDP_ATU_PORT ?? 9226), // ATU (CDP reCAPTCHA v3)
+    ]),
     Number(process.env.CDP_SIGM_PORT ?? 9227), // SIGM (CDP Turnstile)
     Number(process.env.CDP_INFOGAS_PORT ?? 9230), // Infogas (CDP Cloudflare; 9229 = probe ATU)
   ])];

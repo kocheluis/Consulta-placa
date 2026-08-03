@@ -166,6 +166,10 @@ const ENGINE_CONTINUOUS = process.env.ENGINE_CONTINUOUS === '1';
 // con un handle muerto (historial fallaba al instante con "Target closed" hasta reiniciar) + cold-logins.
 // `??=` : un KEEP_SPRL_WARM=0 explícito en placape.env gana (para revertir sin código).
 if (ENGINE_CONTINUOUS) process.env.KEEP_SPRL_WARM ??= '1';
+// ATU: reCAPTCHA v3 puntúa por reputación del perfil. Matar su Chrome entre reportes lo deja frío →
+// rechazo. Con el motor continuo lo mantenemos tibio (+ el proceso atu-keepalive lo madura). KEEP_ATU_WARM=0
+// explícito revierte.
+if (ENGINE_CONTINUOUS) process.env.KEEP_ATU_WARM ??= '1';
 const ENGINE_MAX_INFLIGHT = Math.max(1, Number(process.env.ENGINE_MAX_INFLIGHT ?? 4));
 // Workers globales del carril ligero (fuentes NO-historial en paralelo). Son I/O-bound (esperan
 // CapSolver + portales), así que 4 corren bien aun en 2 vCPU. Baja si el VPS aprieta RAM / CapSolver 400.

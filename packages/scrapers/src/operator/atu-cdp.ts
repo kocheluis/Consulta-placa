@@ -265,7 +265,12 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
 
   const releaseLock = await acquirePortLock(port);
   try {
-    const chain = atuEgressChain();
+    // FAIL-FAST: por defecto SOLO el egreso directo. El egreso túnel (iProyal) también rebota el v3
+    // (visto en vivo: CJL279, ambos egresos rechazaron) y DUPLICA el tiempo (~55s extra + relanzar
+    // Chrome) → no vale la pena por default. `ATU_EGRESS_FALLBACK=1` lo reactiva. El fallback REGISTRAL
+    // (uso público del asiento SUNARP en report-transform) cubre la sección aunque ATU falle → fallar
+    // rápido (~30s) es mejor que insistir 112s.
+    const chain = process.env.ATU_EGRESS_FALLBACK === '1' ? atuEgressChain() : atuEgressChain().slice(0, 1);
     let last: CdpAtuResult = { ok: false, status: 'ERROR', error: 'sin egresos configurados' };
     for (let i = 0; i < chain.length; i++) {
       const eg = chain[i]!;
@@ -273,7 +278,9 @@ export async function scrapeAtuViaCdp(plateRaw: string, opts: CdpAtuOptions = {}
       let proxyArg = '';
       try { proxyArg = await eg.proxy(log); }
       catch (e) { log(`egreso "${eg.label}": no se pudo preparar (${(e as Error).message}) → salto al siguiente`); continue; }
-      const retries = Math.max(0, opts.retries ?? 2); // 3 intentos por egreso (el v3 necesita madurar)
+      // Reintentos por egreso (env-tunable). Con el Chrome tibio (keep-alive) el 1er intento pasa; en
+      // frío los reintentos no maduran gran cosa → bajar `ATU_RETRIES` acelera el fallo.
+      const retries = Math.max(0, opts.retries ?? Number(process.env.ATU_RETRIES ?? 2));
       // Egresos de FALLBACK con perfil FRESCO: el perfil que el egreso anterior acaba de quemar
       // (3 rechazos seguidos) arrastra su historial al relanzar — un perfil nuevo por IP nueva es
       // el patrón "usuario nuevo residencial", el que mejor puntúa (así pasó el probe del 29-jul).
