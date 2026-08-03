@@ -18,6 +18,7 @@ import type {
   TransporteInfo,
   VehicleSpecs,
   GnvPayload,
+  ImpuestoVehicularPayload,
   IaAnalysis,
   Valuation,
 } from '@app/shared';
@@ -954,6 +955,10 @@ function SectionBody({
     return section ? <CapturaBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
+  if (entry.key === 'impuesto_vehicular') {
+    return section ? <ImpuestoVehicularBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+  }
+
   if (entry.key === 'revision_tecnica') {
     return section ? <RevisionBody section={section} vehicle={vehicle} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
@@ -1220,6 +1225,65 @@ function GnvBody({ section, onRetry }: { section: SectionResult; onRetry: () => 
           ['Monto pendiente de pago', hadCredit && g.debtPending != null ? soles(g.debtPending) : null],
         ]}
       />
+    </div>
+  );
+}
+
+/* ── Impuesto vehicular (afectación — regla de 3 años, derivada de la 1ª inscripción) ── */
+function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+  if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
+  const p = section.payload as ImpuestoVehicularPayload | undefined;
+  if (!p) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+
+  if (p.registrationYear == null) {
+    return (
+      <StatusLine tone="neutral" icon="help">
+        No pudimos determinar el año de la primera inscripción para calcular la afectación al impuesto vehicular.
+      </StatusLine>
+    );
+  }
+
+  const est = p.estimatedAnnual != null
+    ? `${p.estimatedCurrency === 'USD' ? 'US$ ' : p.estimatedCurrency === 'PEN' ? 'S/ ' : ''}${p.estimatedAnnual.toLocaleString('es-PE')} /año (aprox.)`
+    : null;
+  const jurisdiction = p.registralOffice
+    ? `${p.registralOffice}${/lima/i.test(p.registralOffice) ? ' → SAT de Lima' : ''} (según el domicilio fiscal del dueño)`
+    : null;
+
+  return (
+    <div className="flex flex-col gap-3">
+      {p.afecto ? (
+        <>
+          <StatusLine tone="warning" icon="request_quote">
+            Afecto al Impuesto al Patrimonio Vehicular hasta {p.lastAffectedYear} — ejercicios {p.affectedYears.join(', ')}
+          </StatusLine>
+          <StatusLine tone="neutral" icon="info">
+            Verifica que estas cuotas estén canceladas antes de comprar: las impagas las asume el nuevo dueño. Si el propietario nunca lo declaró en el SAT es «omiso» y la notaría bloqueará la transferencia hasta que regularice (años atrasados + multa).
+          </StatusLine>
+        </>
+      ) : (
+        <>
+          <StatusLine tone="success" icon="verified">
+            Inafecto desde {(p.lastAffectedYear ?? p.registrationYear) + 1}: ya cumplió los 3 años del impuesto (1ª inscripción {p.registrationYear})
+          </StatusLine>
+          <StatusLine tone="neutral" icon="info">
+            Solo conviene revisar que no arrastre deudas antiguas impagas de los ejercicios {p.affectedYears.join(', ')}.
+          </StatusLine>
+        </>
+      )}
+      <DefGrid
+        items={[
+          ['Año de 1ª inscripción (SUNARP)', String(p.registrationYear)],
+          ['Ejercicios afectos', p.affectedYears.length ? p.affectedYears.join(', ') : null],
+          ['Cuotas ya devengadas', p.afecto && p.dueYears.length ? p.dueYears.join(', ') : null],
+          ['Cuota anual estimada', est],
+          ['Valor declarado (1ª inscripción)', p.declaredValue],
+          ['Jurisdicción probable', jurisdiction],
+        ]}
+      />
+      <p className="font-body text-[11px] leading-snug text-slate-400">
+        Estimado ≈1% del valor declarado; el SAT calcula sobre la tabla referencial del MEF, el monto real puede variar. La deuda exacta se consulta en el SAT por titular (no por placa).
+      </p>
     </div>
   );
 }

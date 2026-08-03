@@ -102,6 +102,17 @@ export const SECTION_CATALOG: readonly SectionCatalogEntry[] = [
     blurb: 'Papeletas municipales (SAT) y por cinemómetro en carretera (SUTRAN), con montos.',
   },
   {
+    key: 'impuesto_vehicular',
+    label: 'Impuesto vehicular (afectación)',
+    icon: 'request_quote',
+    tier: ReportTier.PRO,
+    sources: ['SUNARP'],
+    // Informativo: solo señala la AFECTACIÓN (obligación), no detecta deuda real → no puntúa el score.
+    concept: null,
+    dataKind: SectionKind.IMPUESTO_VEHICULAR,
+    blurb: 'Regla de 3 años del Impuesto al Patrimonio Vehicular: a partir del año de la 1ª inscripción SUNARP, indica si el vehículo sigue AFECTO (sus cuotas deben estar pagadas — las impagas las asume el comprador) o ya está INAFECTO, con los ejercicios y una cuota anual estimada.',
+  },
+  {
     key: 'revision_tecnica',
     label: 'Revisión técnica',
     icon: 'fact_check',

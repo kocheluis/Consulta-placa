@@ -30,6 +30,8 @@ export const SectionKind = {
   HISTORIAL: 'HISTORIAL',
   /** Identidad específica: versión, carrocería, combustible, cilindrada, dimensiones… (asiento SUNARP). */
   IDENTIDAD_ESPECIFICA: 'IDENTIDAD_ESPECIFICA',
+  /** Impuesto al Patrimonio Vehicular: afectación (regla de 3 años) derivada de la 1ª inscripción SUNARP. */
+  IMPUESTO_VEHICULAR: 'IMPUESTO_VEHICULAR',
   /** Valorización de mercado (ULTRA): precio estimado por rangos de km + ajustes por condición. */
   VALORIZACION: 'VALORIZACION',
   GNV: 'GNV',

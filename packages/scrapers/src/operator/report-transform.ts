@@ -20,6 +20,7 @@ import {
   type GravamenItem,
   type HistorialPayload,
   type HistorialEvent,
+  type ImpuestoVehicularPayload,
   type AuctionInfo,
   type TransporteInfo,
   type VehicleSpecs,
@@ -414,6 +415,54 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     };
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
 
+    // ── IMPUESTO VEHICULAR (Capa A — DERIVADA de la 1ª inscripción; regla de 3 años) ──
+    // El Impuesto al Patrimonio Vehicular grava 3 ejercicios desde el AÑO SIGUIENTE a la 1ª
+    // inscripción en SUNARP. Con el año de esa inscripción (del historial) decimos si sigue AFECTO
+    // (sus cuotas deben estar pagadas — las impagas las asume el comprador) o ya INAFECTO. NO
+    // consulta la deuda real: eso es por titular en el SAT, no por placa (Capa B).
+    const parseTituloYear = (t: unknown): number | null => {
+      const m = /(\d{4})\s*-\s*\d+/.exec(String(t ?? ''));
+      const y = m ? Number(m[1]) : NaN;
+      return Number.isFinite(y) && y >= 1980 && y <= 2100 ? y : null;
+    };
+    let regYear: number | null = null;
+    let declaredValue: string | null = null;
+    for (const g of grupos) {
+      const primera = g.acciones.find((a) => /primera inscripci[oó]n/i.test(String(a.acto ?? '')));
+      if (primera) { regYear = parseTituloYear(g.titulo); declaredValue = clip(primera.precio || primera.montoPagado, 40); break; }
+    }
+    // Sin "Primera Inscripción" explícita → el título más antiguo aproxima la 1ª inscripción.
+    if (regYear == null) {
+      const years = grupos.map((g) => parseTituloYear(g.titulo)).filter((y): y is number => y != null);
+      if (years.length) regYear = Math.min(...years);
+    }
+    const curYear = new Date(at).getFullYear();
+    const sede = (data(sunarp).sede as string) ?? null;
+    let impPay: ImpuestoVehicularPayload;
+    if (regYear != null) {
+      const affectedYears = [regYear + 1, regYear + 2, regYear + 3];
+      const lastAffectedYear = regYear + 3;
+      const declVal = moneyOrNull(declaredValue);
+      const estimatedCurrency = declaredValue
+        ? (/US\$|\bUSD\b|\$/.test(declaredValue) ? 'USD' : /S\/|\bPEN\b|soles/i.test(declaredValue) ? 'PEN' : null)
+        : null;
+      impPay = {
+        afecto: curYear <= lastAffectedYear,
+        registrationYear: regYear,
+        affectedYears,
+        lastAffectedYear,
+        dueYears: affectedYears.filter((y) => y <= curYear),
+        upcomingYears: affectedYears.filter((y) => y > curYear),
+        declaredValue,
+        estimatedAnnual: declVal != null ? Math.round(declVal * 0.01) : null,
+        estimatedCurrency,
+        registralOffice: sede,
+      };
+    } else {
+      impPay = { afecto: null, registrationYear: null, affectedYears: [], lastAffectedYear: null, dueYears: [], upcomingYears: [], declaredValue: null, estimatedAnnual: null, estimatedCurrency: null, registralOffice: sede };
+    }
+    src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: impPay });
+
     // ── IDENTIDAD ESPECÍFICA (ficha técnica del asiento: versión, carrocería, combustible…) ──
     // Como el historial SÍ corrió, la sección siempre se emite (así el cliente la ve): AVAILABLE con
     // la ficha si algún asiento la trajo (la mayoría la tiene en su Primera Inscripción / Cambio de
@@ -432,6 +481,8 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     if (!sigmOk) src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at }); // SIGM ya la cubrió
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    // El impuesto vehicular (afectación) se DERIVA del año de la 1ª inscripción → depende del historial.
+    src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
   }
 
   const report = buildReport({ id, plateDisplay: plate, plateNormalized: plate, generatedAt: at, sources: src });

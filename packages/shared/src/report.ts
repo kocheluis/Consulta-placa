@@ -262,6 +262,38 @@ export interface VehicleSpecs {
   sourceTitle?: string | null;
 }
 
+/**
+ * Payload de la sección IMPUESTO_VEHICULAR (Capa A — DERIVADA, sin scraping extra).
+ * El Impuesto al Patrimonio Vehicular (TUO de la Ley de Tributación Municipal, arts. 30-37) grava
+ * el vehículo durante 3 ejercicios contados desde el año SIGUIENTE a su primera inscripción en SUNARP.
+ * Con el año de la 1ª inscripción (del historial) el reporte determina si el vehículo está AFECTO
+ * (dentro del plazo → sus cuotas deben estar canceladas; las impagas las asume el comprador) o
+ * INAFECTO (ya cumplió los 3 años). NO consulta la deuda real: eso es por titular en el SAT (Capa B),
+ * no por placa. El monto es un ESTIMADO ≈1% del valor declarado (el SAT usa la tabla referencial MEF).
+ */
+export interface ImpuestoVehicularPayload {
+  /** ¿Dentro del periodo afecto (≤3 años desde la 1ª inscripción)? null = no se pudo determinar el año. */
+  afecto: boolean | null;
+  /** Año de la primera inscripción de dominio en SUNARP (base del cómputo). */
+  registrationYear: number | null;
+  /** Ejercicios afectos: [regYear+1, regYear+2, regYear+3]. */
+  affectedYears: number[];
+  /** Último ejercicio afecto (regYear + 3). */
+  lastAffectedYear: number | null;
+  /** Ejercicios afectos ya devengados (≤ año de la consulta) que deberían estar pagados. */
+  dueYears: number[];
+  /** Ejercicios afectos aún por vencer (> año de la consulta). */
+  upcomingYears: number[];
+  /** Valor declarado en la 1ª inscripción, texto tal cual ("US$ 31,790.00"). Base del estimado. */
+  declaredValue: string | null;
+  /** Cuota anual estimada ≈1% del valor declarado (en la moneda de `estimatedCurrency`). */
+  estimatedAnnual: number | null;
+  /** Moneda del estimado ("USD" | "PEN"), o null si no se pudo inferir. */
+  estimatedCurrency: string | null;
+  /** Sede registral SUNARP (pista de jurisdicción; el domicilio fiscal del dueño es lo que manda). */
+  registralOffice: string | null;
+}
+
 /** Payload de la sección MULTAS_ELECTORALES (ONPE, por DNI del titular). */
 export interface MultasElectorales {
   hasFine: boolean;
