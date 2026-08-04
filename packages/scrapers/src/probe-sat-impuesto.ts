@@ -95,11 +95,20 @@ try {
   await wait(2500);
   await dumpAll(p, 'PASO 0 · reja inicial');
 
-  // ── PASO 1: entrar a "Consulta Tributos" / "Tributo detalles" ──
-  const entered = await clickByText(p, /consulta\s+tributos|tributo\s+detalles/i);
-  console.log(`\n>> PASO 1: clic en "Consulta Tributos/Tributo detalles" → ${entered ? 'OK' : 'NO ENCONTRADO'}`);
-  await wait(2500);
-  await dumpAll(p, 'PASO 1 · tras entrar a tributos');
+  // ── PASO 1: navegar DIRECTO al módulo "Tributo detalles" (tributosRef.aspx?tri=V = Vehicular) ──
+  // La reja vive en el frame bienvenida.aspx; su link trae el mysession de la sesión. Ir directo a esa
+  // URL es más robusto que clicar dentro del frameset (el link apunta a otro target y el frame no cambia).
+  let modUrl = '';
+  for (const fr of p.frames()) {
+    const a = fr.locator('a[href*="tributosRef.aspx"], a:has-text("Tributo detalles")').first();
+    if (await a.count().catch(() => 0)) {
+      const href = await a.getAttribute('href').catch(() => '');
+      if (href) { modUrl = new URL(href, fr.url()).toString(); break; }
+    }
+  }
+  console.log('\n>> PASO 1: módulo Tributo detalles →', modUrl || 'NO ENCONTRADO');
+  if (modUrl) { await p.goto(modUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch((e) => console.log('  goto mod:', (e as Error).message)); await wait(2500); }
+  await dumpAll(p, 'PASO 1 · módulo tributosRef (impuesto vehicular)');
 
   // ── PASO 2: tab "Impuesto Vehicular" + opción "Búsqueda por placa" ──
   await clickByText(p, /impuesto\s+vehicular/i);
