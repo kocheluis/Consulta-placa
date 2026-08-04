@@ -144,12 +144,25 @@ try {
   await dumpTables(p, 'PASO 3 · lista de contribuyentes');
   await p.screenshot({ path: '/root/out/sat-impuesto-1.png', fullPage: true }).catch(() => {});
 
-  // ── PASO 4: clic en 1er contribuyente → cuotas ──
-  const clicked = await clickByText(p, /LOGISTIC|ARENAZA|E\.I\.R\.L|S\.A\.|\d{6,}/i, 'table a, a[href*="__doPostBack"], tr[onclick], a');
-  console.log(`\n>> PASO 4: clic en contribuyente → ${clicked ? 'OK' : 'NO ENCONTRADO'}`);
+  // ── PASO 4: clic en el contribuyente CON cuotas (Silva/ARENAZA; DIZA no debe nada → tabla vacía) ──
+  const clicked = await clickByText(p, /ARENAZA|SILVA/i, 'table a, a[href*="__doPostBack"]');
+  console.log(`\n>> PASO 4: clic en contribuyente (Silva) → ${clicked ? 'OK' : 'NO ENCONTRADO'}`);
   await wait(4000);
   await p.waitForLoadState('networkidle').catch(() => {});
-  await dumpTables(p, 'PASO 4 · tabla de cuotas');
+  await dumpAll(p, 'PASO 4a · pantalla de cuotas (selects/botones/inputs)');
+  // Filtro Estado=Todos + Actualizar (por defecto muestra solo "Cancelado" = pagado).
+  for (const fr of p.frames()) {
+    for (const sel of await fr.locator('select').all()) {
+      const opts = await sel.locator('option').allTextContents().catch(() => []);
+      if (opts.some((o) => /cancelado|pendiente/i.test(o)) && opts.some((o) => /^\s*todos\s*$/i.test(o))) {
+        await sel.selectOption({ label: (opts.find((o) => /^\s*todos\s*$/i.test(o)) ?? '').trim() }).catch(() => {}); console.log('>> Estado → Todos'); break;
+      }
+    }
+  }
+  await clickByText(p, /actualizar/i, 'input,button,a');
+  await wait(3000);
+  await p.waitForLoadState('networkidle').catch(() => {});
+  await dumpTables(p, 'PASO 4b · tabla de cuotas (Estado=Todos)');
   await p.screenshot({ path: '/root/out/sat-impuesto-2.png', fullPage: true }).catch(() => {});
   console.log('\n(screenshots: /root/out/sat-impuesto-1.png, /root/out/sat-impuesto-2.png)');
 } finally {
