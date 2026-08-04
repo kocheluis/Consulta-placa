@@ -551,7 +551,7 @@ function getPipeline(): Pipeline {
   const cont = buildContinuousLanes({ captchaApiKey: KEY, captchaProvider: PROVIDER, headless: true, lightConcurrency: ENGINE_LIGHT_CONCURRENCY });
   pipeline = new Pipeline({
     lanes: cont.lanes,
-    onSubmit: cont.armFuelGate, // re-arma el gate GNV por corrida (fix re-consulta: no reusa fuel viejo)
+    onSubmit: cont.armGates, // re-arma los gates (combustible + existencia) por corrida (no reusa señales viejas)
     jobTimeoutMs: JOB_TIMEOUT_MS, // historial colgado / ambos slots bloqueados → cierre parcial
     onProgress: (job) => { const j = contJobs.get(job.id); if (j) { j.results = job.results; j.percent = job.percent; } },
     onJobDone: async (job) => {

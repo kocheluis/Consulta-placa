@@ -368,6 +368,11 @@ async function runSunarpSource(
       logLine(outDir, 'sunarp', `RESULTADO ENCONTRADO${owner} · ${Date.now() - t0}ms`);
       return { ...base, status: 'ENCONTRADO', summary: `Datos registrales obtenidos${owner}`, data: r.data, screenshot: shotPath, ms: Date.now() - t0 };
     }
+    // Placa inexistente (modal SUNARP): SIN_REGISTRO con data.plateNotFound → el motor CORTA el resto.
+    if (r.notFound) {
+      logLine(outDir, 'sunarp', `RESULTADO placa no registrada · ${Date.now() - t0}ms`);
+      return { ...base, status: 'SIN_REGISTRO', summary: 'Placa no registrada en SUNARP (no existe)', data: { plateNotFound: true }, screenshot: shotPath, ms: Date.now() - t0 };
+    }
     logLine(outDir, 'sunarp', `ERROR ${r.error ?? 'no disponible'}`);
     return { ...base, status: 'ERROR', summary: r.error ?? 'SUNARP no disponible', ms: Date.now() - t0 };
   } catch (e) {
@@ -556,6 +561,53 @@ function makeFuelGate(): {
   };
 }
 
+/**
+ * Gate de EXISTENCIA de placa (mismo patrón que makeFuelGate): SUNARP corre PRIMERO y resuelve si la
+ * placa existe; las demás fuentes lo consultan para saltarse cuando NO existe. `true` = existe ·
+ * `false` = no registrada (modal SUNARP) → saltar el resto · `null` = desconocido (sin SUNARP en el
+ * pedido, o SUNARP falló por otra causa) → NO se salta nada (se corre normal). `arm(plate)` lo re-arma
+ * Pipeline.submit por corrida → re-consultar una placa no reusa la señal de existencia anterior.
+ */
+interface ExistWaiter { promise: Promise<boolean | null>; resolve: (e: boolean | null) => void; settled: boolean }
+function makeExistGate(): {
+  arm: (plate: string) => void;
+  resolve: (plate: string, exists: boolean | null) => void;
+  wait: (plate: string) => Promise<boolean | null>;
+} {
+  const waiters = new Map<string, ExistWaiter>();
+  const create = (): ExistWaiter => {
+    let resolve!: (e: boolean | null) => void;
+    const promise = new Promise<boolean | null>((r) => { resolve = r; });
+    return { promise, resolve, settled: false };
+  };
+  const signal = (plate: string): ExistWaiter => {
+    let w = waiters.get(plate);
+    if (!w) { w = create(); waiters.set(plate, w); }
+    return w;
+  };
+  return {
+    arm: (plate) => { waiters.set(plate, create()); },
+    resolve: (plate, exists) => { const w = signal(plate); if (!w.settled) { w.settled = true; w.resolve(exists); } },
+    wait: (plate) => Promise.race([
+      signal(plate).promise,
+      new Promise<boolean | null>((r) => { setTimeout(() => r(null), 8 * 60 * 1000); }),
+    ]),
+  };
+}
+
+/** ¿El resultado de SUNARP indica que la placa NO existe? (modal "No se ha encontrado la placa"). */
+const isPlateNotFound = (r: OperatorSourceResult): boolean =>
+  r.source === 'SUNARP' && (r.data as { plateNotFound?: boolean } | undefined)?.plateNotFound === true;
+
+/** Resultado "NO ejecutada: la placa no existe" — la fuente se SALTA (no se corre) porque SUNARP
+ *  confirmó que la placa no está registrada. SIN_REGISTRO con `data.plateNotFound` para que la consola
+ *  y el transform lo distingan de un fallo real. */
+const plateNotFoundSkip = (srcId: string): OperatorSourceResult => ({
+  source: srcId.toUpperCase().replace(/-/g, '_'), label: srcId, category: 'OTRO', status: 'SIN_REGISTRO',
+  summary: 'No ejecutada: la placa no está registrada en SUNARP',
+  data: { plateNotFound: true }, ms: 0,
+});
+
 /** Resultado "no aplica" de una fuente GNV (vehículo CONFIRMADO no-gas). `data.aplicable=false` le
  *  dice al transform que fue un SALTO del gate (≠ "sin crédito" de un vehículo que SÍ es a gas). */
 const gnvSkip = (srcId: string, fuel: string): OperatorSourceResult => ({
@@ -685,7 +737,7 @@ export interface ContinuousLaneOpts extends BatchLaneOpts {
  * A diferencia de `buildBatchLanes` (un carril por fuente sobre un conjunto FIJO), estos carriles no
  * terminan: viven mientras el canal siga abierto y admiten placas nuevas continuamente.
  */
-export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: PipelineLane[]; armFuelGate: (plate: string) => void } {
+export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: PipelineLane[]; armGates: (plate: string) => void } {
   const baseOpts = (outDir: string): OperatorReportOptions => ({ outDir, captchaProvider: opts.captchaProvider, captchaApiKey: opts.captchaApiKey, headless: opts.headless ?? true });
   const K = Math.max(1, opts.lightConcurrency ?? 2);
 
@@ -694,6 +746,11 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
   // (o si el SPRL falla → fuel null) la señal resuelve null y GNV se SALTA (no se confirma gas).
   // Bounded por la vida del motor (se limpia en cada deploy/reinicio).
   const fuelGate = makeFuelGate();
+  // Gate de EXISTENCIA (ver makeExistGate): el carril ligero corre SUNARP PRIMERO y resuelve si la placa
+  // existe; el carril de historial (y las demás fuentes ligeras) lo consultan para SALTARSE una placa
+  // inexistente sin gastar tiempo/captcha (evita los ~90-280s de apeseg/historial para una placa que no
+  // existe). false = no existe · true = existe · null = desconocido (se corre normal).
+  const existGate = makeExistGate();
 
   // Carril historial: pool continuo de 2 hilos SPRL sobre el canal del pipeline.
   const outByPlate = new Map<string, string>();
@@ -701,9 +758,26 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
     sources: ['historial'],
     run: async (take, report) => {
       await runHistorialPoolLive(async () => {
-        const it = await take();
-        if (it) { outByPlate.set(it.plate, it.outDir); startLog(it.outDir, 'historial', it.plate); } // crea historial.log
-        return it ? { plate: it.plate, outDir: it.outDir } : null;
+        // Salta placas inexistentes ANTES del login SPRL: toma del canal hasta hallar una que exista
+        // (o hasta que el canal cierre). `existGate` lo resuelve SUNARP en el carril ligero.
+        for (;;) {
+          const it = await take();
+          if (!it) return null; // canal cerrado
+          outByPlate.set(it.plate, it.outDir);
+          // Espera ACOTADA la señal de existencia: SUNARP resuelve "no existe" rápido (~15s) → salta el
+          // login SPRL; si SUNARP tarda (frío) no bloquea de más → arranca a los ~30s (EXIST_GATE_MS).
+          const exists = await Promise.race([
+            existGate.wait(it.plate),
+            new Promise<boolean | null>((r) => { setTimeout(() => r(null), Number(process.env.EXIST_GATE_MS ?? 30000)); }),
+          ]);
+          if (exists === false) {
+            report(it.plate, plateNotFoundSkip('historial'));
+            fuelGate.resolve(it.plate, null); // que el gate GNV no cuelgue por el historial saltado
+            continue; // toma la siguiente
+          }
+          startLog(it.outDir, 'historial', it.plate); // crea historial.log
+          return { plate: it.plate, outDir: it.outDir };
+        }
       }, {
         // Default 1: 1 historial a la vez sobre el slot caliente + failover (evita el cold-login de la
         // 2ª cuenta en cada pedido → lockout). Sube HISTORIAL_CONCURRENCY solo si cada cuenta tiene keep-alive.
@@ -733,9 +807,33 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
         for (;;) {
           const it = await take();
           if (!it) { taskQ.close(); break; }
-          // Sin 'historial' en el pedido no hay señal de combustible → resolvemos null (GNV se saltará).
-          if (!it.sources.includes('historial')) fuelGate.resolve(it.plate, null);
-          for (const src of it.sources.filter((s) => s !== 'historial')) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
+          const nonHist = it.sources.filter((s) => s !== 'historial');
+          const others = nonHist.filter((s) => s !== 'sunarp');
+          // GATE DE EXISTENCIA: corre SUNARP PRIMERO (ya está serializado por su port-lock :9222, así que
+          // no se pierde paralelismo real). Si la placa NO existe (modal SUNARP), NO se encolan las demás
+          // fuentes: se marcan "placa no registrada" y el carril historial se salta vía existGate.
+          if (nonHist.includes('sunarp')) {
+            let sun: OperatorSourceResult;
+            try { sun = await runSingleSource(it.plate, 'sunarp', baseOpts(it.outDir)); }
+            catch (e) { sun = { source: 'SUNARP', label: 'sunarp', category: 'REGISTRAL', status: 'ERROR', summary: (e as Error).message, ms: 0 }; }
+            report(it.plate, sun);
+            const notFound = isPlateNotFound(sun);
+            existGate.resolve(it.plate, !notFound);
+            if (notFound) {
+              // Placa inexistente → NO se corre nada más: se reportan las demás como saltadas y se cierra.
+              fuelGate.resolve(it.plate, null);
+              for (const src of others) report(it.plate, plateNotFoundSkip(src));
+              continue;
+            }
+            // Existe → sigue el flujo normal con las demás fuentes (SUNARP ya corrió).
+            if (!it.sources.includes('historial')) fuelGate.resolve(it.plate, null);
+            for (const src of others) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
+          } else {
+            // Sin SUNARP en el pedido → no se puede gatear existencia (se corre todo, como antes).
+            existGate.resolve(it.plate, null);
+            if (!it.sources.includes('historial')) fuelGate.resolve(it.plate, null);
+            for (const src of nonHist) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
+          }
         }
       })();
       // Pool de K workers: corren fuentes de CUALQUIER placa en paralelo (reparto natural del trabajo).
@@ -759,9 +857,9 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
     },
   };
 
-  // armFuelGate lo llama Pipeline.submit (una vez por corrida, antes de rutear) → re-consultar una
-  // placa arranca con señal de combustible FRESCA (no reusa la de una corrida anterior).
-  return { lanes: [historialLane, lightLane], armFuelGate: (plate: string) => fuelGate.arm(plate) };
+  // armGates lo llama Pipeline.submit (una vez por corrida, antes de rutear) → re-consultar una placa
+  // arranca con señales FRESCAS (combustible + existencia), sin reusar las de una corrida anterior.
+  return { lanes: [historialLane, lightLane], armGates: (plate: string) => { fuelGate.arm(plate); existGate.arm(plate); } };
 }
 
 async function runSuperbidSource(

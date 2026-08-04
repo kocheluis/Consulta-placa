@@ -56,6 +56,9 @@ export interface CdpSunarpResult {
   data?: Record<string, unknown>;
   text?: string;
   error?: string;
+  /** true = SUNARP confirmó que la placa NO está registrada (modal "No se ha encontrado la placa").
+   *  El motor lo usa para CORTAR: no corre el resto de fuentes de una placa inexistente. */
+  notFound?: boolean;
 }
 
 /** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio. */
@@ -185,8 +188,25 @@ export async function scrapeSunarpViaCdp(
     }
 
     const dataTries = Math.ceil((opts.dataWaitMs ?? 180000) / 500); // poll 500ms (antes 1000ms): captura la imagen ~0.5s antes
-    for (let i = 0; i < dataTries && !dataImage; i++) await wait(500);
+    // Además de la imagen, vigilamos el modal de "placa no existe": para una placa inexistente SUNARP
+    // muestra "No se ha encontrado la placa del vehículo ingresado" y NUNCA genera la imagen → antes se
+    // esperaban los 180s completos y salía un ERROR confuso. Al detectarlo, cortamos al instante.
+    const NOT_FOUND_RX = /no se ha encontrado la placa|no se encontr[oó][^.]*placa|placa[^.]*no se (?:ha\s+)?encontr/i;
+    let notFound = false;
+    for (let i = 0; i < dataTries && !dataImage && !notFound; i++) {
+      await wait(500);
+      // El modal aparece a los pocos segundos del Buscar; chequeamos el texto cada ~1.5s (no cada 500ms)
+      // para no recargar CPU en la espera larga.
+      if (i % 3 === 0) {
+        const body = await page.locator('body').innerText({ timeout: 1000 }).catch(() => '');
+        if (NOT_FOUND_RX.test(body)) notFound = true;
+      }
+    }
 
+    if (notFound) {
+      log('SUNARP: la placa NO está registrada (modal "No se ha encontrado la placa")');
+      return { ok: false, status: SectionStatus.NOT_FOUND, notFound: true, error: 'Placa no registrada en SUNARP (no existe)' };
+    }
     if (!dataImage) {
       return { ok: false, status: SectionStatus.UNAVAILABLE, error: 'No se capturó la imagen de datos (¿no se hizo la búsqueda?).' };
     }
