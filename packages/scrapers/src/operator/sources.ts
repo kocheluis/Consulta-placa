@@ -463,7 +463,11 @@ export async function runSatImpuesto(
     }
     // Dedupe por (año, cuota, estado) — un contribuyente puede repetirse entre re-búsquedas.
     const seen = new Set<string>();
-    const cuotas = all.filter((c) => { const k = `${c.year}-${c.cuota}-${c.estado}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    const dedup = all.filter((c) => { const k = `${c.year}-${c.cuota}-${c.estado}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    // La "CuotaÚnica" (cuota "0") es el AGREGADO de las cuotas impagas del año (pagar todo de una): si el
+    // mismo año/estado trae cuotas individuales, se DESCARTA para NO duplicar el monto (193.96 = 96.98×2).
+    const hasIndiv = new Set(dedup.filter((c) => c.cuota !== '0').map((c) => `${c.year}-${c.estado}`));
+    const cuotas = dedup.filter((c) => c.cuota !== '0' || !hasIndiv.has(`${c.year}-${c.estado}`));
     const pending = cuotas.filter((c) => c.estado === 'pendiente');
     const pendingTotal = Math.round(pending.reduce((s, c) => s + (c.deuda || c.total), 0) * 100) / 100;
     const paidYears = [...new Set(cuotas.filter((c) => c.estado === 'pagado').map((c) => c.year))].sort((a, b) => a - b);
