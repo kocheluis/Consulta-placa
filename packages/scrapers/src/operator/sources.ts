@@ -375,6 +375,113 @@ export async function runApeseg(
   }
 }
 
+/* ─────── SAT Lima · Impuesto vehicular (VALIDA el pago, POR PLACA) ─────── */
+// Capa B del impuesto vehicular: confirma cuánto se pagó / queda pendiente (la Capa A solo estima).
+// Flujo REAL (probe `probe-sat-impuesto.ts`, ago-2026): entrar por un módulo → redirige a principal.aspx
+// con `mysession`; de la reja se toma el link "Tributo detalles" (tributosRef.aspx?tri=V = Vehicular) que
+// trae la sesión → form ASP.NET: select `#tipoBusqueda`=`divBuscaPlaca` + placa + captcha imagen (CapSolver)
+// → grid `grdAdministrados` con los CONTRIBUYENTES de esa placa (puede haber >1: dueños distintos). Se
+// clica cada uno → pantalla de cuotas (`grdEstadoCuenta`); el filtro `ddlEstado` (1=Pendiente, 2=Cancelado,
+// NO hay "Todos") se consulta en ambos + Actualizar. Se filtran las filas por la placa (col Referencia).
+// PII: NO se exponen los nombres de los contribuyentes (terceros) — solo las cuotas por placa.
+export interface SatCuota { year: number; cuota: string; total: number; pagado: number; deuda: number; vencimiento: string | null; estado: 'pendiente' | 'pagado' }
+const impMoney = (s: unknown): number => { const n = parseFloat(String(s ?? '').replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : 0; };
+
+export async function runSatImpuesto(
+  page: Page,
+  plate: string,
+  solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SAT_IMPUESTO', label: 'SAT Lima · Impuesto vehicular', category: 'IMPUESTO' };
+  // Lee una tabla ASP.NET por id → matriz de celdas (sin helpers nombrados dentro del evaluate: __name).
+  const readGrid = (id: string): Promise<string[][]> => page.evaluate((tid) => {
+    const t = document.getElementById(tid);
+    if (!t) return [] as string[][];
+    return Array.from(t.querySelectorAll('tr')).map((tr) => Array.from(tr.querySelectorAll('th,td')).map((c) => (c.textContent || '').replace(/\s+/g, ' ').trim()));
+  }, id).catch(() => [] as string[][]);
+  try {
+    // 1. Entrar y obtener la URL del módulo CON la sesión (mysession en el link de "Tributo detalles").
+    await page.goto('https://www.sat.gob.pe/VirtualSAT/modulos/BusquedaTributario.aspx', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    let modUrl = '';
+    for (const fr of page.frames()) {
+      const href = await fr.locator('a[href*="tributosRef.aspx?tri=V"]').first().getAttribute('href').catch(() => null);
+      if (href) { modUrl = new URL(href, fr.url()).toString(); break; }
+    }
+    if (!modUrl) return { ...base, status: 'ERROR', summary: 'no se estableció la sesión del SAT (sin link tributosRef)', ms: Date.now() - t0 };
+
+    // doSearch: carga el form, elige "por placa", resuelve el captcha y Buscar → deja la grid de contribuyentes.
+    const doSearch = async (): Promise<{ ok: boolean; contribs: number; cap: string }> => {
+      await page.goto(modUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      await page.locator('#tipoBusqueda').selectOption('divBuscaPlaca').catch(() => {});
+      await wait(700);
+      await page.locator('#ctl00_cplPrincipal_txtPlaca').fill(plate).catch(() => {});
+      const cap = await readCaptcha(solver, page.locator('img.captcha_class').first());
+      await page.locator('#ctl00_cplPrincipal_txtCaptcha').fill(cap).catch(() => {});
+      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), page.locator('#ctl00_cplPrincipal_CaptchaContinue').click().catch(() => {})]);
+      let body = '';
+      for (let k = 0; k < 25; k++) { await wait(400); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); const rows = await readGrid('ctl00_cplPrincipal_grdAdministrados'); if (rows.length > 1 || /c[oó]digo de seguridad incorrect|no se (ha\s+)?encontr|no existe/i.test(body)) break; }
+      if (/c[oó]digo de seguridad incorrect/i.test(body)) return { ok: false, contribs: 0, cap };
+      const rows = await readGrid('ctl00_cplPrincipal_grdAdministrados');
+      return { ok: true, contribs: Math.max(0, rows.length - 1), cap };
+    };
+
+    // readCuotas: en la pantalla de cuotas, filtra por estado (1=Pendiente, 2=Cancelado) + Actualizar y parsea
+    // grdEstadoCuenta. Columnas: 0 Año · 1 Cuota · 3 Total Deuda · 6 Pagado · 7/8 Deuda · 9 Vencimiento · 16 Referencia.
+    const readCuotas = async (estado: '1' | '2'): Promise<SatCuota[]> => {
+      await page.locator('#ctl00_cplPrincipal_ddlEstado').selectOption(estado).catch(() => {});
+      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), page.locator('#ctl00_cplPrincipal_btnBuscar').click().catch(() => {})]);
+      await wait(1200);
+      const out: SatCuota[] = [];
+      for (const r of (await readGrid('ctl00_cplPrincipal_grdEstadoCuenta')).slice(1)) {
+        const ref = r[16] ?? r[r.length - 1] ?? '';
+        if (!ref.includes(plate)) continue;
+        const year = parseInt(r[0] ?? '', 10);
+        if (!Number.isFinite(year)) continue;
+        out.push({ year, cuota: r[1] ?? '', total: impMoney(r[3]), pagado: impMoney(r[6]), deuda: impMoney(r[7]) || impMoney(r[8]), vencimiento: r[9] || null, estado: estado === '1' ? 'pendiente' : 'pagado' });
+      }
+      return out;
+    };
+
+    // 2. Buscar (reintenta si el captcha falla).
+    let search = await doSearch();
+    for (let i = 0; i < 3 && !search.ok; i++) search = await doSearch();
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    if (!search.ok) return { ...base, status: 'ERROR', summary: 'captcha rechazado tras varios intentos', data: { captcha: search.cap }, screenshot: shot, ms: Date.now() - t0 };
+    if (search.contribs === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin registro de impuesto vehicular en SAT Lima', data: { found: false }, screenshot: shot, ms: Date.now() - t0 };
+
+    // 3. Iterar contribuyentes (cada uno cuesta 1 captcha por el re-search): cuotas pendientes + canceladas.
+    const N = Math.min(search.contribs, 5);
+    const all: SatCuota[] = [];
+    for (let i = 0; i < N; i++) {
+      if (i > 0) { const s = await doSearch(); if (!s.ok || s.contribs <= i) break; }
+      const ctl = `ctl${String(i + 2).padStart(2, '0')}`;
+      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), page.locator(`#ctl00_cplPrincipal_grdAdministrados_${ctl}_lnkNombre`).click().catch(() => {})]);
+      await wait(1000);
+      all.push(...await readCuotas('1'), ...await readCuotas('2'));
+    }
+    // Dedupe por (año, cuota, estado) — un contribuyente puede repetirse entre re-búsquedas.
+    const seen = new Set<string>();
+    const cuotas = all.filter((c) => { const k = `${c.year}-${c.cuota}-${c.estado}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    const pending = cuotas.filter((c) => c.estado === 'pendiente');
+    const pendingTotal = Math.round(pending.reduce((s, c) => s + (c.deuda || c.total), 0) * 100) / 100;
+    const paidYears = [...new Set(cuotas.filter((c) => c.estado === 'pagado').map((c) => c.year))].sort((a, b) => a - b);
+    const pendingYears = [...new Set(pending.map((c) => c.year))].sort((a, b) => a - b);
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    return {
+      ...base, status: 'ENCONTRADO',
+      summary: pending.length
+        ? `Impuesto vehicular SAT: S/ ${pendingTotal.toFixed(2)} pendiente · ${pending.length} cuota(s) · años ${pendingYears.join(', ')}`
+        : 'Impuesto vehicular SAT: sin deuda pendiente',
+      data: { found: true, cuotas, pendingTotal, pendingCount: pending.length, paidYears, pendingYears },
+      screenshot: shot, ms: Date.now() - t0,
+    };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
 /* ───────────────── SBS · SINIESTRALIDAD (3 tipos) + CAT taxis (reCAPTCHA v3) ───────────────── */
 // El SOAT vigente lo da APESEG (tiempo real; la SBS está congelada en may-2024). De la SBS se usa:
 //  (1) la SINIESTRALIDAD: N° de accidentes reportados POR PÓLIZA (con su periodo de vigencia), en los

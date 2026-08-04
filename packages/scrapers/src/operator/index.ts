@@ -26,6 +26,7 @@ import {
   runMtcCitv,
   runApeseg,
   runSatPapeletas,
+  runSatImpuesto,
   runSbs,
   runFiseGnv,
   runInfogas,
@@ -45,6 +46,7 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'mtc-citv': runMtcCitv,
   'sbs-soat': runSbs,
   'apeseg-soat': runApeseg, // SOAT en TIEMPO REAL (API JSON de APESEG); la SBS está congelada en may-2024
+  'sat-impuesto': runSatImpuesto, // VALIDA el pago del impuesto vehicular por placa (SAT Lima; Capa B)
   'fise-gnv': runFiseGnv, // deuda del crédito de conversión GNV (FISE, reCAPTCHA v3 → API JSON)
   'infogas-gnv': runInfogas, // estado GNV + ¿tiene crédito? (Infogas, reCAPTCHA v2). ⚠ Cloudflare delante
   // 'atu' NO va aquí: corre por CDP (Chrome real + reCAPTCHA v3 nativo) vía runAtuSource.
@@ -62,6 +64,7 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'mtc-citv', label: 'MTC · Revisión técnica (CITV)', default: true },
   { id: 'sbs-soat', label: 'SBS · siniestralidad + CAT taxis (SOAT congelado may-2024)', default: true },
   { id: 'apeseg-soat', label: 'APESEG · SOAT vigente (tiempo real)', default: true },
+  { id: 'sat-impuesto', label: 'SAT Lima · Impuesto vehicular — validación de pago (Lima)', default: false },
   { id: 'atu', label: 'ATU · Taxi/transporte (Lima/Callao)', default: true },
   { id: 'sigm', label: 'SIGM · Gravámenes / garantías mobiliarias (CDP)', default: true },
   { id: 'fise-gnv', label: 'FISE · Deuda del crédito de conversión GNV', default: false },
@@ -719,7 +722,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
 /** Todas las fuentes NO-historial (las que corre el carril ligero del motor continuo). */
 const NON_HISTORIAL_SOURCES = [
   'sunarp', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas',
-  'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv',
+  'mtc-citv', 'apeseg-soat', 'sat-impuesto', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv',
 ];
 
 export interface ContinuousLaneOpts extends BatchLaneOpts {
