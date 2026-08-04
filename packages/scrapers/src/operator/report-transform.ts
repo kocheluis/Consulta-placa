@@ -442,6 +442,24 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       const years = grupos.map((g) => parseTituloYear(g.titulo)).filter((y): y is number => y != null);
       if (years.length) regYear = Math.min(...years);
     }
+    // Fecha en que el TITULAR ACTUAL adquirió el vehículo = acto NOTARIAL de la última transferencia
+    // (compra-venta/adjudicación). La propiedad se transfiere con el acto —la inscripción SUNARP es
+    // DECLARATIVA—, así que ESTA fecha (no la de inscripción) decide quién era dueño al 1-ene de cada
+    // año. La fecha notarial vive en `documentos[].fecha` del asiento; fallback: fecha de presentación.
+    const parseDmy = (s: unknown): number | null => {
+      const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(String(s ?? ''));
+      return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
+    };
+    const RX_TRANSFER = /compra\s*-?\s*venta|adjudicaci[oó]n/i;
+    let currentOwnerSince: string | null = null;
+    let currentOwnerSinceTs: number | null = null;
+    for (const t of timeline) {
+      if (!RX_TRANSFER.test(String(t.acto ?? ''))) continue;
+      const docs = (t.documentos ?? []) as Array<{ fecha?: string }>;
+      const raw = (docs[0]?.fecha as string) || (t.fechaPresentacion as string) || '';
+      const ts = parseDmy(raw);
+      if (ts != null && (currentOwnerSinceTs == null || ts > currentOwnerSinceTs)) { currentOwnerSinceTs = ts; currentOwnerSince = String(raw).slice(0, 10); }
+    }
     const curYear = new Date(at).getFullYear();
     const sede = (data(sunarp).sede as string) ?? null;
     let impPay: ImpuestoVehicularPayload;
@@ -449,23 +467,34 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       const affectedYears = [regYear + 1, regYear + 2, regYear + 3];
       const lastAffectedYear = regYear + 3;
       const declVal = moneyOrNull(declaredValue);
+      const estAnnual = declVal != null ? Math.round(declVal * 0.01) : null;
       const estimatedCurrency = declaredValue
         ? (/US\$|\bUSD\b|\$/.test(declaredValue) ? 'USD' : /S\/|\bPEN\b|soles/i.test(declaredValue) ? 'PEN' : null)
         : null;
+      // Obligado de cada ejercicio = dueño al 1-ene. Si el titular actual adquirió ANTES del 1-ene de Y,
+      // ese año era suyo; si adquirió después, era de un dueño anterior. Sin transferencias → el 1er
+      // dueño sigue siendo el titular (todos suyos). La deuda impaga —de quien sea— la asume el comprador.
+      const breakdown = affectedYears.map((year) => ({
+        year,
+        obligado: (currentOwnerSinceTs == null || currentOwnerSinceTs < Date.UTC(year, 0, 1) ? 'titular' : 'anterior') as 'titular' | 'anterior',
+        estimated: estAnnual,
+      }));
       impPay = {
         afecto: curYear <= lastAffectedYear,
         registrationYear: regYear,
         affectedYears,
+        currentOwnerSince,
+        breakdown,
         lastAffectedYear,
         dueYears: affectedYears.filter((y) => y <= curYear),
         upcomingYears: affectedYears.filter((y) => y > curYear),
         declaredValue,
-        estimatedAnnual: declVal != null ? Math.round(declVal * 0.01) : null,
+        estimatedAnnual: estAnnual,
         estimatedCurrency,
         registralOffice: sede,
       };
     } else {
-      impPay = { afecto: null, registrationYear: null, affectedYears: [], lastAffectedYear: null, dueYears: [], upcomingYears: [], declaredValue: null, estimatedAnnual: null, estimatedCurrency: null, registralOffice: sede };
+      impPay = { afecto: null, registrationYear: null, affectedYears: [], currentOwnerSince, breakdown: [], lastAffectedYear: null, dueYears: [], upcomingYears: [], declaredValue: null, estimatedAnnual: null, estimatedCurrency: null, registralOffice: sede };
     }
     src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: impPay });
 

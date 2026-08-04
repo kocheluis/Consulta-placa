@@ -271,6 +271,17 @@ export interface VehicleSpecs {
  * INAFECTO (ya cumplió los 3 años). NO consulta la deuda real: eso es por titular en el SAT (Capa B),
  * no por placa. El monto es un ESTIMADO ≈1% del valor declarado (el SAT usa la tabla referencial MEF).
  */
+/** Un ejercicio afecto con quién estaba OBLIGADO a pagarlo (dueño al 1-ene) y la cuota estimada. */
+export interface ImpuestoYearObligado {
+  year: number;
+  /** 'titular' = el dueño ACTUAL (a quien le compras) era propietario al 1-ene → cuota suya; 'anterior'
+   *  = un dueño previo; 'desconocido' = sin fecha de transferencia para decidir. La deuda impaga —de
+   *  quien sea— queda ATADA a la placa y la asume el comprador / bloquea la notaría. */
+  obligado: 'titular' | 'anterior' | 'desconocido';
+  /** Cuota anual estimada (≈1% del valor declarado) para ese ejercicio. */
+  estimated: number | null;
+}
+
 export interface ImpuestoVehicularPayload {
   /** ¿Dentro del periodo afecto (≤3 años desde la 1ª inscripción)? null = no se pudo determinar el año. */
   afecto: boolean | null;
@@ -278,6 +289,12 @@ export interface ImpuestoVehicularPayload {
   registrationYear: number | null;
   /** Ejercicios afectos: [regYear+1, regYear+2, regYear+3]. */
   affectedYears: number[];
+  /** Fecha (dd/mm/aaaa) del acto NOTARIAL con que el titular ACTUAL adquirió el vehículo (última
+   *  transferencia). La propiedad se transfiere con el acto —la inscripción SUNARP es declarativa—, así
+   *  que esta fecha decide quién era propietario al 1-ene de cada año. null si solo hay 1ª inscripción. */
+  currentOwnerSince: string | null;
+  /** Desglose por ejercicio afecto: quién estaba obligado (titular actual vs anterior) + cuota estimada. */
+  breakdown: ImpuestoYearObligado[];
   /** Último ejercicio afecto (regYear + 3). */
   lastAffectedYear: number | null;
   /** Ejercicios afectos ya devengados (≤ año de la consulta) que deberían estar pagados. */

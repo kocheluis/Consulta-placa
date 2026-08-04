@@ -37,6 +37,39 @@ describe('toWebReport · sección IMPUESTO_VEHICULAR (Capa A — derivada de la 
     expect(p.registralOffice).toBe('LIMA');
   });
 
+  it('CHU444: compra-venta NOTARIAL 30/12/2023 (inscrita 2024) → los 3 años afectos son del titular actual', () => {
+    const s = impuestoOf([
+      res('SUNARP', 'ENCONTRADO', { sede: 'LIMA' }),
+      res('HISTORIAL', 'ENCONTRADO', {
+        timeline: [
+          asiento('2023-00099999', 'Primera Inscripción de Dominio', 'US$ 20,000.00'),
+          // La fecha NOTARIAL (documentos[].fecha=30/12/2023) manda sobre la de inscripción (2024).
+          { titulo: '2024-00205606', acto: 'Compra-Venta', precio: 'US$ 5,550.00', montoPagado: '', participantes: '', fechaPresentacion: '22/01/2024', fechaAsiento: '28/01/2024', flags: {}, documentos: [{ documento: 'Acta Notarial', funcionario: 'X', fecha: '30/12/2023' }] },
+        ],
+      }),
+    ]);
+    const p = s?.payload as ImpuestoVehicularPayload;
+    expect(p.registrationYear).toBe(2023);
+    expect(p.currentOwnerSince).toBe('30/12/2023');
+    expect(p.affectedYears).toEqual([2024, 2025, 2026]);
+    // Adquirió 30/12/2023 → dueño al 1-ene de 2024/25/26 → los 3 años son suyos.
+    expect(p.breakdown.map((b) => b.obligado)).toEqual(['titular', 'titular', 'titular']);
+  });
+
+  it('transferencia posterior (jun-2025) → 2024/2025 son de dueño ANTERIOR; 2026 del titular', () => {
+    const s = impuestoOf([
+      res('HISTORIAL', 'ENCONTRADO', {
+        timeline: [
+          asiento('2023-00099999', 'Primera Inscripción de Dominio', 'US$ 20,000.00'),
+          { titulo: '2025-00300000', acto: 'Compra-Venta', precio: 'US$ 8,000.00', montoPagado: '', participantes: '', fechaPresentacion: '10/06/2025', fechaAsiento: '15/06/2025', flags: {}, documentos: [{ documento: 'Escritura', funcionario: 'X', fecha: '05/06/2025' }] },
+        ],
+      }),
+    ]);
+    const p = s?.payload as ImpuestoVehicularPayload;
+    expect(p.currentOwnerSince).toBe('05/06/2025');
+    expect(p.breakdown.map((b) => `${b.year}:${b.obligado}`)).toEqual(['2024:anterior', '2025:anterior', '2026:titular']);
+  });
+
   it('1ª inscripción 2015 → INAFECTO (ya cumplió los 3 años)', () => {
     const s = impuestoOf([
       res('HISTORIAL', 'ENCONTRADO', { timeline: [asiento('2015-00098641', 'Primera Inscripción de Dominio', 'S/ 45,000.00')] }),

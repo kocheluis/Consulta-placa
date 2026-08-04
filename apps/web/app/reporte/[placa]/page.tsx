@@ -1302,8 +1302,33 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
           ['Jurisdicción probable', jurisdiction],
         ]}
       />
+      {p.breakdown.length > 0 && (
+        <div>
+          <p className="mb-1.5 font-body text-xs font-bold uppercase tracking-wide text-muted">Obligación por ejercicio (quién debía cada año)</p>
+          <div className="flex flex-col gap-1.5">
+            {p.breakdown.map((b) => (
+              <div key={b.year} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-surface p-2.5">
+                <div className="flex items-center gap-2">
+                  <span className="font-mono text-[13px] font-semibold text-foreground">{b.year}</span>
+                  <Badge tone={b.obligado === 'titular' ? 'warning' : 'neutral'} size="sm" icon={null}>
+                    {b.obligado === 'titular' ? 'Titular actual (el vendedor)' : b.obligado === 'anterior' ? 'Dueño anterior' : 'Sin determinar'}
+                  </Badge>
+                </div>
+                {b.estimated != null && (
+                  <span className="font-mono text-[12px] text-muted">≈ {p.estimatedCurrency === 'USD' ? 'US$ ' : p.estimatedCurrency === 'PEN' ? 'S/ ' : ''}{b.estimated.toLocaleString('es-PE')}</span>
+                )}
+              </div>
+            ))}
+          </div>
+          {p.currentOwnerSince && (
+            <p className="mt-1 font-body text-[11px] text-slate-400">
+              El titular actual adquirió el vehículo el {p.currentOwnerSince} (acto notarial). Ese es el dato que decide quién debía cada año — no la fecha de inscripción en SUNARP. Las cuotas impagas de CUALQUIER año quedan atadas a la placa y las asume el comprador.
+            </p>
+          )}
+        </div>
+      )}
       <p className="font-body text-[11px] leading-snug text-slate-400">
-        Estimado ≈1% del valor declarado; el SAT calcula sobre la tabla referencial del MEF, el monto real puede variar. La deuda exacta se consulta en el SAT por titular (no por placa).
+        Estimado ≈1% del valor declarado; el SAT calcula sobre la tabla referencial del MEF, el monto real puede variar. El pago real se valida en el SAT de Lima por placa (próximamente en el reporte).
       </p>
     </div>
   );
