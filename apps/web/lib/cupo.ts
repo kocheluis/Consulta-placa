@@ -135,6 +135,24 @@ export async function checkAndRecordCupo(userId: string, access: CupoAccess, pla
   };
 }
 
+/**
+ * REEMBOLSA la(s) consulta(s) de una placa para el usuario (borra sus filas `consulta_hits`). Se usa
+ * cuando la placa NO existe (`plateNotFound`): una consulta a una placa inexistente NO debe consumir
+ * cupo. Idempotente (borrar-por-placa): el polling del reporte puede llamarla varias veces sin efecto
+ * extra. Fail-safe: nunca lanza (no debe romper la entrega del reporte). Devuelve cuántas borró.
+ */
+export async function refundCupoHits(userId: string, plateRaw: string): Promise<number> {
+  try {
+    const sb = createAdminClient();
+    const placa = (plateRaw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    if (!placa) return 0;
+    const { data } = await sb.from('consulta_hits').delete().eq('user_id', userId).eq('placa', placa).select('id');
+    return (data as Array<unknown> | null)?.length ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
 /** ¿El reporte guardado ya cubre el nivel del cupo? (para no re-encolar de gusto). */
 function reportCoversTier(report: unknown, tier: CupoTier): boolean {
   const secs = ((report as { sections?: Array<{ kind?: string; status?: string }> })?.sections) ?? [];

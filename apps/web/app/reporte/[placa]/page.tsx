@@ -204,6 +204,27 @@ export default function ReportePage() {
     );
   }
 
+  // Placa INEXISTENTE (SUNARP confirmó "No se ha encontrado la placa"): banner claro, SIN secciones ni
+  // CTAs de pago (no hay datos que vender). Va ANTES del gate de "stub vacío" porque un reporte
+  // plateNotFound también trae vehicle:null. Esta consulta NO consume crédito (refund en el backend).
+  if (state.report.plateNotFound) {
+    const fecha = new Date(state.report.generatedAt || Date.now()).toLocaleDateString('es-PE', { day: '2-digit', month: 'long', year: 'numeric' });
+    return (
+      <div className="bg-background px-4 py-16 sm:py-24">
+        <StateScreen
+          tone="warning"
+          icon="search_off"
+          title="Placa no registrada"
+          description={`La placa ${formatPlateDisplay(placa)} no figura en el Registro de Propiedad Vehicular de SUNARP al ${fecha}. Puede que no exista o que aún no haya sido inscrita. No se te cobró ni se consumió ninguna consulta.`}
+        >
+          <Button variant="accent" size="lg" href="/" iconRight="arrow_forward">
+            Probar otra placa
+          </Button>
+        </StateScreen>
+      </div>
+    );
+  }
+
   // Sin reporte aún (stub vacío): ofrecer la CONSULTA GRATIS (BASIC) en vez del dashboard vacío.
   if (!preview && state.report.sections.length === 0 && !state.report.vehicle) {
     return <FreeConsultaGate placa={placa} onStarted={actualizar} />;

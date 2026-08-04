@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
 import { getPaidTier } from '@/lib/payments';
-import { getSessionCupo } from '@/lib/cupo';
+import { getSessionCupo, refundCupoHits } from '@/lib/cupo';
 import { verifyPreviewToken } from '@/lib/preview-token';
 import {
   SECTION_CATALOG, TIER_RANK, ReportTier, ReportStatus, DISCLAIMER_TEXT,
@@ -57,12 +57,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
   try { tier = await getPaidTier(placa); } catch { /* anónimo → BASIC */ }
   // Usuarios con CUPO asignado: ven su nivel (PRO/ULTRA) para cualquier placa (el cupo limita
   // cuántas consultas GENERAN, no cuántas ven). Toma el mayor entre el pagado y el del cupo.
-  try {
-    const cupo = await getSessionCupo();
-    if (cupo?.access.enabled && TIER_RANK[cupo.access.tier] > TIER_RANK[tier as ReportTier]) {
-      tier = cupo.access.tier;
-    }
-  } catch { /* sin cupo → sin cambio */ }
+  let cupo: Awaited<ReturnType<typeof getSessionCupo>> = null;
+  try { cupo = await getSessionCupo(); } catch { /* sin cupo → sin cambio */ }
+  if (cupo?.access.enabled && TIER_RANK[cupo.access.tier] > TIER_RANK[tier as ReportTier]) {
+    tier = cupo.access.tier;
+  }
 
   const admin = createAdminClient();
   const { data: rep } = await admin.from('reportes').select('report,status').eq('placa', placa).maybeSingle();
@@ -75,10 +74,14 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
   const generating = !!(ped && ped.length);
 
   if (rep?.report) {
+    const full = rep.report as Report;
+    // Placa INEXISTENTE + usuario con CUPO → reembolsa la consulta: una placa que no existe NO debe
+    // consumir cupo (el consumo ocurrió en el submit, antes de saberlo). Idempotente y fail-safe.
+    if (full.plateNotFound && cupo?.access.enabled) { await refundCupoHits(cupo.userId, placa); }
     // El titular ACTUAL se sirve COMPLETO (decisión de producto 30-jul-2026: dato registral público
     // de SUNARP y valor central del reporte). La minimización de PII aplica a los TERCEROS del
     // HISTORIAL (dueños anteriores, enmascarados en origen por el transform) y al titular de ATU.
-    const report = operatorPreview ? (rep.report as Report) : stripByTier(rep.report as Report, tier);
+    const report = operatorPreview ? full : stripByTier(full, tier);
     return NextResponse.json({ generating, report });
   }
 

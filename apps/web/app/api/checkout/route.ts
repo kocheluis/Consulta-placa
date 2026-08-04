@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { createClient } from '@/lib/supabase/server';
+import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
 import { TIER_PRICE, createPendingPurchase, enqueueReportForPurchase, markPurchasePaid, type PaidTier } from '@/lib/payments';
 import { createPaymentSession, paymentProvider } from '@/lib/izipay';
 import { notifyPurchasePaid, notifyYapeReceived } from '@/lib/notifications';
@@ -32,6 +33,19 @@ export async function POST(request: Request) {
   } = await supabase.auth.getUser();
   if (!user) {
     return NextResponse.json({ error: 'Inicia sesión para comprar tu reporte.' }, { status: 401 });
+  }
+
+  // Defensa server-side: NO cobrar por una placa INEXISTENTE (aunque se salte la UI). Lee el reporte
+  // guardado; si SUNARP la marcó como no registrada → rechaza sin crear compra ni abrir sesión de pago.
+  if (isAdminConfigured) {
+    try {
+      const admin = createAdminClient();
+      const normPlate = plate.replace(/[^A-Z0-9]/g, '');
+      const { data: rep } = await admin.from('reportes').select('report').eq('placa', normPlate).maybeSingle();
+      if ((rep?.report as { plateNotFound?: boolean } | null)?.plateNotFound) {
+        return NextResponse.json({ error: 'Esta placa no está registrada en SUNARP; no se puede generar un reporte de pago.', plateNotFound: true }, { status: 400 });
+      }
+    } catch { /* fail-open: si la verificación falla, no bloquea el flujo normal */ }
   }
 
   const amount = TIER_PRICE[tier];

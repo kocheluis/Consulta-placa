@@ -494,6 +494,9 @@ export interface Report {
   disclaimer: string;
   vehicle: (VehicleData & { owner: OwnerInfo | null }) | null;
   sections: SectionResult[];
+  /** true = SUNARP confirmó que la placa NO está registrada (no existe a la fecha). La web muestra un
+   *  banner en vez de secciones y NO cobra/consume crédito (no hay datos que entregar). */
+  plateNotFound?: boolean;
 }
 
 export const DISCLAIMER_TEXT =

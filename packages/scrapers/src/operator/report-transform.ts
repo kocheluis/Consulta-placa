@@ -63,6 +63,12 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const by = (source: string): OperatorSourceResult | undefined => results.find((r) => r.source === source);
   const data = (r?: OperatorSourceResult): Record<string, unknown> => (r?.data ?? {}) as Record<string, unknown>;
   const at = generatedAt;
+  // Placa INEXISTENTE: SUNARP detectó el modal "No se ha encontrado la placa" (data.plateNotFound).
+  // Reporte MÍNIMO con el flag → la web muestra un banner y NO cobra/consume crédito (no hay datos que
+  // entregar). Corta antes de armar secciones (todas saldrían "no registrada").
+  if ((data(by('SUNARP')) as { plateNotFound?: boolean }).plateNotFound === true) {
+    return { ...buildReport({ id, plateDisplay: plate, plateNormalized: plate, generatedAt: at, sources: [] }), plateNotFound: true };
+  }
   const src: SourceResult[] = [];
 
   // GRAVAMENES: SIGM (garantías mobiliarias VIGENTES) es la fuente autoritativa. Si respondió,
