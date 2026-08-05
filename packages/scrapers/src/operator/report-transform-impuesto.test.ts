@@ -100,7 +100,8 @@ describe('toWebReport · sección IMPUESTO_VEHICULAR (Capa A — derivada de la 
     const s = impuestoOf([
       res('HISTORIAL', 'ENCONTRADO', { timeline: [asiento('2023-00099999', 'Primera Inscripción de Dominio', 'US$ 20,000.00')] }),
       res('SAT_IMPUESTO', 'ENCONTRADO', {
-        found: true, pendingTotal: 193.96, pendingCount: 2, paidYears: [2024, 2025], pendingYears: [2026],
+        found: true, pendingTotal: 193.96, pendingCount: 2, paidTotal: 464.02, paidCount: 4,
+        paidYears: [2024, 2025], pendingYears: [2026], multaPaidTotal: 261.44, multaPendingTotal: 0,
         cuotas: [
           { year: 2026, cuota: '3', total: 96.98, pagado: 0, deuda: 96.98, vencimiento: '31/08/2026', estado: 'pendiente' },
           { year: 2024, cuota: '1', total: 0, pagado: 119.44, deuda: 0, vencimiento: '29/02/2024', estado: 'pagado' },
@@ -113,6 +114,10 @@ describe('toWebReport · sección IMPUESTO_VEHICULAR (Capa A — derivada de la 
     expect(p.sat?.pendingYears).toEqual([2026]);
     expect(p.sat?.cuotas.find((c) => c.estado === 'pendiente')?.amount).toBe(96.98); // deuda
     expect(p.sat?.cuotas.find((c) => c.estado === 'pagado')?.amount).toBe(119.44); // pagado
+    expect(p.sat?.paidTotal).toBe(464.02); // total ya pagado (solo impuesto)
+    expect(p.sat?.paidCount).toBe(4);
+    expect(p.sat?.multaPaidTotal).toBe(261.44); // multa por omiso, separada del impuesto
+    expect(p.sat?.multaPendingTotal).toBe(0);
   });
 
   it('sin fuente SAT → payload.sat = null (solo estimado Capa A)', () => {

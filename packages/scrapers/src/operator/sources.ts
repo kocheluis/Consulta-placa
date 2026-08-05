@@ -384,7 +384,7 @@ export async function runApeseg(
 // clica cada uno → pantalla de cuotas (`grdEstadoCuenta`); el filtro `ddlEstado` (1=Pendiente, 2=Cancelado,
 // NO hay "Todos") se consulta en ambos + Actualizar. Se filtran las filas por la placa (col Referencia).
 // PII: NO se exponen los nombres de los contribuyentes (terceros) — solo las cuotas por placa.
-export interface SatCuota { year: number; cuota: string; total: number; pagado: number; deuda: number; vencimiento: string | null; estado: 'pendiente' | 'pagado' }
+export interface SatCuota { year: number; cuota: string; total: number; pagado: number; deuda: number; vencimiento: string | null; estado: 'pendiente' | 'pagado'; tipo: 'impuesto' | 'multa' }
 const impMoney = (s: unknown): number => { const n = parseFloat(String(s ?? '').replace(/[^0-9.]/g, '')); return Number.isFinite(n) ? n : 0; };
 
 export async function runSatImpuesto(
@@ -448,12 +448,33 @@ export async function runSatImpuesto(
       await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), page.locator('#ctl00_cplPrincipal_btnBuscar').click().catch(() => {})]);
       await wait(1200);
       const out: SatCuota[] = [];
-      for (const r of (await readGrid('ctl00_cplPrincipal_grdEstadoCuenta')).slice(1)) {
-        const ref = r[16] ?? r[r.length - 1] ?? '';
-        if (!ref.includes(plate)) continue;
-        const year = parseInt(r[0] ?? '', 10);
-        if (!Number.isFinite(year)) continue;
-        out.push({ year, cuota: r[1] ?? '', total: impMoney(r[3]), pagado: impMoney(r[6]), deuda: impMoney(r[7]) || impMoney(r[8]), vencimiento: r[9] || null, estado: estado === '1' ? 'pendiente' : 'pagado' });
+      // La grilla PAGINA (visto en CHU444: los pagos caen en 2 páginas). Recorremos las páginas del GridView
+      // vía __doPostBack('...grdEstadoCuenta','Page$N') hasta que no exista el enlace de la siguiente página.
+      for (let pageNo = 1; pageNo <= 12; pageNo++) {
+        for (const r of (await readGrid('ctl00_cplPrincipal_grdEstadoCuenta')).slice(1)) {
+          const ref = r[16] ?? r[r.length - 1] ?? '';
+          if (!ref.includes(plate)) continue;
+          const year = parseInt(r[0] ?? '', 10);
+          if (!Number.isFinite(year)) continue;
+          // La Referencia distingue el concepto: "Placa - Motor: ..." = cuota del impuesto;
+          // "Multa : 406 - Imp. Vehicular ... No presentar las declaraciones" = sanción por omiso.
+          const tipo: 'impuesto' | 'multa' = /multa/i.test(ref) ? 'multa' : 'impuesto';
+          out.push({ year, cuota: r[1] ?? '', total: impMoney(r[3]), pagado: impMoney(r[6]), deuda: impMoney(r[7]) || impMoney(r[8]), vencimiento: r[9] || null, estado: estado === '1' ? 'pendiente' : 'pagado', tipo });
+        }
+        // ¿Hay enlace a la página siguiente en el pager del grid? Si sí, postback y seguimos; si no, cortamos.
+        const advanced = await page.evaluate((next) => {
+          const grid = document.getElementById('ctl00_cplPrincipal_grdEstadoCuenta');
+          if (!grid) return false;
+          const l = Array.from(grid.querySelectorAll('a')).find((a) => (a.getAttribute('href') || '').includes('Page$' + next));
+          if (!l) return false;
+          const m = /__doPostBack\('([^']+)','([^']+)'\)/.exec(l.getAttribute('href') || '');
+          const w = window as unknown as { __doPostBack?: (t: string, a: string) => void };
+          if (m && m[1] && m[2] && typeof w.__doPostBack === 'function') { w.__doPostBack(m[1], m[2]); return true; }
+          (l as HTMLElement).click(); return true;
+        }, pageNo + 1).catch(() => false);
+        if (!advanced) break;
+        await page.waitForLoadState('domcontentloaded').catch(() => {});
+        await wait(900);
       }
       return out;
     };
@@ -488,24 +509,35 @@ export async function runSatImpuesto(
       diag.push(`c${i}(${ctl}):link=${linkN} rows=${rawRows} pend=${p1.length} pag=${p2.length}`);
       all.push(...p1, ...p2);
     }
-    // Dedupe por (año, cuota, estado) — un contribuyente puede repetirse entre re-búsquedas.
+    // Dedupe por (año, cuota, estado, TIPO) — un contribuyente puede repetirse entre re-búsquedas, y una
+    // MULTA puede compartir año+cuota con la cuota del impuesto (CHU444: 2024-1 impuesto S/119.44 y multa
+    // S/261.44) → sin el tipo en la clave se perdería una de las dos filas.
     const seen = new Set<string>();
-    const dedup = all.filter((c) => { const k = `${c.year}-${c.cuota}-${c.estado}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    const dedup = all.filter((c) => { const k = `${c.year}-${c.cuota}-${c.estado}-${c.tipo}`; if (seen.has(k)) return false; seen.add(k); return true; });
+    // Separar el IMPUESTO (cuotas) de las MULTAS (sanción por omiso): se reportan por separado.
+    const impuesto = dedup.filter((c) => c.tipo === 'impuesto');
+    const multas = dedup.filter((c) => c.tipo === 'multa');
     // La "CuotaÚnica" (cuota "0") es el AGREGADO de las cuotas impagas del año (pagar todo de una): si el
     // mismo año/estado trae cuotas individuales, se DESCARTA para NO duplicar el monto (193.96 = 96.98×2).
-    const hasIndiv = new Set(dedup.filter((c) => c.cuota !== '0').map((c) => `${c.year}-${c.estado}`));
-    const cuotas = dedup.filter((c) => c.cuota !== '0' || !hasIndiv.has(`${c.year}-${c.estado}`));
+    const hasIndiv = new Set(impuesto.filter((c) => c.cuota !== '0').map((c) => `${c.year}-${c.estado}`));
+    const cuotas = impuesto.filter((c) => c.cuota !== '0' || !hasIndiv.has(`${c.year}-${c.estado}`));
     const pending = cuotas.filter((c) => c.estado === 'pendiente');
+    const paid = cuotas.filter((c) => c.estado === 'pagado');
     const pendingTotal = Math.round(pending.reduce((s, c) => s + (c.deuda || c.total), 0) * 100) / 100;
-    const paidYears = [...new Set(cuotas.filter((c) => c.estado === 'pagado').map((c) => c.year))].sort((a, b) => a - b);
+    // Total YA pagado: el SAT expone el monto abonado por cuota cancelada (col. Pagado; cae al Total si viene 0).
+    const paidTotal = Math.round(paid.reduce((s, c) => s + (c.pagado || c.total), 0) * 100) / 100;
+    const paidYears = [...new Set(paid.map((c) => c.year))].sort((a, b) => a - b);
     const pendingYears = [...new Set(pending.map((c) => c.year))].sort((a, b) => a - b);
+    // Multa (declaración extemporánea / omiso): totales pagado y pendiente por separado del impuesto.
+    const multaPaidTotal = Math.round(multas.filter((c) => c.estado === 'pagado').reduce((s, c) => s + (c.pagado || c.total), 0) * 100) / 100;
+    const multaPendingTotal = Math.round(multas.filter((c) => c.estado === 'pendiente').reduce((s, c) => s + (c.deuda || c.total), 0) * 100) / 100;
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     return {
       ...base, status: 'ENCONTRADO',
       summary: pending.length
-        ? `Impuesto vehicular SAT: S/ ${pendingTotal.toFixed(2)} pendiente · ${pending.length} cuota(s) · años ${pendingYears.join(', ')}`
-        : (cuotas.length ? 'Impuesto vehicular SAT: al día (sin deuda pendiente)' : 'Impuesto vehicular SAT: sin cuotas registradas'),
-      data: { found: true, cuotas, pendingTotal, pendingCount: pending.length, paidYears, pendingYears, diag: diag.join(' ') },
+        ? `Impuesto vehicular SAT: S/ ${pendingTotal.toFixed(2)} pendiente · ${pending.length} cuota(s) · años ${pendingYears.join(', ')}${paid.length ? ` · pagado S/ ${paidTotal.toFixed(2)}` : ''}${multaPendingTotal > 0 ? ` · multa pend. S/ ${multaPendingTotal.toFixed(2)}` : ''}`
+        : (cuotas.length ? `Impuesto vehicular SAT: al día · pagado S/ ${paidTotal.toFixed(2)} en ${paid.length} cuota(s)${multaPaidTotal > 0 ? ` · multa pagada S/ ${multaPaidTotal.toFixed(2)}` : ''}` : 'Impuesto vehicular SAT: sin cuotas registradas'),
+      data: { found: true, cuotas, pendingTotal, pendingCount: pending.length, paidTotal, paidCount: paid.length, paidYears, pendingYears, multaPaidTotal, multaPendingTotal, diag: diag.join(' ') },
       screenshot: shot, ms: Date.now() - t0,
     };
   } catch (e) {

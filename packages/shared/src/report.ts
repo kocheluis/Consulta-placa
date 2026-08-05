@@ -289,10 +289,17 @@ export interface ImpuestoSatValidation {
   /** Deuda pendiente total confirmada por el SAT (S/), sin duplicar la CuotaÚnica. */
   pendingTotal: number;
   pendingCount: number;
+  /** Total YA PAGADO al SAT (S/) y número de cuotas canceladas (solo impuesto, sin multas). */
+  paidTotal: number;
+  paidCount: number;
   /** Años con cuotas PAGADAS y con cuotas PENDIENTES según el SAT. */
   paidYears: number[];
   pendingYears: number[];
-  /** Detalle de cuotas: año, cuota, monto (deuda si pendiente / pagado si cancelada), estado, vencimiento. */
+  /** Multa por declaración extemporánea (ser "omiso"), si el SAT la registra — separada del impuesto (S/). */
+  multaPaidTotal: number;
+  multaPendingTotal: number;
+  /** Detalle de cuotas del IMPUESTO (multas excluidas): año, cuota, monto (deuda si pendiente / pagado si
+   *  cancelada), estado, vencimiento. */
   cuotas: Array<{ year: number; cuota: string; amount: number; estado: 'pendiente' | 'pagado'; vencimiento: string | null }>;
 }
 

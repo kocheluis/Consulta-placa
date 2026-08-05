@@ -361,8 +361,12 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         found: true,
         pendingTotal: num(satData.pendingTotal),
         pendingCount: num(satData.pendingCount),
+        paidTotal: num(satData.paidTotal),
+        paidCount: num(satData.paidCount),
         paidYears: ((satData.paidYears as number[]) ?? []).map(Number),
         pendingYears: ((satData.pendingYears as number[]) ?? []).map(Number),
+        multaPaidTotal: num(satData.multaPaidTotal),
+        multaPendingTotal: num(satData.multaPendingTotal),
         cuotas: ((satData.cuotas as Array<Record<string, unknown>>) ?? []).map((c) => ({
           year: num(c.year), cuota: String(c.cuota ?? ''),
           amount: c.estado === 'pendiente' ? (num(c.deuda) || num(c.total)) : num(c.pagado),
@@ -370,7 +374,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
           vencimiento: (c.vencimiento as string) || null,
         })),
       }
-    : (satRes?.status === 'SIN_REGISTRO' ? { found: false, pendingTotal: 0, pendingCount: 0, paidYears: [], pendingYears: [], cuotas: [] } : null);
+    : (satRes?.status === 'SIN_REGISTRO' ? { found: false, pendingTotal: 0, pendingCount: 0, paidTotal: 0, paidCount: 0, paidYears: [], pendingYears: [], multaPaidTotal: 0, multaPendingTotal: 0, cuotas: [] } : null);
 
   // ── GRAVÁMENES + HISTORIAL de transferencias (SPRL + Síguelo) ──
   if (hist?.status === 'ENCONTRADO') {

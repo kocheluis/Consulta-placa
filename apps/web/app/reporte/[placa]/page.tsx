@@ -1256,39 +1256,80 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
   const p = section.payload as ImpuestoVehicularPayload | undefined;
   if (!p) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
 
-  // Capa B: validación REAL en el SAT de Lima (pago confirmado). Manda sobre el estimado de Capa A.
-  const satBlock = p.sat && (p.sat.found ? (
+  const office = p.registralOffice ?? '';
+  const isLima = /lima/i.test(office);
+  const money = (n: number) => `S/ ${n.toLocaleString('es-PE', { minimumFractionDigits: 2 })}`;
+  const pendientes = p.sat?.cuotas.filter((c) => c.estado === 'pendiente') ?? [];
+  const pagadas = p.sat?.cuotas.filter((c) => c.estado === 'pagado') ?? [];
+
+  // Capa B: validación REAL en el SAT de Lima (pago confirmado, por placa). Manda sobre el estimado de Capa A.
+  const satFound = p.sat && p.sat.found ? (
     <div className="rounded-xl border border-border bg-background p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="font-body text-xs font-bold uppercase tracking-wide text-muted">Validado en SAT de Lima (pago real)</span>
         <Badge tone={p.sat.pendingTotal > 0 ? 'danger' : 'success'} size="sm" icon={null}>
-          {p.sat.pendingTotal > 0 ? `S/ ${p.sat.pendingTotal.toLocaleString('es-PE', { minimumFractionDigits: 2 })} pendiente` : 'al día'}
+          {p.sat.pendingTotal > 0 ? `${money(p.sat.pendingTotal)} pendiente` : 'al día'}
         </Badge>
       </div>
       {p.sat.pendingTotal > 0 ? (
         <StatusLine tone="danger" icon="error">
-          Deuda REAL confirmada en el SAT: S/ {p.sat.pendingTotal.toLocaleString('es-PE', { minimumFractionDigits: 2 })} en {p.sat.pendingCount} cuota(s) — años {p.sat.pendingYears.join(', ')}. Exige que el vendedor las cancele antes de comprar; las impagas las asumes tú.
+          Deuda REAL confirmada en el SAT: {money(p.sat.pendingTotal)} en {p.sat.pendingCount} cuota(s) — años {p.sat.pendingYears.join(', ')}. Exige que el vendedor las cancele antes de comprar; las impagas las asumes tú.
         </StatusLine>
       ) : (
         <StatusLine tone="success" icon="verified">Impuesto vehicular al día en el SAT de Lima — sin deuda pendiente.</StatusLine>
       )}
-      {p.sat.paidYears.length > 0 && (
-        <p className="mt-1 font-body text-[11px] text-slate-400">Ejercicios pagados según el SAT: {p.sat.paidYears.join(', ')}.</p>
-      )}
-      {p.sat.cuotas.filter((c) => c.estado === 'pendiente').length > 0 && (
-        <div className="mt-2 flex flex-col gap-1">
-          {p.sat.cuotas.filter((c) => c.estado === 'pendiente').map((c, i) => (
-            <div key={i} className="flex items-center justify-between gap-2 font-mono text-[12px]">
-              <span className="text-foreground">{c.year} · cuota {c.cuota}{c.vencimiento ? ` · vence ${c.vencimiento}` : ''}</span>
-              <span className="text-danger">S/ {c.amount.toLocaleString('es-PE', { minimumFractionDigits: 2 })}</span>
-            </div>
-          ))}
+      {pendientes.length > 0 && (
+        <div className="mt-2">
+          <p className="mb-1 font-body text-[11px] font-bold uppercase tracking-wide text-muted">Cuotas pendientes</p>
+          <div className="flex flex-col gap-1">
+            {pendientes.map((c, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 font-mono text-[12px]">
+                <span className="text-foreground">{c.year} · cuota {c.cuota}{c.vencimiento ? ` · vence ${c.vencimiento}` : ''}</span>
+                <span className="text-danger">{money(c.amount)}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
+      {pagadas.length > 0 && (
+        <div className="mt-2">
+          <div className="flex items-center justify-between gap-2">
+            <p className="font-body text-[11px] font-bold uppercase tracking-wide text-muted">Ya pagado al SAT</p>
+            {p.sat.paidTotal > 0 && <span className="font-mono text-[12px] font-semibold text-success">{money(p.sat.paidTotal)} · {p.sat.paidCount} cuota(s)</span>}
+          </div>
+          <div className="mt-1 flex flex-col gap-1">
+            {pagadas.map((c, i) => (
+              <div key={i} className="flex items-center justify-between gap-2 font-mono text-[12px]">
+                <span className="text-muted">{c.year} · cuota {c.cuota}{c.vencimiento ? ` · vence ${c.vencimiento}` : ''}</span>
+                <span className="text-success">{money(c.amount)} ✓</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+      {(p.sat.multaPaidTotal > 0 || p.sat.multaPendingTotal > 0) && (
+        <StatusLine tone={p.sat.multaPendingTotal > 0 ? 'warning' : 'neutral'} icon="gavel">
+          {p.sat.multaPendingTotal > 0
+            ? `Multa por declaración extemporánea (omiso) PENDIENTE: ${money(p.sat.multaPendingTotal)}. El SAT la cobra por no declarar el vehículo a tiempo — súmala a lo que hay que regularizar.`
+            : `El SAT registra una multa por declaración extemporánea (omiso) ya pagada: ${money(p.sat.multaPaidTotal)}. Indica que el vehículo se declaró tarde, pero ya quedó regularizada.`}
+        </StatusLine>
+      )}
     </div>
-  ) : (
-    <StatusLine tone="neutral" icon="info">SAT de Lima: sin registro de impuesto vehicular para esta placa (puede tributar en otra jurisdicción, o ya está inafecto).</StatusLine>
-  ));
+  ) : null;
+
+  // Sin validación automática: fuera de Lima pedimos las constancias al propietario; en Lima sin registro,
+  // nota neutral (puede tributar en otra jurisdicción o ya estar inafecto).
+  const jurisNote = !satFound ? (
+    office && !isLima ? (
+      <StatusLine tone="neutral" icon="info">
+        La validación automática del pago solo cubre Lima (SAT de Lima). La jurisdicción probable es {office}: solicita al propietario las constancias de pago (o de no adeudo) del impuesto vehicular emitidas por el SAT o la municipalidad provincial de {office}.
+      </StatusLine>
+    ) : p.sat && !p.sat.found ? (
+      <StatusLine tone="neutral" icon="info">SAT de Lima: sin registro de impuesto vehicular para esta placa (puede tributar en otra jurisdicción o ya estar inafecto).</StatusLine>
+    ) : null
+  ) : null;
+
+  const satBlock = satFound ?? jurisNote;
 
   if (p.registrationYear == null) {
     return satBlock
@@ -1365,7 +1406,7 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
       )}
       {satBlock}
       <p className="font-body text-[11px] leading-snug text-slate-400">
-        El estimado es ≈1% del valor declarado (el SAT calcula sobre la tabla referencial del MEF, el monto exacto puede variar). {p.sat ? 'El monto pendiente de arriba proviene del SAT de Lima (pago real, por placa).' : 'El pago real se valida en el SAT de Lima por placa.'}
+        El estimado es ≈1% del valor declarado (el SAT calcula sobre la tabla referencial del MEF, el monto exacto puede variar). {p.sat && p.sat.found ? 'Los montos de arriba (pendiente y pagado) provienen del SAT de Lima — pago real, por placa.' : office && !isLima ? `Fuera de Lima el pago se acredita con las constancias del SAT o la municipalidad de ${office}.` : 'El pago real se valida en el SAT de Lima por placa.'}
       </p>
     </div>
   );
