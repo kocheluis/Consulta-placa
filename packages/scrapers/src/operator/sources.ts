@@ -465,12 +465,19 @@ export async function runSatImpuesto(
     // 3. Iterar contribuyentes (cada uno cuesta 1 captcha por el re-search): cuotas pendientes + canceladas.
     const N = Math.min(search.contribs, 5);
     const all: SatCuota[] = [];
+    const diag: string[] = [`contribs=${search.contribs}`];
     for (let i = 0; i < N; i++) {
-      if (i > 0) { const s = await doSearch(); if (!s.ok || s.contribs <= i) break; }
+      if (i > 0) { const s = await doSearch(); if (!s.ok || s.contribs <= i) { diag.push(`c${i}:research-fail(${s.diag})`); break; } }
       const ctl = `ctl${String(i + 2).padStart(2, '0')}`;
-      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), page.locator(`#ctl00_cplPrincipal_grdAdministrados_${ctl}_lnkNombre`).click().catch(() => {})]);
+      const link = page.locator(`#ctl00_cplPrincipal_grdAdministrados_${ctl}_lnkNombre`);
+      const linkN = await link.count().catch(() => 0);
+      await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), link.click().catch(() => {})]);
       await wait(1000);
-      all.push(...await readCuotas('1'), ...await readCuotas('2'));
+      const p1 = await readCuotas('1');
+      const p2 = await readCuotas('2');
+      const rawRows = (await readGrid('ctl00_cplPrincipal_grdEstadoCuenta')).length;
+      diag.push(`c${i}(${ctl}):link=${linkN} rows=${rawRows} pend=${p1.length} pag=${p2.length}`);
+      all.push(...p1, ...p2);
     }
     // Dedupe por (año, cuota, estado) — un contribuyente puede repetirse entre re-búsquedas.
     const seen = new Set<string>();
@@ -488,8 +495,8 @@ export async function runSatImpuesto(
       ...base, status: 'ENCONTRADO',
       summary: pending.length
         ? `Impuesto vehicular SAT: S/ ${pendingTotal.toFixed(2)} pendiente · ${pending.length} cuota(s) · años ${pendingYears.join(', ')}`
-        : 'Impuesto vehicular SAT: sin deuda pendiente',
-      data: { found: true, cuotas, pendingTotal, pendingCount: pending.length, paidYears, pendingYears },
+        : `Impuesto vehicular SAT: sin deuda pendiente · DIAG: ${diag.join(' ')}`,
+      data: { found: true, cuotas, pendingTotal, pendingCount: pending.length, paidYears, pendingYears, diag: diag.join(' ') },
       screenshot: shot, ms: Date.now() - t0,
     };
   } catch (e) {
