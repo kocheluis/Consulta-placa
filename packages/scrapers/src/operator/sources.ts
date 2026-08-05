@@ -682,13 +682,31 @@ export async function runSatPapeletas(
     const formFrame = await findFrameWith(page, '#tipoBusquedaPapeletas');
     if (!formFrame) return { ...base, status: 'ERROR', summary: 'No se encontró el formulario de papeletas', ms: Date.now() - t0 };
     await formFrame.selectOption('#tipoBusquedaPapeletas', 'busqPlaca').catch(() => {});
-    await wait(1000);
-    await formFrame.locator('#ctl00_cplPrincipal_txtPlaca').fill(plate);
+    // Elegir "por placa" revela el input, pero en SAT eso dispara un POSTBACK ASP.NET que re-renderiza el
+    // frame (la referencia vieja queda obsoleta y el input aparece OCULTO un instante). Esperamos a que el
+    // input esté VISIBLE re-resolviendo el frame, con un re-intento de la selección; si nunca aparece,
+    // diagnosticamos las opciones reales — en vez del fill ciego que quemaba 30s con "element is not visible".
+    let plateFrame = formFrame;
+    let visible = false;
+    for (let attempt = 0; attempt < 2 && !visible; attempt++) {
+      if (attempt > 0) await (await findFrameWith(page, '#tipoBusquedaPapeletas'))?.selectOption('#tipoBusquedaPapeletas', 'busqPlaca').catch(() => {});
+      for (let k = 0; k < 20; k++) {
+        plateFrame = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
+        if (await plateFrame.locator('#ctl00_cplPrincipal_txtPlaca').isVisible().catch(() => false)) { visible = true; break; }
+        await wait(300);
+      }
+    }
+    if (!visible) {
+      const opts = await formFrame.evaluate(`(function(){var s=document.getElementById('tipoBusquedaPapeletas');return s?Array.prototype.map.call(s.options,function(o){return o.value}).join('|'):'';})()`).catch(() => '');
+      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+      return { ...base, status: 'ERROR', summary: `SAT papeletas: el input de placa no se hizo visible tras elegir "por placa" (opciones=${opts || '?'})`, screenshot: shot, ms: Date.now() - t0 };
+    }
+    await plateFrame.locator('#ctl00_cplPrincipal_txtPlaca').fill(plate);
     const token = await solver.solveRecaptchaV2(SAT_PAPELETAS_SITEKEY, PAGE_URL);
-    await formFrame.evaluate(
+    await plateFrame.evaluate(
       `(function(){var els=document.querySelectorAll('#g-recaptcha-response,[name=g-recaptcha-response]');els.forEach(function(e){e.value=${JSON.stringify(token)};e.style.display='block';});})()`,
     );
-    await formFrame.locator('#ctl00_cplPrincipal_CaptchaContinue').click();
+    await plateFrame.locator('#ctl00_cplPrincipal_CaptchaContinue').click();
     // En vez de wait(6000) ciego: sondea el frame de resultado hasta que aparezca la respuesta (SAT es
     // ASP.NET, postback server-side); cap 6000ms + settle antes de parsear las papeletas.
     for (let k = 0; k < 19; k++) {
