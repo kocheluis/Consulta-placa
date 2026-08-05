@@ -23,6 +23,7 @@
 //   - Celular enchufado al cargador; ideal: uno viejo dedicado en el Wi-Fi de casa.
 
 import { request as httpsRequest } from 'node:https';
+import { spawn } from 'node:child_process';
 
 const [, , BASE_RAW, TOKEN] = process.argv;
 
@@ -30,6 +31,17 @@ const PAGE = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTall
 const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ts = () => new Date().toISOString().slice(11, 19);
+
+// Toma el wake-lock de Termux para que Android NO congele el proceso en Doze (la causa #1 de que el
+// relay "deje de latir"). Best-effort: si no existe el binario (no es Termux / falta termux-api) se
+// ignora. El supervisor fise-relay-boot.sh también lo toma; esto protege además los arranques manuales.
+function acquireWakeLock() {
+  try { spawn('termux-wake-lock', { stdio: 'ignore' }).on('error', () => {}); } catch { /* no-termux */ }
+}
+// Un error suelto NUNCA debe tumbar el worker: log y seguir (el bucle principal es autocontenido y se
+// re-encarga en el próximo giro). Así una red rara o un throw inesperado no matan el relay.
+process.on('uncaughtException', (e) => console.error(`[${ts()}] uncaught (sigo vivo): ${e?.message ?? e}`));
+process.on('unhandledRejection', (e) => console.error(`[${ts()}] unhandled (sigo vivo): ${e?.message ?? e}`));
 
 // HTTP hacia FISE con node:https y `rejectUnauthorized: false` EXPLÍCITO: el servidor del MINEM
 // manda su certificado SIN la cadena intermedia (los navegadores la resuelven solos, por eso el
@@ -145,8 +157,10 @@ async function consulta(job) {
   return { httpStatus: r2.status, bodyText: r2.text };
 }
 
+acquireWakeLock();
 console.log(`[${ts()}] worker FISE encendido → ${BASE} (Ctrl+C para salir)`);
 let errStreak = 0;
+let lastBeat = Date.now();
 for (;;) {
   try {
     const res = await fetch(`${BASE}/api/fise-relay/next?token=${encodeURIComponent(TOKEN)}`, { signal: AbortSignal.timeout(15000) });
@@ -165,8 +179,12 @@ for (;;) {
         signal: AbortSignal.timeout(15000),
       }).catch((e) => console.error(`[${ts()}] no pude devolver el resultado: ${e.message}`));
       console.log(`[${ts()}] job ${job.id} → ${out.ok ? `HTTP ${out.httpStatus} (${(out.bodyText ?? '').length} bytes)` : `ERROR ${out.error}`}`);
+      lastBeat = Date.now();
       continue; // sin pausa: puede haber otro job esperando en la cola
     }
+    // Latido de vida: el poll salió bien pero no había trabajo. Cada ~5 min dejamos constancia en el
+    // log para que el operador vea de un vistazo que el relay sigue despierto (no lo durmió el SO).
+    if (Date.now() - lastBeat > 300000) { console.log(`[${ts()}] sigo vivo (polling OK, sin trabajos)`); lastBeat = Date.now(); }
   } catch (e) {
     errStreak++;
     if (errStreak % 15 === 1) console.error(`[${ts()}] VPS inalcanzable: ${String(e?.message ?? e)} (sigo reintentando cada 4s)`);

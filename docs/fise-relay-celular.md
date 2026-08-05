@@ -53,18 +53,47 @@ apunta el celular. Verificar que escucha: `ss -tlnp | grep 3011`. Si el proveedo
 1. Instalar **Termux** (F-Droid recomendado; la versión de Play está desactualizada).
 2. En Termux:
    ```bash
-   pkg install nodejs-lts
+   pkg install nodejs-lts termux-api
    curl -O https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-celular.mjs
+   curl -O https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-boot.sh
    ```
-3. Arrancar el worker (puerto **3011** — el listener público del relay — + el token del paso VPS-1):
+3. Prueba rápida a mano (puerto **3011** — el listener público del relay — + el token del paso VPS-1):
    ```bash
-   termux-wake-lock
-   node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
+   node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN   # debe imprimir "worker FISE encendido"
    ```
-4. **Mantenerlo vivo**: Ajustes Android → Batería → Termux → *Sin restricciones* (excluir de la
-   optimización). Celular enchufado. Ideal: un celular viejo dedicado, en el Wi-Fi de casa.
 
-El worker imprime cada job que ejecuta. Si el VPS se cae o no hay red, reintenta solo cada 4s.
+### Mantenerlo vivo DE VERDAD (obligatorio — si no, se cae)
+
+El worker en sí es robusto (reintenta la red para siempre). Lo que lo tumba es **el sistema
+operativo**: Android congela el proceso en *Doze* o lo mata por batería, y al reiniciar el celular no
+vuelve solo. Por eso el `RESULTADO ERROR · relay residencial (celular) sin señal` NO es un bug del
+scraper — es el proceso del celular que murió. Blíndalo con las tres capas:
+
+1. **Wake-lock + auto-reinicio (supervisor `fise-relay-boot.sh`)** — reinicia el worker si se cae y
+   toma el wake-lock:
+   ```bash
+   printf 'VPS_URL=http://IP-DEL-VPS:3011\nTOKEN=EL_TOKEN\n' > ~/.fise-relay.conf
+   sh fise-relay-boot.sh        # déjalo corriendo; log en ~/fise-relay.log
+   ```
+2. **Termux:Boot (sobrevive reinicios del celular)** — instala la app *Termux:Boot* (F-Droid), ábrela
+   una vez, y deja el supervisor como script de arranque:
+   ```bash
+   mkdir -p ~/.termux/boot && cp fise-relay-boot.sh ~/.termux/boot/ && chmod +x ~/.termux/boot/fise-relay-boot.sh
+   ```
+3. **Batería**: Ajustes Android → Batería → Termux → *Sin restricciones*. Celular enchufado y con
+   Wi-Fi que no se duerma. Ideal: un equipo viejo dedicado.
+
+El worker deja un latido `sigo vivo (polling OK, sin trabajos)` cada ~5 min en el log: si el log dejó
+de crecer, el SO lo durmió → revisa wake-lock y batería.
+
+### Redundancia (recomendado): un 2º poller en la PC
+
+La cola del VPS acepta **varios pollers a la vez** (el que pide primero se lleva el job). Corre el
+MISMO worker también en la PC del operador (IP residencial, Node ≥ 18) como respaldo: si el celular
+muere, la PC cubre las consultas sin que FISE falle.
+```bash
+node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
+```
 
 ## Knobs (env del VPS)
 
@@ -80,7 +109,10 @@ El worker imprime cada job que ejecuta. Si el VPS se cae o no hay red, reintenta
 
 - `GET /api/fise-relay/status` → `{enabled, alive, lastSeenAgoS, pending, inFlight, served, done}`.
 - Worker dice `token RECHAZADO` → el token no coincide con `FISE_RELAY_TOKEN` del VPS.
-- FISE sale `relay residencial (celular) sin señal` en el reporte → el worker no está corriendo
-  (o Android lo durmió: revisar wake-lock y optimización de batería).
+- FISE sale `relay residencial (celular) sin señal` en el reporte → el worker no está corriendo (el
+  SO lo mató/durmió o el celular reinició). Fix permanente: correrlo bajo `fise-relay-boot.sh`
+  (wake-lock + auto-reinicio) y con Termux:Boot; revisar la exclusión de batería. Ver arriba
+  "Mantenerlo vivo DE VERDAD". `curl -s http://localhost:3010/api/fise-relay/status` muestra
+  `alive` y `lastSeenAgoS` para confirmar desde el VPS.
 - FISE sale `token v3 rechazado` → CapSolver devolvió un token de score bajo; el motor ya
   reintenta 1 vez con token fresco. Si persiste en todas las placas, revisar saldo CapSolver.
