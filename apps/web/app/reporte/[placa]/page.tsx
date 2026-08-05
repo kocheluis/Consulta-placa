@@ -1344,8 +1344,11 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
   const est = p.estimatedAnnual != null
     ? `${p.estimatedCurrency === 'USD' ? 'US$ ' : p.estimatedCurrency === 'PEN' ? 'S/ ' : ''}${p.estimatedAnnual.toLocaleString('es-PE')} /año (aprox.)`
     : null;
+  // La sede es la OFICINA REGISTRAL SUNARP del vehículo (dónde está inscrito), que usamos como
+  // aproximación: el impuesto lo administra el SAT/municipalidad del DOMICILIO FISCAL del dueño, que
+  // suele coincidir con la zona de inscripción pero no lo verificamos. Por eso "probable" + la nota de abajo.
   const jurisdiction = p.registralOffice
-    ? `${p.registralOffice}${/lima/i.test(p.registralOffice) ? ' → SAT de Lima' : ''} (según el domicilio fiscal del dueño)`
+    ? `${p.registralOffice}${/lima/i.test(p.registralOffice) ? ' → SAT de Lima' : ''} (oficina registral SUNARP)`
     : null;
 
   return (
