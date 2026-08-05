@@ -96,6 +96,30 @@ describe('toWebReport · sección IMPUESTO_VEHICULAR (Capa A — derivada de la 
     expect(p.afecto).toBe(false); // 2026 > 2025
   });
 
+  it('mapea la validación SAT (Capa B) a payload.sat', () => {
+    const s = impuestoOf([
+      res('HISTORIAL', 'ENCONTRADO', { timeline: [asiento('2023-00099999', 'Primera Inscripción de Dominio', 'US$ 20,000.00')] }),
+      res('SAT_IMPUESTO', 'ENCONTRADO', {
+        found: true, pendingTotal: 193.96, pendingCount: 2, paidYears: [2024, 2025], pendingYears: [2026],
+        cuotas: [
+          { year: 2026, cuota: '3', total: 96.98, pagado: 0, deuda: 96.98, vencimiento: '31/08/2026', estado: 'pendiente' },
+          { year: 2024, cuota: '1', total: 0, pagado: 119.44, deuda: 0, vencimiento: '29/02/2024', estado: 'pagado' },
+        ],
+      }),
+    ]);
+    const p = s?.payload as ImpuestoVehicularPayload;
+    expect(p.sat?.found).toBe(true);
+    expect(p.sat?.pendingTotal).toBe(193.96);
+    expect(p.sat?.pendingYears).toEqual([2026]);
+    expect(p.sat?.cuotas.find((c) => c.estado === 'pendiente')?.amount).toBe(96.98); // deuda
+    expect(p.sat?.cuotas.find((c) => c.estado === 'pagado')?.amount).toBe(119.44); // pagado
+  });
+
+  it('sin fuente SAT → payload.sat = null (solo estimado Capa A)', () => {
+    const s = impuestoOf([res('HISTORIAL', 'ENCONTRADO', { timeline: [asiento('2023-00099999', 'Primera Inscripción de Dominio', 'US$ 20,000.00')] })]);
+    expect((s?.payload as ImpuestoVehicularPayload).sat).toBeNull();
+  });
+
   it('historial FALLÓ (ERROR) → sección UNAVAILABLE (depende del historial para el año)', () => {
     const s = impuestoOf([res('SUNARP', 'ENCONTRADO', { sede: 'LIMA' }), res('HISTORIAL', 'ERROR')]);
     expect(s?.status).toBe(SectionStatus.UNAVAILABLE);

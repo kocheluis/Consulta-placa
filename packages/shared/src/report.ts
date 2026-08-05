@@ -282,9 +282,26 @@ export interface ImpuestoYearObligado {
   estimated: number | null;
 }
 
+/** Validación REAL del pago en el SAT de Lima (Capa B, por placa). Complementa el estimado de Capa A. */
+export interface ImpuestoSatValidation {
+  /** true = el SAT tiene registro del impuesto para esta placa. */
+  found: boolean;
+  /** Deuda pendiente total confirmada por el SAT (S/), sin duplicar la CuotaÚnica. */
+  pendingTotal: number;
+  pendingCount: number;
+  /** Años con cuotas PAGADAS y con cuotas PENDIENTES según el SAT. */
+  paidYears: number[];
+  pendingYears: number[];
+  /** Detalle de cuotas: año, cuota, monto (deuda si pendiente / pagado si cancelada), estado, vencimiento. */
+  cuotas: Array<{ year: number; cuota: string; amount: number; estado: 'pendiente' | 'pagado'; vencimiento: string | null }>;
+}
+
 export interface ImpuestoVehicularPayload {
   /** ¿Dentro del periodo afecto (≤3 años desde la 1ª inscripción)? null = no se pudo determinar el año. */
   afecto: boolean | null;
+  /** VALIDACIÓN real en el SAT de Lima (Capa B, por placa): lo efectivamente pagado/pendiente. null =
+   *  no consultado (fuente sat-impuesto apagada, o placa no-Lima). Manda sobre el estimado de Capa A. */
+  sat: ImpuestoSatValidation | null;
   /** Año de la primera inscripción de dominio en SUNARP (base del cómputo). */
   registrationYear: number | null;
   /** Ejercicios afectos: [regYear+1, regYear+2, regYear+3]. */

@@ -21,6 +21,7 @@ import {
   type HistorialPayload,
   type HistorialEvent,
   type ImpuestoVehicularPayload,
+  type ImpuestoSatValidation,
   type AuctionInfo,
   type TransporteInfo,
   type VehicleSpecs,
@@ -350,6 +351,27 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     }
   }
 
+  // ── IMPUESTO VEHICULAR · Capa B (VALIDACIÓN real en SAT Lima, por placa) ──
+  // Independiente del historial: si la fuente `sat-impuesto` corrió, trae lo REALMENTE pagado/pendiente.
+  // Se adjunta a la sección IMPUESTO_VEHICULAR (junto al estimado de Capa A). PII: sin nombres (solo cuotas).
+  const satRes = by('SAT_IMPUESTO');
+  const satData = data(satRes);
+  const satVal: ImpuestoSatValidation | null = satRes?.status === 'ENCONTRADO' && satData.found
+    ? {
+        found: true,
+        pendingTotal: num(satData.pendingTotal),
+        pendingCount: num(satData.pendingCount),
+        paidYears: ((satData.paidYears as number[]) ?? []).map(Number),
+        pendingYears: ((satData.pendingYears as number[]) ?? []).map(Number),
+        cuotas: ((satData.cuotas as Array<Record<string, unknown>>) ?? []).map((c) => ({
+          year: num(c.year), cuota: String(c.cuota ?? ''),
+          amount: c.estado === 'pendiente' ? (num(c.deuda) || num(c.total)) : num(c.pagado),
+          estado: c.estado === 'pendiente' ? ('pendiente' as const) : ('pagado' as const),
+          vencimiento: (c.vencimiento as string) || null,
+        })),
+      }
+    : (satRes?.status === 'SIN_REGISTRO' ? { found: false, pendingTotal: 0, pendingCount: 0, paidYears: [], pendingYears: [], cuotas: [] } : null);
+
   // ── GRAVÁMENES + HISTORIAL de transferencias (SPRL + Síguelo) ──
   if (hist?.status === 'ENCONTRADO') {
     const hd = data(hist);
@@ -481,6 +503,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       }));
       impPay = {
         afecto: curYear <= lastAffectedYear,
+        sat: satVal,
         registrationYear: regYear,
         affectedYears,
         currentOwnerSince,
@@ -494,7 +517,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         registralOffice: sede,
       };
     } else {
-      impPay = { afecto: null, registrationYear: null, affectedYears: [], currentOwnerSince, breakdown: [], lastAffectedYear: null, dueYears: [], upcomingYears: [], declaredValue: null, estimatedAnnual: null, estimatedCurrency: null, registralOffice: sede };
+      impPay = { afecto: null, sat: satVal, registrationYear: null, affectedYears: [], currentOwnerSince, breakdown: [], lastAffectedYear: null, dueYears: [], upcomingYears: [], declaredValue: null, estimatedAnnual: null, estimatedCurrency: null, registralOffice: sede };
     }
     src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: impPay });
 
@@ -517,7 +540,13 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     // El impuesto vehicular (afectación) se DERIVA del año de la 1ª inscripción → depende del historial.
-    src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    // Pero la VALIDACIÓN SAT (Capa B) es independiente: si corrió, se emite la sección con solo esa capa.
+    if (satVal) {
+      const impB: ImpuestoVehicularPayload = { afecto: null, sat: satVal, registrationYear: null, affectedYears: [], currentOwnerSince: null, breakdown: [], lastAffectedYear: null, dueYears: [], upcomingYears: [], declaredValue: null, estimatedAnnual: null, estimatedCurrency: null, registralOffice: (data(sunarp).sede as string) ?? null };
+      src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SAT, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: impB });
+    } else {
+      src.push({ kind: SectionKind.IMPUESTO_VEHICULAR, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    }
   }
 
   const report = buildReport({ id, plateDisplay: plate, plateNormalized: plate, generatedAt: at, sources: src });
