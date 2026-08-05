@@ -402,18 +402,21 @@ export async function runSatImpuesto(
     return Array.from(t.querySelectorAll('tr')).map((tr) => Array.from(tr.querySelectorAll('th,td')).map((c) => (c.textContent || '').replace(/\s+/g, ' ').trim()));
   }, id).catch(() => [] as string[][]);
   try {
-    // 1. Entrar y obtener la URL del módulo CON la sesión (mysession en el link de "Tributo detalles").
-    await page.goto('https://www.sat.gob.pe/VirtualSAT/modulos/BusquedaTributario.aspx', { waitUntil: 'domcontentloaded', timeout: 60000 });
-    let modUrl = '';
-    for (const fr of page.frames()) {
-      const href = await fr.locator('a[href*="tributosRef.aspx?tri=V"]').first().getAttribute('href').catch(() => null);
-      if (href) { modUrl = new URL(href, fr.url()).toString(); break; }
-    }
-    if (!modUrl) return { ...base, status: 'ERROR', summary: 'no se estableció la sesión del SAT (sin link tributosRef)', ms: Date.now() - t0 };
+    // freshSession: entra por BusquedaTributario.aspx → principal.aspx (mint de un mysession NUEVO) → toma
+    // el link "Tributo detalles" (tributosRef.aspx?tri=V con ESE mysession) y navega al form. Se llama por
+    // CADA contribuyente: el mysession es de UN SOLO USO (re-visitar la misma URL tras abrir cuotas da form
+    // vacío — visto en CHU444 c1) → cada contribuyente necesita una sesión fresca.
+    const freshSession = async (): Promise<boolean> => {
+      await page.goto('https://www.sat.gob.pe/VirtualSAT/modulos/BusquedaTributario.aspx', { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+      for (const fr of page.frames()) {
+        const href = await fr.locator('a[href*="tributosRef.aspx?tri=V"]').first().getAttribute('href').catch(() => null);
+        if (href) { await page.goto(new URL(href, fr.url()).toString(), { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {}); return true; }
+      }
+      return false;
+    };
 
-    // doSearch: carga el form, elige "por placa", resuelve el captcha y Buscar → deja la grid de contribuyentes.
-    const doSearch = async (): Promise<{ ok: boolean; contribs: number; cap: string; diag: string }> => {
-      await page.goto(modUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
+    // fillSearch: sobre el FORM YA cargado (freshSession). Elige "por placa", resuelve captcha y Buscar → grid.
+    const fillSearch = async (): Promise<{ ok: boolean; contribs: number; cap: string; diag: string }> => {
       await page.locator('#tipoBusqueda').selectOption('divBuscaPlaca').catch(() => {});
       await wait(700);
       // Espera ACOTADA del captcha: si el elemento no aparece, NO llamamos readCaptcha (que colgaría
@@ -455,9 +458,10 @@ export async function runSatImpuesto(
       return out;
     };
 
-    // 2. Buscar (reintenta si el captcha falla; corta si el form estructuralmente no carga).
-    let search = await doSearch();
-    for (let i = 0; i < 3 && !search.ok && !search.diag.startsWith('sin captcha'); i++) search = await doSearch();
+    // 2. Sesión fresca + Buscar. Reintenta el captcha en el MISMO form; si el form no carga, sesión nueva.
+    if (!(await freshSession())) return { ...base, status: 'ERROR', summary: 'no se estableció la sesión del SAT', ms: Date.now() - t0 };
+    let search = await fillSearch();
+    for (let i = 0; i < 3 && !search.ok; i++) { if (search.diag.startsWith('sin captcha')) await freshSession(); search = await fillSearch(); }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     if (!search.ok) return { ...base, status: 'ERROR', summary: `SAT impuesto no disponible · ${search.diag}`, data: { captcha: search.cap }, screenshot: shot, ms: Date.now() - t0 };
     if (search.contribs === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin registro de impuesto vehicular en SAT Lima', data: { found: false }, screenshot: shot, ms: Date.now() - t0 };
@@ -467,7 +471,12 @@ export async function runSatImpuesto(
     const all: SatCuota[] = [];
     const diag: string[] = [`contribs=${search.contribs}`];
     for (let i = 0; i < N; i++) {
-      if (i > 0) { const s = await doSearch(); if (!s.ok || s.contribs <= i) { diag.push(`c${i}:research-fail(${s.diag})`); break; } }
+      if (i > 0) {
+        // Sesión FRESCA por contribuyente (el mysession es de un solo uso; re-visitar la URL da form vacío).
+        if (!(await freshSession())) { diag.push(`c${i}:no-session`); break; }
+        const s = await fillSearch();
+        if (!s.ok || s.contribs <= i) { diag.push(`c${i}:research-fail(ok=${s.ok} contribs=${s.contribs} ${s.diag})`); break; }
+      }
       const ctl = `ctl${String(i + 2).padStart(2, '0')}`;
       const link = page.locator(`#ctl00_cplPrincipal_grdAdministrados_${ctl}_lnkNombre`);
       const linkN = await link.count().catch(() => 0);
@@ -495,7 +504,7 @@ export async function runSatImpuesto(
       ...base, status: 'ENCONTRADO',
       summary: pending.length
         ? `Impuesto vehicular SAT: S/ ${pendingTotal.toFixed(2)} pendiente · ${pending.length} cuota(s) · años ${pendingYears.join(', ')}`
-        : `Impuesto vehicular SAT: sin deuda pendiente · DIAG: ${diag.join(' ')}`,
+        : (cuotas.length ? 'Impuesto vehicular SAT: al día (sin deuda pendiente)' : 'Impuesto vehicular SAT: sin cuotas registradas'),
       data: { found: true, cuotas, pendingTotal, pendingCount: pending.length, paidYears, pendingYears, diag: diag.join(' ') },
       screenshot: shot, ms: Date.now() - t0,
     };
