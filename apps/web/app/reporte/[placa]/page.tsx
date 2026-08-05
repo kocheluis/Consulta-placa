@@ -31,7 +31,7 @@ import {
   TIER_RANK,
   ReportTier,
 } from '@app/shared';
-import { useConsulta } from '@/lib/use-consulta';
+import { useConsulta, type CupoInfo } from '@/lib/use-consulta';
 import { getPaidTier, buyReport, type Tier } from '@/lib/account';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
@@ -227,7 +227,7 @@ export default function ReportePage() {
 
   // Sin reporte aún (stub vacío): ofrecer la CONSULTA GRATIS (BASIC) en vez del dashboard vacío.
   if (!preview && state.report.sections.length === 0 && !state.report.vehicle) {
-    return <FreeConsultaGate placa={placa} onStarted={actualizar} />;
+    return <FreeConsultaGate placa={placa} onStarted={actualizar} cupo={state.cupo} />;
   }
 
   return (
@@ -236,12 +236,53 @@ export default function ReportePage() {
       cached={state.cached}
       onRetry={actualizar}
       preview={preview}
+      serverTier={state.tier}
+      serverCupo={state.cupo}
+      generating={state.generating}
     />
   );
 }
 
+/* ── CTA de consulta con CUPO: genera el reporte del nivel asignado usando 1 del cupo (sin pago) ── */
+function CupoConsultCTA({ placa, tier, onStarted }: { placa: string; tier: 'PRO' | 'ULTRA'; onStarted: () => void }) {
+  const [loading, setLoading] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const run = async () => {
+    setLoading(true);
+    setErr(null);
+    try {
+      const r = await fetch('/api/cupo/consultar', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placa }),
+      });
+      const d = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (r.ok && d.ok) {
+        onStarted(); // consumió 1 del cupo + encoló el reporte de su nivel → empieza el polling
+        return;
+      }
+      setErr(d.error || 'No pudimos generar el reporte con tu cupo.');
+    } catch {
+      setErr('Hubo un problema de conexión. Inténtalo de nuevo.');
+    }
+    setLoading(false);
+  };
+  const nivel = tier === 'ULTRA' ? 'Ultra' : 'Pro';
+  return (
+    <div className="flex flex-col items-center gap-2 text-center">
+      <Button variant="accent" size="lg" icon="workspace_premium" onClick={run} disabled={loading}>
+        {loading ? 'Generando…' : `Consultar con mi cupo · ${nivel}`}
+      </Button>
+      <p className="max-w-sm font-body text-[12.5px] leading-snug text-muted">
+        Usa 1 de tu cupo asignado (no se cobra). El reporte {nivel} se procesa en unos minutos.
+      </p>
+      {err && <p className="font-body text-sm text-danger">{err}</p>}
+    </div>
+  );
+}
+
 /* ── Consulta gratis (BASIC): encola el pedido y arranca el polling ─── */
-function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () => void }) {
+function FreeConsultaGate({ placa, onStarted, cupo }: { placa: string; onStarted: () => void; cupo?: CupoInfo }) {
   const [loading, setLoading] = useState(false);
   const [err, setErr] = useState<string | null>(null);
   const start = async () => {
@@ -264,6 +305,23 @@ function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () =
     }
     setLoading(false);
   };
+  // Usuario con cupo asignado: en vez de la consulta gratis BASIC, genera directo su nivel (PRO/ULTRA)
+  // con su cupo. Así no cae en el paywall/Yape (que es justo lo que reportó el admin).
+  if (cupo?.enabled) {
+    return (
+      <div className="bg-background px-4 py-16 sm:py-24">
+        <StateScreen
+          tone="brand"
+          icon="workspace_premium"
+          title="Consulta con tu cupo"
+          description={`Tu cuenta tiene un cupo ${cupo.tier === 'ULTRA' ? 'Ultra' : 'Pro'} asignado. Genera el reporte completo sin pagar; se descuenta 1 de tu cupo.`}
+          footer={`Placa ${formatPlateDisplay(placa)}`}
+        >
+          <CupoConsultCTA placa={placa} tier={cupo.tier} onStarted={onStarted} />
+        </StateScreen>
+      </div>
+    );
+  }
   return (
     <div className="bg-background px-4 py-16 sm:py-24">
       <StateScreen
@@ -286,9 +344,9 @@ function FreeConsultaGate({ placa, onStarted }: { placa: string; onStarted: () =
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
 function ReportView({
-  report, cached, onRetry, preview,
+  report, cached, onRetry, preview, serverTier, serverCupo, generating,
 }: {
-  report: Report; cached: boolean; onRetry: () => void; preview?: string;
+  report: Report; cached: boolean; onRetry: () => void; preview?: string; serverTier?: Tier; serverCupo?: CupoInfo; generating?: boolean;
 }) {
   const router = useRouter();
   const v = report.vehicle;
@@ -296,7 +354,9 @@ function ReportView({
 
   // Nivel desbloqueado por el usuario para esta placa (pago por reporte).
   // En preview de operador se fuerza ULTRA para mostrar todas las secciones.
-  const [currentTier, setCurrentTier] = useState<Tier>(preview ? 'ULTRA' : 'BASIC');
+  // Init desde el nivel EFECTIVO del servidor (pago + cupo) para no parpadear el paywall antes de que
+  // el useEffect sincronice: un usuario con cupo debe abrir ya desbloqueado.
+  const [currentTier, setCurrentTier] = useState<Tier>(preview ? 'ULTRA' : (serverTier ?? 'BASIC'));
   const [buying, setBuying] = useState<'PRO' | 'ULTRA' | null>(null);
   const [pendingYape, setPendingYape] = useState<{ tier: 'PRO' | 'ULTRA'; orderId?: string } | null>(null);
   const onRetryRef = useRef(onRetry);
@@ -305,16 +365,25 @@ function ReportView({
 
   useEffect(() => {
     if (preview) { setCurrentTier('ULTRA'); return; }
-    getPaidTier(report.placa).then(setCurrentTier).catch(() => {});
-  }, [report.placa, preview]);
+    // El servidor ya resolvió el nivel EFECTIVO (pago por reporte + CUPO) al servir el reporte; es la
+    // fuente de verdad del candado. Antes se re-resolvía con getPaidTier (solo `purchases`), que ignora
+    // el cupo → un usuario con cupo veía el candado + Yape aunque el reporte ya viniera con datos
+    // PRO/ULTRA. Tomamos el mayor para no pisar un nivel recién comprado mientras llega el re-fetch.
+    if (serverTier) setCurrentTier((prev) => ((TIER_RANK[serverTier as ReportTier] ?? 1) > (TIER_RANK[prev as ReportTier] ?? 1) ? serverTier : prev));
+  }, [report.placa, preview, serverTier]);
 
   // ¿El reporte guardado YA cubre el nivel pagado? (guiado por datos, sobrevive recargas).
   // PRO = corrieron las fuentes PRO (aparece CAPTURA/HISTORIAL/GRAVAMENES); ULTRA = además la IA.
   const rankNow = TIER_RANK[currentTier as ReportTier] ?? 1;
   const proReady = report.sections.some((s) => s.kind === 'CAPTURA' || s.kind === 'HISTORIAL' || s.kind === 'GRAVAMENES');
   const ultraReady = report.sections.some((s) => s.kind === 'IA' && s.status === SectionStatus.AVAILABLE);
-  const awaitingUltra = !preview && currentTier === 'ULTRA' && !ultraReady;
-  const awaitingPro = !preview && rankNow >= TIER_RANK[ReportTier.PRO] && !proReady;
+  // La pantalla de carga del panel pagado solo tiene sentido si algo se está GENERANDO (pago recién
+  // hecho o consulta por cupo encolada). Sin esto, un usuario con nivel desbloqueado (cupo) pero sin
+  // datos aún y sin pedido en curso quedaba en un spinner infinito. Con `buying` cubrimos la ventana
+  // entre el pago y que el backend marque el pedido como en curso.
+  const generatingNow = !!generating || !!buying;
+  const awaitingUltra = !preview && currentTier === 'ULTRA' && !ultraReady && generatingNow;
+  const awaitingPro = !preview && rankNow >= TIER_RANK[ReportTier.PRO] && !proReady && generatingNow;
   const awaitingPaid = awaitingPro || awaitingUltra;
   const awaitingTier: 'PRO' | 'ULTRA' = awaitingUltra ? 'ULTRA' : 'PRO';
 
@@ -502,7 +571,7 @@ function ReportView({
           {awaitingPaid || paidFinishing ? (
             <PaidPanelLoading tier={awaitingPaid ? awaitingTier : lastPaidTier.current} finishing={paidFinishing} />
           ) : (
-            <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+            <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} cupo={serverCupo} generating={generatingNow} />
           )}
         </main>
       </div>
@@ -673,7 +742,7 @@ function SectionBlock({
 
 /* ── Panel combinado PRO + ULTRA (un solo panel) ──────────────────── */
 function PaidPanel({
-  report, vehicle, currentTier, onActivate, buying, onRetry,
+  report, vehicle, currentTier, onActivate, buying, onRetry, cupo, generating,
 }: {
   report: Report;
   vehicle: Report['vehicle'];
@@ -681,6 +750,8 @@ function PaidPanel({
   onActivate: (tier: 'PRO' | 'ULTRA') => void;
   buying: 'PRO' | 'ULTRA' | null;
   onRetry: () => void;
+  cupo?: CupoInfo;
+  generating?: boolean;
 }) {
   const rank = TIER_RANK[currentTier as ReportTier] ?? 1;
   const unlockedPro = rank >= TIER_RANK[ReportTier.PRO];
@@ -689,6 +760,34 @@ function PaidPanel({
   const ultraEntries = SECTION_CATALOG.filter((e) => e.tier === ReportTier.ULTRA);
   const sectionByKind = (kind: string | null): SectionResult | undefined =>
     kind ? report.sections.find((s) => s.kind === kind) : undefined;
+  const proReady = report.sections.some((s) => s.kind === 'CAPTURA' || s.kind === 'HISTORIAL' || s.kind === 'GRAVAMENES');
+
+  // Usuario con CUPO: su nivel ya viene desbloqueado, pero si el reporte todavía NO tiene datos PRO y
+  // nada se está generando, ofrecemos GENERAR con su cupo (en vez de mostrar secciones vacías). Así el
+  // usuario con cupo nunca ve el paywall/Yape — que es justo lo reportado.
+  if (cupo?.enabled && !proReady && !generating) {
+    return (
+      <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
+        <div className="flex items-center gap-3 border-b border-border px-5 py-4">
+          <div className="grid h-11 w-11 flex-none place-items-center rounded-xl bg-teal-50 text-teal-700">
+            <Icon name="workspace_premium" className="text-[24px]" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte completo con tu cupo</h2>
+            <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
+              Tu cuenta tiene un cupo {cupo.tier === 'ULTRA' ? 'Ultra' : 'Pro'}. Genera el reporte completo sin pagar.
+            </p>
+          </div>
+          <Badge tone="info" size="sm" icon="workspace_premium">Cupo {cupo.tier}</Badge>
+        </div>
+        <div className="p-5">
+          <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6">
+            <CupoConsultCTA placa={report.placa} tier={cupo.tier} onStarted={onRetry} />
+          </div>
+        </div>
+      </section>
+    );
+  }
 
   // Aún no desbloqueado (BASIC): un solo panel oculto con dos pasos (Desbloquear → elegir nivel).
   if (!unlockedPro) {

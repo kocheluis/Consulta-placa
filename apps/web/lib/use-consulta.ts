@@ -3,9 +3,14 @@
 import { useEffect, useState } from 'react';
 import type { Report } from '@app/shared';
 
+/** Nivel EFECTIVO que el servidor usó para servir el reporte (pago por reporte + cupo del usuario). */
+type Tier = 'BASIC' | 'PRO' | 'ULTRA';
+/** Cupo del usuario en sesión (si el admin se lo asignó): permite GENERAR con su cupo en vez de pagar. */
+export type CupoInfo = { enabled: boolean; tier: 'PRO' | 'ULTRA' } | null;
+
 type State =
   | { phase: 'loading'; report: null; error: null; generating: boolean }
-  | { phase: 'done'; report: Report | null; error: null; cached: boolean; generating: boolean }
+  | { phase: 'done'; report: Report | null; error: null; cached: boolean; generating: boolean; tier: Tier; cupo: CupoInfo }
   | { phase: 'error'; report: null; error: string; needsPro: boolean; generating: false };
 
 type DoneState = Extract<State, { phase: 'done' }>;
@@ -37,11 +42,13 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
       try {
         const r = await fetch(`/api/reporte/${encodeURIComponent(placa)}${qs}`, { cache: 'no-store' });
         if (cancelled) return;
-        const d = (await r.json()) as { generating?: boolean; report?: Report | null };
+        const d = (await r.json()) as { generating?: boolean; report?: Report | null; tier?: Tier; cupo?: CupoInfo };
         if (cancelled) return;
         const generating = !!d.generating;
+        const tier: Tier = d.tier ?? 'BASIC';
+        const cupo: CupoInfo = d.cupo ?? null;
         if (d.report) {
-          setState({ phase: 'done', report: d.report, error: null, cached: false, generating });
+          setState({ phase: 'done', report: d.report, error: null, cached: false, generating, tier, cupo });
           // Sigue puliendo aunque ya haya reporte: puede estar regenerándose con más fuentes
           // (upgrade PRO/ULTRA) → así detectamos cuándo termina y revelamos el reporte completo.
           if (generating) timer = setTimeout(load, 3000);

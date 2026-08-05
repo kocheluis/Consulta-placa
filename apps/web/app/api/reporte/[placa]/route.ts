@@ -42,7 +42,7 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
   const { placa: raw } = await params;
   const placa = norm(raw);
   if (!placa) return NextResponse.json({ generating: false, report: null });
-  if (!isAdminConfigured) return NextResponse.json({ generating: false, report: stub(placa) });
+  if (!isAdminConfigured) return NextResponse.json({ generating: false, report: stub(placa), tier: 'BASIC', cupo: null });
 
   // Modo operador: ?preview=TOKEN devuelve el reporte COMPLETO sin recortar por tier, para
   // previsualizarlo en la consola. Preferido: token FIRMADO con expiración (verifyPreviewToken,
@@ -62,6 +62,9 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
   if (cupo?.access.enabled && TIER_RANK[cupo.access.tier] > TIER_RANK[tier as ReportTier]) {
     tier = cupo.access.tier;
   }
+  // Se expone al cliente para que, si el reporte aún no cubre su nivel, la UI ofrezca GENERAR con su
+  // cupo (POST /api/cupo/consultar) en vez del pago/Yape — sin esto un usuario con cupo veía el paywall.
+  const cupoOut = cupo?.access.enabled ? { enabled: true as const, tier: cupo.access.tier } : null;
 
   const admin = createAdminClient();
   const { data: rep } = await admin.from('reportes').select('report,status').eq('placa', placa).maybeSingle();
@@ -82,8 +85,11 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
     // de SUNARP y valor central del reporte). La minimización de PII aplica a los TERCEROS del
     // HISTORIAL (dueños anteriores, enmascarados en origen por el transform) y al titular de ATU.
     const report = operatorPreview ? full : stripByTier(full, tier);
-    return NextResponse.json({ generating, report });
+    // Devolvemos el `tier` efectivo (pago + CUPO) para que el candado de la UI use la MISMA fuente de
+    // verdad con que recortamos los datos — si no, el cliente re-resolvía con solo `purchases` y a un
+    // usuario con cupo le mostraba el candado + Yape aunque el reporte ya viniera con datos PRO/ULTRA.
+    return NextResponse.json({ generating, report, tier: operatorPreview ? 'ULTRA' : tier, cupo: cupoOut });
   }
 
-  return NextResponse.json({ generating, report: generating ? null : stub(placa) });
+  return NextResponse.json({ generating, report: generating ? null : stub(placa), tier, cupo: cupoOut });
 }
