@@ -412,19 +412,30 @@ export async function runSatImpuesto(
     if (!modUrl) return { ...base, status: 'ERROR', summary: 'no se estableció la sesión del SAT (sin link tributosRef)', ms: Date.now() - t0 };
 
     // doSearch: carga el form, elige "por placa", resuelve el captcha y Buscar → deja la grid de contribuyentes.
-    const doSearch = async (): Promise<{ ok: boolean; contribs: number; cap: string }> => {
-      await page.goto(modUrl, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+    const doSearch = async (): Promise<{ ok: boolean; contribs: number; cap: string; diag: string }> => {
+      await page.goto(modUrl, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
       await page.locator('#tipoBusqueda').selectOption('divBuscaPlaca').catch(() => {});
       await wait(700);
+      // Espera ACOTADA del captcha: si el elemento no aparece, NO llamamos readCaptcha (que colgaría
+      // ~30s por llamada esperando el elemento → los 823s vistos). Diagnóstico de por qué no cargó.
+      const capImg = page.locator('img.captcha_class').first();
+      const hasCap = await capImg.waitFor({ state: 'visible', timeout: 12000 }).then(() => true).catch(() => false);
+      if (!hasCap) {
+        const nSel = await page.locator('#tipoBusqueda').count().catch(() => 0);
+        const nPla = await page.locator('#ctl00_cplPrincipal_txtPlaca').count().catch(() => 0);
+        const nImg = await page.locator('img.captcha_class').count().catch(() => 0);
+        return { ok: false, contribs: 0, cap: '', diag: `sin captcha · url=${page.url().slice(0, 100)} sel=${nSel} placa=${nPla} img=${nImg} frames=${page.frames().length}` };
+      }
       await page.locator('#ctl00_cplPrincipal_txtPlaca').fill(plate).catch(() => {});
-      const cap = await readCaptcha(solver, page.locator('img.captcha_class').first());
+      let cap = '';
+      try { cap = await readCaptcha(solver, capImg); } catch (e) { return { ok: false, contribs: 0, cap: '', diag: `readCaptcha: ${(e as Error).message}` }; }
       await page.locator('#ctl00_cplPrincipal_txtCaptcha').fill(cap).catch(() => {});
       await Promise.all([page.waitForLoadState('domcontentloaded').catch(() => {}), page.locator('#ctl00_cplPrincipal_CaptchaContinue').click().catch(() => {})]);
       let body = '';
       for (let k = 0; k < 25; k++) { await wait(400); body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' '); const rows = await readGrid('ctl00_cplPrincipal_grdAdministrados'); if (rows.length > 1 || /c[oó]digo de seguridad incorrect|no se (ha\s+)?encontr|no existe/i.test(body)) break; }
-      if (/c[oó]digo de seguridad incorrect/i.test(body)) return { ok: false, contribs: 0, cap };
+      if (/c[oó]digo de seguridad incorrect/i.test(body)) return { ok: false, contribs: 0, cap, diag: 'captcha incorrecto' };
       const rows = await readGrid('ctl00_cplPrincipal_grdAdministrados');
-      return { ok: true, contribs: Math.max(0, rows.length - 1), cap };
+      return { ok: true, contribs: Math.max(0, rows.length - 1), cap, diag: '' };
     };
 
     // readCuotas: en la pantalla de cuotas, filtra por estado (1=Pendiente, 2=Cancelado) + Actualizar y parsea
@@ -444,11 +455,11 @@ export async function runSatImpuesto(
       return out;
     };
 
-    // 2. Buscar (reintenta si el captcha falla).
+    // 2. Buscar (reintenta si el captcha falla; corta si el form estructuralmente no carga).
     let search = await doSearch();
-    for (let i = 0; i < 3 && !search.ok; i++) search = await doSearch();
+    for (let i = 0; i < 3 && !search.ok && !search.diag.startsWith('sin captcha'); i++) search = await doSearch();
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    if (!search.ok) return { ...base, status: 'ERROR', summary: 'captcha rechazado tras varios intentos', data: { captcha: search.cap }, screenshot: shot, ms: Date.now() - t0 };
+    if (!search.ok) return { ...base, status: 'ERROR', summary: `SAT impuesto no disponible · ${search.diag}`, data: { captcha: search.cap }, screenshot: shot, ms: Date.now() - t0 };
     if (search.contribs === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin registro de impuesto vehicular en SAT Lima', data: { found: false }, screenshot: shot, ms: Date.now() - t0 };
 
     // 3. Iterar contribuyentes (cada uno cuesta 1 captcha por el re-search): cuotas pendientes + canceladas.
