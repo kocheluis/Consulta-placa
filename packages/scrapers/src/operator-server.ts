@@ -1245,6 +1245,11 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .engpill::before{content:"";width:9px;height:9px;border-radius:50%;background:#94A3B8;flex:0 0 auto}
   .engpill.on::before{background:var(--ok);box-shadow:0 0 0 3px rgba(21,128,61,.18)}
   .engmeta{color:var(--mut);font-size:12px}
+  .relaychip{display:none;align-items:center;gap:7px;font:600 12px ui-monospace,monospace;padding:5px 12px;border-radius:999px;border:1px solid var(--bd);background:#fff;cursor:default}
+  .relaychip.show{display:inline-flex}
+  .relaychip .dot{width:8px;height:8px;border-radius:50%;background:#94A3B8;flex:0 0 auto}
+  .relaychip.on{color:var(--ok);border-color:#BBF7D0;background:#F0FDF4} .relaychip.on .dot{background:var(--ok);box-shadow:0 0 0 3px rgba(21,128,61,.16)}
+  .relaychip.off{color:var(--err);border-color:#FCA5A5;background:#FEF2F2} .relaychip.off .dot{background:var(--err)}
   .cl{font-weight:700;font-size:13px;color:var(--ink);display:inline-flex;align-items:center;gap:6px;padding-bottom:7px;white-space:nowrap}
   .newtag{font:700 9px ui-monospace,monospace;letter-spacing:.05em;background:var(--teal);color:#fff;padding:1px 5px;border-radius:4px;vertical-align:middle}
   .srcbtn{font-size:12.5px;padding:6px 12px;border-radius:999px}
@@ -1252,7 +1257,7 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   #memTtl{font-size:12.5px;padding:5px 9px;border:1px solid var(--bd);border-radius:8px;background:#fff;color:var(--ink)} #memTtl:disabled{opacity:.45}
   .prog2.idle{background:var(--card2);color:var(--mut);border:1px solid var(--bd)} .prog2.idle .bw{background:#E5E9F0} .prog2.idle .pl{color:var(--ink)}
 </style></head><body>
-<header><span class="logo">🛠</span><b>Consola del operador · PlacaPe</b><span class="sub">scraping · VPS Perú</span><span style="flex:1"></span><span class="motorlbl">Motor automático</span><button id="engBtn" class="engpill off" onclick="toggleEngine()">…</button><span id="engInfo" class="engmeta"></span></header>
+<header><span class="logo">🛠</span><b>Consola del operador · PlacaPe</b><span class="sub">scraping · VPS Perú</span><span style="flex:1"></span><span id="relayChip" class="relaychip" title="Relay residencial de FISE (celular Termux). Verde = el celular hace polling; rojo = no late (FISE fallará). Ver docs/fise-relay-celular.md."><span class="dot"></span><span id="relayTxt">FISE relay</span></span><span class="motorlbl">Motor automático</span><button id="engBtn" class="engpill off" onclick="toggleEngine()">…</button><span id="engInfo" class="engmeta"></span></header>
 <main>
   <div class="ctlbar">
     <div class="row" style="align-items:flex-end;gap:10px;flex-wrap:wrap">
@@ -1471,6 +1476,20 @@ function loadEngine(){fetch('/api/engine').then(function(r){return r.json()}).th
     wrap.innerHTML='<div class="prog2 idle"><div class="top"><span class="pl">Motor '+(s.enabled?'encendido':'apagado')+'</span><span class="pc"></span></div>'+
       '<div class="st">'+(s.enabled?'Esperando pedidos…':'Motor apagado')+'</div><div class="bw"><div class="bf" style="width:0%"></div></div></div>';
   }
+}).catch(function(){});}
+// Salud del relay residencial de FISE (celular Termux). Solo se muestra si está configurado en el VPS
+// (FISE_RELAY_TOKEN). Verde = el celular late; rojo = no late hace rato → FISE fallará (avisa ANTES de
+// que un reporte reviente). Fuente: /api/fise-relay/status (ver operator/fise-relay.ts).
+function loadRelay(){fetch('/api/fise-relay/status').then(function(r){return r.json()}).then(function(s){
+  var chip=document.getElementById('relayChip'); if(!chip)return;
+  if(!s||!s.enabled){chip.className='relaychip';return;} // relay apagado → chip oculto
+  var txt=document.getElementById('relayTxt');
+  var ago=(s.lastSeenAgoS==null)?null:Number(s.lastSeenAgoS);
+  var agoStr=ago==null?'nunca':(ago<60?ago+'s':(Math.floor(ago/60)+'m'));
+  if(s.alive){chip.className='relaychip show on';txt.textContent='FISE relay ✓'+(ago!=null&&ago>=8?' ('+agoStr+')':'');
+    chip.title='Relay FISE OK · último poll hace '+agoStr+' · pendientes '+s.pending+' · en vuelo '+s.inFlight+' · atendidos '+s.done;}
+  else{chip.className='relaychip show off';txt.textContent=(ago==null?'FISE relay ✕ sin conexión aún':'FISE relay ✕ offline hace '+agoStr);
+    chip.title=(ago==null?'El celular nunca hizo poll → FISE fallará. Arranca el worker en el celular. Ver docs/fise-relay-celular.md':'El celular NO late hace '+agoStr+' → FISE fallará. Revisa el worker (wake-lock / Termux:Boot). Ver docs/fise-relay-celular.md');}
 }).catch(function(){});}
 function toggleEngine(){fetch('/api/engine/toggle',{method:'POST'}).then(function(r){return r.json()}).then(function(s){
   log(s.enabled?'⚙ motor automático ENCENDIDO':'⚙ motor automático APAGADO');loadEngine();});}
@@ -1915,5 +1934,5 @@ function renderMDerived(){
     return '<tr><td><span class="meta" style="font-family:ui-monospace,monospace">'+mfDT(e.ts)+'</span></td><td><b style="font:700 12px ui-monospace,monospace">'+esc(e.placa)+'</b></td><td>'+otier(e.tier)+'</td><td>'+oorigen(e.origin)+'</td><td>'+pestado(e.estado)+'</td><td>'+fl+'</td><td><span style="font:600 12px ui-monospace,monospace;color:#0C6F64">'+(e.dur?((m?m+'m ':'')+(e.dur%60)+'s'):'—')+'</span></td></tr>';}).join(''):'<tr><td colspan="7" style="color:#64748B;padding:20px;text-align:center">Sin reportes en el ámbito.</td></tr>';
   document.getElementById('recNote').innerHTML=recs.length>cap?'<span style="margin-left:auto">mostrando '+cap+' de '+recs.length+' (más recientes)</span>':'';
 }
-showTab('hist');loadEngine();loadHistory();loadAutoSources();loadMemory();setInterval(loadEngine,3000);setInterval(loadHistory,6000);
+showTab('hist');loadEngine();loadHistory();loadAutoSources();loadMemory();loadRelay();setInterval(loadEngine,3000);setInterval(loadHistory,6000);setInterval(loadRelay,5000);
 </script></body></html>`;
