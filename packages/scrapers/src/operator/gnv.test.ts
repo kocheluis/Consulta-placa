@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isGasVehicle } from './sources.js';
-import { gasFuelSignal } from './index.js';
+import { gasFuelSignal, FUEL_UNKNOWN_PARTIDA } from './index.js';
 
 describe('isGasVehicle (gate de fuentes GNV: solo si el vehículo es a gas)', () => {
   it('detecta vehículos a gas (característica del asiento SPRL)', () => {
@@ -63,5 +63,14 @@ describe('gasFuelSignal (señal de gas robusta: ficha + conversión en asientos)
   it('sin ficha y sin conversión → null (el gate marcará "no ejecutada")', () => {
     expect(gasFuelSignal({ caracteristicas: null, timeline: [] })).toBeNull();
     expect(gasFuelSignal(null)).toBeNull();
+  });
+
+  it('partida INCOMPLETA en SUNARP (sin ficha) → marcador para correr FISE/Infogas por si acaso (no null)', () => {
+    const sig = gasFuelSignal({ partidaIncompleta: true, caracteristicas: null, timeline: [] });
+    expect(sig).toBe(FUEL_UNKNOWN_PARTIDA); // el gate lo corre igual, NO cae en gnvDepFail (fuel==null)
+  });
+
+  it('con gas real la partida incompleta no pisa la señal de gas', () => {
+    expect(gasFuelSignal({ partidaIncompleta: true, caracteristicas: { fuel: 'GNV' }, timeline: [] })).toBe('GNV');
   });
 });

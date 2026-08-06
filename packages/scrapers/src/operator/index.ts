@@ -648,8 +648,12 @@ const gnvDepFail = (srcId: string): OperatorSourceResult => ({
  * de CONVERSIÓN A GNV/GLP (el "Cambio de Características") para confirmarlo. Devuelve una cadena que
  * `isGasVehicle` reconoce, o la ficha cruda (null/no-gas) si nada delata gas.
  */
+/** Marcador de "combustible DESCONOCIDO" porque SUNARP marcó la partida INCOMPLETA (placa antigua, error
+ *  de SUNARP): no hay ficha ni timeline para decidir. El gate GNV lo trata como "correr FISE/Infogas
+ *  IGUAL (por si acaso)" — NO se puede descartar que sea a gas. Ver el chequeo en los carriles ligeros. */
+export const FUEL_UNKNOWN_PARTIDA = '__PARTIDA_INCOMPLETA__';
 export function gasFuelSignal(
-  result: { caracteristicas?: { fuel?: string | null } | null; timeline?: Array<{ acto?: string; caracteristicas?: { fuel?: string | null } | null }> } | null | undefined,
+  result: { partidaIncompleta?: boolean; caracteristicas?: { fuel?: string | null } | null; timeline?: Array<{ acto?: string; caracteristicas?: { fuel?: string | null } | null }> } | null | undefined,
 ): string | null {
   const ficha = result?.caracteristicas?.fuel ?? null;
   if (isGasVehicle(ficha)) return ficha;
@@ -658,6 +662,8 @@ export function gasFuelSignal(
     if (isGasVehicle(t?.caracteristicas?.fuel)) return t!.caracteristicas!.fuel!;
     if (t?.acto && RX_CONV_GAS.test(t.acto)) return `GNV (conversión registral: ${t.acto.replace(/\s+/g, ' ').trim().slice(0, 48)})`;
   }
+  // SUNARP no dejó ver la partida (incompleta) → sin datos para decidir: se corre GNV por si acaso.
+  if (result?.partidaIncompleta) return FUEL_UNKNOWN_PARTIDA;
   return ficha; // null o no-gas → el gate saltará (vehículo confirmado sin gas)
 }
 
@@ -692,8 +698,12 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
       lanes.push({ sources: [id], run: async (plates, report) => {
         for (const p of plates) {
           const fuel = await fuelGate.wait(p.plate);
-          if (fuel == null) { report(p.plate, gnvDepFail(id)); continue; } // dependencia caída ≠ "no aplica"
-          if (!isGasVehicle(fuel)) { report(p.plate, gnvSkip(id, fuel)); continue; }
+          // Partida INCOMPLETA en SUNARP → combustible desconocido: se corre IGUAL (por si acaso). En los
+          // demás casos aplica el gate normal: sin señal = ERROR de dependencia; no-gas = "no aplica".
+          if (fuel !== FUEL_UNKNOWN_PARTIDA) {
+            if (fuel == null) { report(p.plate, gnvDepFail(id)); continue; } // dependencia caída ≠ "no aplica"
+            if (!isGasVehicle(fuel)) { report(p.plate, gnvSkip(id, fuel)); continue; }
+          }
           try { report(p.plate, await runSingleSource(p.plate, id, baseOpts(p.outDir))); }
           catch (e) { report(p.plate, { source: id.toUpperCase().replace(/-/g, '_'), label: id, category: 'GNV', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
         }
@@ -859,8 +869,11 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
             // así no se gasta captcha en un vehículo que no aplica (FISE/Infogas son solo para GNV).
             if (GNV_SOURCES.has(t.src)) {
               const fuel = await fuelGate.wait(t.plate);
-              if (fuel == null) { report(t.plate, gnvDepFail(t.src)); continue; } // dependencia caída ≠ "no aplica"
-              if (!isGasVehicle(fuel)) { report(t.plate, gnvSkip(t.src, fuel)); continue; }
+              // Partida INCOMPLETA en SUNARP → combustible desconocido: se corre IGUAL (por si acaso).
+              if (fuel !== FUEL_UNKNOWN_PARTIDA) {
+                if (fuel == null) { report(t.plate, gnvDepFail(t.src)); continue; } // dependencia caída ≠ "no aplica"
+                if (!isGasVehicle(fuel)) { report(t.plate, gnvSkip(t.src, fuel)); continue; }
+              }
             }
             report(t.plate, await runSingleSource(t.plate, t.src, baseOpts(t.outDir)));
           } catch (e) { report(t.plate, { source: t.src.toUpperCase(), label: t.src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
