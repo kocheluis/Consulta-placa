@@ -1185,6 +1185,13 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .loglinks2{display:flex;flex-wrap:wrap;gap:6px} .loglinks2 a{font:600 11px ui-monospace,monospace;color:var(--teal);text-decoration:none;border:1px solid var(--bd);border-radius:7px;padding:3px 8px;background:var(--card2)}
   .fsr .reint{flex:0 0 auto;border:1px solid #FCA5A5;background:#FEF2F2;color:var(--err);border-radius:7px;padding:1px 8px;font:700 12px system-ui;cursor:pointer;margin-left:2px} .fsr .reint:hover{background:#FEE2E2} .fsr .reint:disabled{opacity:.5;cursor:default}
   .reintall{border:1px solid #FCA5A5;background:#FEF2F2;color:var(--err);border-radius:7px;padding:2px 9px;font:700 11px system-ui;cursor:pointer;margin-left:6px} .reintall:hover{background:#FEE2E2} .reintall:disabled{opacity:.5;cursor:default}
+  /* Reintento de fuente: barra indeterminada + banner arriba, para que el operador NO quede ciego. */
+  .fsr .fl-retry{background:repeating-linear-gradient(45deg,var(--run),var(--run) 8px,#8FB4F7 8px,#8FB4F7 16px);animation:retrymove .8s linear infinite}
+  @keyframes retrymove{from{background-position:0 0}to{background-position:23px 0}}
+  .st2.retry{color:var(--run)}
+  .retrybanner{display:flex;align-items:center;gap:9px;background:#EFF6FF;border:1px solid #BFDBFE;color:#1D4ED8;border-radius:10px;padding:9px 12px;margin-bottom:10px;font:600 12.5px system-ui}
+  .retrybanner .spin{width:14px;height:14px;border:2px solid #BFDBFE;border-top-color:#1D4ED8;border-radius:50%;animation:rspin .8s linear infinite;flex:0 0 auto}
+  @keyframes rspin{to{transform:rotate(360deg)}}
   .shotgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin:8px 0}
   .shotc{border:1px solid var(--bd);border-radius:8px;overflow:hidden;cursor:zoom-in;background:var(--card2)}
   .shotc img{width:100%;height:66px;object-fit:cover;display:block}
@@ -1643,18 +1650,27 @@ function showDetailTab(t){DTAB=t;if(t==='reporte')loadWebReport();else loadFuent
 // ── Reintento por fuente: re-corre SOLO esa fuente (/api/retry persiste el éxito en reporte.json y
 // RE-PUBLICA el reporte del cliente) y recarga la vista → la barra y el "Reporte al usuario" se actualizan.
 var FAILEDSRC=[];
-function retrySource(src,btn){var pl=SELECTED;if(!pl)return;src=srcId(src);
-  if(btn){btn.textContent='…';btn.disabled=true;}
+// Fuentes que se están REINTENTANDO ahora mismo (clave placa|src). El reintento corre INLINE en el
+// servidor (bloquea la respuesta minutos) y NO encola → sin esto la consola no mostraba NADA. Marcamos
+// la fuente como "reintentando…" al instante y re-renderizamos; renderFuentes respeta este set aunque
+// el reporte.json siga con el error viejo, y lo limpiamos al resolver.
+var RETRYING={};
+function retrySource(src,btn){var pl=SELECTED;if(!pl)return;src=srcId(src);var k=pl+'|'+src;
+  if(RETRYING[k])return; // ya en curso → evita doble reintento (y doble carga en el servidor)
+  RETRYING[k]=1;
   log('↻ reintentando '+src+' ('+pl+') …');
+  if(SELECTED===pl&&DTAB==='fuentes')loadFuentes(); // pinta "reintentando…" + banner arriba YA
   fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:pl,source:src})})
-   .then(function(r){return r.json()}).then(function(res){log('↻ '+src+' → '+(res.status||res.error||'?'));if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();})
-   .catch(function(e){log('✖ '+e);if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();});}
+   .then(function(r){return r.json()}).then(function(res){log('↻ '+src+' → '+(res.status||res.error||'?'));delete RETRYING[k];if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();})
+   .catch(function(e){log('✖ '+e);delete RETRYING[k];if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();});}
 function retryFailed(){var pl=SELECTED,list=(FAILEDSRC||[]).slice();if(!pl||!list.length)return;
+  list.forEach(function(s){RETRYING[pl+'|'+s]=1;}); // marca TODAS de una → banner "Reintentando N…"
   log('↻ reintentando '+list.length+' fuente(s) fallida(s) …');
+  if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();
   var i=0;(function next(){if(i>=list.length){if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();return;}
-    var s=list[i++];
+    var s=list[i++],k=pl+'|'+s;
     fetch('/api/retry',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({placa:pl,source:s})})
-     .then(function(r){return r.json()}).then(function(res){log('↻ '+s+' → '+(res.status||res.error||'?'));next();}).catch(function(){next();});})();}
+     .then(function(r){return r.json()}).then(function(res){log('↻ '+s+' → '+(res.status||res.error||'?'));delete RETRYING[k];if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();next();}).catch(function(){delete RETRYING[k];if(SELECTED===pl&&DTAB==='fuentes')loadFuentes();next();});})();}
 // ── Pestaña FUENTES: barras PERSISTENTES por fuente (color + tiempo) + capturas miniatura + logs ──
 // Fusiona el reporte.json (resultados finales con ms + capturas) con el estado EN VIVO (/api/engine)
 // para que las fuentes aún en curso muestren su barra; así las barras nunca desaparecen.
@@ -1688,16 +1704,20 @@ function renderFuentes(pl,rep,results,cj,expected,oldGen){var d=document.getElem
   if(cj&&cj.sources)cj.sources.forEach(function(x){add(x.source);});
   results.forEach(function(r){add(r.source);});
   expected.forEach(function(s){add(s);}); // incluye fuentes que NO llegaron al reporte (descartadas)
-  var okN=0,errN=0,runN=0,missN=0,failed=[];
+  var okN=0,errN=0,runN=0,missN=0,retryN=0,failed=[];
   var bars=order.map(function(id){var r=byId[id],live=cjById[id];
     // Si el pedido está EN CURSO (cj), el estado EN VIVO manda sobre el reporte.json guardado (que es de
     // la consulta ANTERIOR de esta placa) → no se "pega" el resultado viejo. Sin job corriendo = reporte final.
     var status=cj?(live?live.status:'PENDING'):(r?r.status:'MISSING');
     var cls=fbarCls(status),w=(cls==='pend')?0:((cls==='run')?55:100);
-    if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;else if(cls==='miss'){missN++;failed.push(id);}
-    var t=(!cj&&r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
-    var lab=(cls==='run')?'corriendo…':((cls==='pend')?'en cola':((cls==='miss')?'sin resultado':esc(status)));
-    var rbtn=(!oldGen&&(cls==='err'||cls==='miss'))?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
+    // Reintento manual EN CURSO (inline en el servidor): pisa el error viejo con "reintentando…" animado,
+    // así el operador ve que algo está pasando (antes quedaba ciego minutos). Se limpia al resolver.
+    var retrying=!oldGen&&RETRYING[pl+'|'+id];
+    if(retrying){cls='retry';w=60;}
+    if(cls==='retry')retryN++;else if(cls==='ok')okN++;else if(cls==='err'){errN++;failed.push(id);}else if(cls==='run')runN++;else if(cls==='miss'){missN++;failed.push(id);}
+    var t=(!cj&&!retrying&&r&&r.ms!=null&&cls!=='run'&&cls!=='pend')?('<span class="tm">'+(r.ms/1000).toFixed(1)+'s</span>'):'';
+    var lab=retrying?'reintentando…':((cls==='run')?'corriendo…':((cls==='pend')?'en cola':((cls==='miss')?'sin resultado':esc(status))));
+    var rbtn=(!retrying&&!oldGen&&(cls==='err'||cls==='miss'))?('<button class="reint" title="Reintentar solo esta fuente" onclick="retrySource(\\''+id+'\\',this)">↻</button>'):'';
     return '<div class="fsr"><span class="sn" title="'+esc(id)+'">'+esc(id)+'</span><div class="tk"><div class="fl fl-'+cls+'" style="width:'+w+'%"></div></div><span class="st2 '+cls+'">'+t+lab+'</span>'+rbtn+'</div>';
   }).join('');
   FAILEDSRC=oldGen?[]:failed;
@@ -1712,8 +1732,12 @@ function renderFuentes(pl,rep,results,cj,expected,oldGen){var d=document.getElem
   var note=oldGen?('<div class="webnote" style="margin-bottom:10px">📌 <b>Generación anterior</b>'+(rep.generatedAt?(' · '+esc(fmtTime(rep.generatedAt))):'')+' — estas son sus fuentes. Las capturas y logs solo se guardan de la corrida <b>más reciente</b> de la placa.'+(rep.stale?' <b style="color:var(--warn)">(snapshot no disponible; se muestra la última)</b>':'')+'</div>'):'';
   var pct=cj?(cj.percent||0):100;
   var probN=errN+missN;
-  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(missN?' · <span style="color:var(--warn)">'+missN+' sin resultado</span>':'')+((probN&&!oldGen)?' <button class="reintall" onclick="retryFailed()">↻ Reintentar '+probN+'</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
-  var body=order.length?(note+meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+logsBlock):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
+  // Banner ARRIBA del panel mientras haya reintentos en curso (el reintento es inline en el servidor →
+  // no aparece en la cola/"En proceso"; este banner es la señal de que está corriendo).
+  var retryList=oldGen?[]:order.filter(function(id){return RETRYING[pl+'|'+id];});
+  var rbanner=retryList.length?('<div class="retrybanner"><span class="spin"></span>Reintentando '+retryList.length+' fuente(s): <b>'+esc(retryList.join(', '))+'</b> … corre en el servidor, puede tardar unos minutos.</div>'):'';
+  var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(retryN?' · <span style="color:var(--run)">'+retryN+' reintentando</span>':'')+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(missN?' · <span style="color:var(--warn)">'+missN+' sin resultado</span>':'')+((probN&&!oldGen)?' <button class="reintall" onclick="retryFailed()">↻ Reintentar '+probN+'</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
+  var body=order.length?(note+rbanner+meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+logsBlock):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
   d.innerHTML=hHeader(pl)+detailTabs()+body;}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
 // Render NATIVO local por defecto: lee el reporte.json del propio VPS (/api/pedido-webreport)
