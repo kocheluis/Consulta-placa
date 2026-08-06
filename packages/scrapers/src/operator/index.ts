@@ -487,6 +487,12 @@ async function runHistorialSource(
       logLine(outDir, 'historial', `RESULTADO ${summary} · ${Date.now() - t0}ms`);
       return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas }, screenshot: shotPath, ms: Date.now() - t0 };
     }
+    // Partida INCOMPLETA en SUNARP (error de SUNARP, no nuestro; placa antigua) → NO es ERROR: se reporta
+    // "solo propietario actual, sin histórico". SIN_REGISTRO (ámbar, no rojo) + flag para el transform.
+    if (r.partidaIncompleta) {
+      logLine(outDir, 'historial', `partida incompleta en SUNARP (no nuestro error) → solo propietario actual · ${Date.now() - t0}ms`);
+      return { ...base, status: 'SIN_REGISTRO', summary: 'SUNARP no expone el histórico de esta placa (partida incompleta); solo propietario actual', data: { partidaIncompleta: true, sede: r.sede, vehiculo: r.vehiculo, titulos: [], timeline: [], flags: r.flags }, ms: Date.now() - t0 };
+    }
     logLine(outDir, 'historial', `ERROR ${r.error ?? 'sin asientos'}`);
     return { ...base, status: 'ERROR', summary: r.error ?? 'No se obtuvo historial', ms: Date.now() - t0 };
   } catch (e) {
@@ -510,6 +516,10 @@ export function mapHistorial(r: HistorialResult, ms: number, shotPath?: string):
     const flagTxt = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.financiera && 'FINANCIERA', r.flags.gravamen && 'GRAVAMEN', r.flags.embargo && 'EMBARGO'].filter(Boolean).join('/');
     const summary = `${r.timeline.length} asientos · ${r.titulos.length} títulos${flagTxt ? ` · ⚠ ${flagTxt}` : ' · sin banderas'}`;
     return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas }, ...(shotPath ? { screenshot: shotPath } : {}), ms };
+  }
+  // Partida incompleta en SUNARP (no nuestro error): SIN_REGISTRO + propietario actual, sin histórico.
+  if (r.partidaIncompleta) {
+    return { ...base, status: 'SIN_REGISTRO', summary: 'SUNARP no expone el histórico de esta placa (partida incompleta); solo propietario actual', data: { partidaIncompleta: true, sede: r.sede, vehiculo: r.vehiculo, titulos: [], timeline: [], flags: r.flags }, ...(shotPath ? { screenshot: shotPath } : {}), ms };
   }
   return { ...base, status: 'ERROR', summary: r.error ?? 'No se obtuvo historial', ms };
 }

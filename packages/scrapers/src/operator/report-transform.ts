@@ -541,7 +541,17 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // ofrecemos, solo que esta consulta falló). Emitirlas como UNAVAILABLE hace que la web
     // muestre "no disponible / reintentar" en su lugar. Ver riesgo de UX de fuente fallida.
     if (!sigmOk) src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at }); // SIGM ya la cubrió
-    src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    // SUNARP marcó la partida como INCOMPLETA ("no visualizada por usuario externo" — error de SUNARP,
+    // típico de placas MUY antiguas): NO es fallo nuestro. Mostramos el propietario ACTUAL (de la Consulta
+    // Vehicular) y avisamos que el histórico no está disponible, en vez de "no disponible / reintentar".
+    const hi = data(hist);
+    if (hi.partidaIncompleta === true) {
+      const ownerName = ((hi.vehiculo as { ownerName?: string | null } | null)?.ownerName) ?? ((data(sunarp).ownerName as string | null) ?? null);
+      const histPay: HistorialPayload = { totalAsientos: 0, totalTitulos: 0, transfers: 0, flags: { aseguradora: false, remate: false, financiera: false, gravamen: false }, events: [], partidaIncompleta: true, currentOwner: ownerName };
+      src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
+    } else {
+      src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
+    }
     src.push({ kind: SectionKind.IDENTIDAD_ESPECIFICA, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     // El impuesto vehicular (afectación) se DERIVA del año de la 1ª inscripción → depende del historial.
     // Pero la VALIDACIÓN SAT (Capa B) es independiente: si corrió, se emite la sección con solo esa capa.

@@ -407,6 +407,11 @@ export interface HistorialPayload {
   flags: { aseguradora: boolean; remate: boolean; financiera: boolean; gravamen?: boolean };
   /** Eventos ordenados cronológicamente (más reciente primero al renderizar). */
   events: HistorialEvent[];
+  /** true = SUNARP marcó la partida como "incompleta, no visualizada por usuario externo" (error de
+   *  SUNARP, típico de placas MUY antiguas): NO hay histórico de dueños, solo el propietario actual. */
+  partidaIncompleta?: boolean;
+  /** Propietario ACTUAL (de la Consulta Vehicular SUNARP) — se muestra cuando la partida está incompleta. */
+  currentOwner?: string | null;
 }
 
 /** Una bandera de riesgo priorizada por la IA. */

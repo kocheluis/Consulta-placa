@@ -59,6 +59,10 @@ export interface HistorialResult {
   error?: string;
   /** true = SUNARP bloqueó la cuenta por IP (exceso de intentos) → el caller puede hacer failover a otra cuenta. */
   locked?: boolean;
+  /** true = SUNARP marca la partida como "incompleta, no visualizada por usuario externo" (típico de placas
+   *  MUY antiguas). Es un error DE SUNARP, no nuestro: la partida existe pero no deja ver los asientos → se
+   *  reporta "solo propietario actual (de la Consulta Vehicular), sin histórico" en vez de un ERROR. */
+  partidaIncompleta?: boolean;
 }
 
 function sgDecrypt(b64: string): string | null {
@@ -185,6 +189,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     log('sesión SPRL activa');
 
     // Búsqueda SPRL (con espera del form post-login + reintento si no hay títulos).
+    let partidaIncompleta = false;
     async function sprlBuscarTitulos(useOficina: boolean): Promise<string[]> {
       await page.goto(PARTIDA, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       await page.locator('nz-select').first().waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
@@ -218,19 +223,28 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         for (let i = 0; i < 13; i++) { if (rxTit.test(await page.locator('body').innerText().catch(() => ''))) break; await wait(300); }
       }
       const bodyText = await page.locator('body').innerText().catch(() => '');
+      // SUNARP marca la partida como "incompleta, no visualizada por usuario externo" (error DE SUNARP,
+      // reportado a su zona registral). La partida existe pero no muestra los asientos → no es error nuestro.
+      if (/partida incompleta|no visualizada por usuario externo/i.test(bodyText)) partidaIncompleta = true;
       return [...new Set((bodyText.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
     }
     // Intento RÁPIDO: SPRL por placa SIN oficina (optimización). Si el caller ya dio la
     // sede, se usa directo. Si viene vacío, resolvemos la sede (SUNARP) y reintentamos
     // CON oficina (camino antiguo, seguro) → la optimización nunca degrada el resultado.
     let titulos = await sprlBuscarTitulos(!!oficina);
-    if (!titulos.length) {
+    if (!titulos.length && !partidaIncompleta) {
       log('SPRL sin resultados → resuelvo sede (SUNARP) y reintento con oficina…');
       await ensureSede();
       titulos = await sprlBuscarTitulos(true);
-      if (!titulos.length) { log('reintento SPRL con oficina…'); titulos = await sprlBuscarTitulos(true); }
+      if (!titulos.length && !partidaIncompleta) { log('reintento SPRL con oficina…'); titulos = await sprlBuscarTitulos(true); }
     }
-    await ensureSede(); // Síguelo SIEMPRE necesita la sede
+    await ensureSede(); // Síguelo SIEMPRE necesita la sede (y el propietario actual sale de aquí)
+    // Partida marcada INCOMPLETA por SUNARP (no nuestro error, placa antigua): devolvemos el propietario
+    // actual (de la Consulta Vehicular) y avisamos que el histórico no está disponible — NO un ERROR.
+    if (partidaIncompleta && !titulos.length) {
+      log('SUNARP: partida incompleta (no visualizable por usuario externo) → solo propietario actual, sin histórico');
+      return { ...empty, partidaIncompleta: true, sede: oficina, vehiculo };
+    }
     log(`títulos: ${JSON.stringify(titulos)}`);
 
     // ── [3] Síguelo por cada título → asiento PDF → parser ──

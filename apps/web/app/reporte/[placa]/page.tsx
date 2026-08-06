@@ -1715,6 +1715,23 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const h = section.payload as HistorialPayload | undefined;
   if (!h) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  // SUNARP marcó la partida como "incompleta, no visualizada por usuario externo" (limitación DE SUNARP,
+  // frecuente en placas muy antiguas): no hay histórico de dueños, solo el propietario actual. NO es un error.
+  if (h.partidaIncompleta) {
+    return (
+      <div className="flex flex-col gap-3">
+        {h.currentOwner && (
+          <div className="rounded-xl border border-border bg-surface p-3">
+            <p className="font-body text-xs font-bold uppercase tracking-wide text-muted">Propietario actual (SUNARP)</p>
+            <p className="mt-0.5 font-heading text-[15px] font-semibold text-foreground">{h.currentOwner}</p>
+          </div>
+        )}
+        <StatusLine tone="neutral" icon="info">
+          SUNARP no expone el historial de dueños de esta placa: su partida figura como incompleta / no visualizable en el registro. Es una limitación del propio SUNARP —frecuente en placas muy antiguas—, no un problema del vehículo. {h.currentOwner ? 'Arriba está el propietario actual según SUNARP.' : 'Solicita al vendedor una copia literal de la partida en SUNARP.'} El historial completo solo estará disponible cuando SUNARP regularice la partida.
+        </StatusLine>
+      </div>
+    );
+  }
   // Banderas DURAS (siniestro/pérdida total): aseguradora o casa de remate → alerta.
   const hardTxt = [
     h.flags.aseguradora && 'aseguradora',
