@@ -106,10 +106,24 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   // Si el caller pasó un browser (modo lote), NO se hace spawn ni close: se reusa su sesión.
   const reuseBrowser = !!opts.browser;
   let browser: Browser | null = opts.browser ?? null;
+  let spawned = false;
+  // connectOverCDP con timeout POR INTENTO: un stall NO debe colgar ~30s (default de Playwright) — con
+  // 20 reintentos eso daba los ~10 min del "no conecté al Chrome SPRL" visto en el VPS.
+  const cdp = (): Promise<Browser> => chromium.connectOverCDP(`http://localhost:${PORT}`, { timeout: 6000 });
   if (!reuseBrowser) {
-    log(`Chrome SPRL (CDP :${PORT})…`);
-    const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
-    proc.on('error', (e) => log(`spawn: ${e.message}`));
+    // CONNECT-FIRST: si ya hay un Chrome CALIENTE en el puerto (el keep-alive del SPRL o el pool
+    // continuo parqueado), REÚSALO en vez de lanzar OTRO sobre el mismo perfil. El 2º Chrome no puede
+    // bindear el puerto (SingletonLock del perfil) y connectOverCDP terminaba colgando contra el Chrome
+    // ocupado → causa raíz del cuelgue de ~10 min. Solo se cierra lo que ESTA función lanzó (`spawned`).
+    browser = await cdp().catch(() => null);
+    if (browser) {
+      log(`Chrome SPRL (CDP :${PORT}) reusado (sesión caliente)`);
+    } else {
+      log(`Chrome SPRL (CDP :${PORT})…`);
+      const proc = spawn(CHROME, [`--remote-debugging-port=${PORT}`, `--user-data-dir=${PROFILE}`, ...chromeFlags(), INGRESO], { detached: false, stdio: 'ignore' });
+      proc.on('error', (e) => log(`spawn: ${e.message}`));
+      spawned = true;
+    }
   }
 
   // ── [1] SUNARP → SEDE en PARALELO ──
@@ -136,7 +150,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   };
 
   try {
-    for (let i = 0; i < 20 && !browser; i++) { await wait(700); try { browser = await chromium.connectOverCDP(`http://localhost:${PORT}`); } catch { /* retry */ } }
+    for (let i = 0; i < 20 && !browser; i++) { await wait(700); browser = await cdp().catch(() => null); }
     if (!browser) return { ...empty, sede: oficina, vehiculo, error: 'no conecté al Chrome SPRL' };
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
@@ -340,7 +354,8 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   } catch (e) {
     return { ...empty, sede: oficina, vehiculo, error: (e as Error).message };
   } finally {
-    // Solo cerramos lo que abrimos: en modo lote (browser del caller) la sesión queda caliente.
-    if (browser && !reuseBrowser) await browser.close().catch(() => {});
+    // Solo cerramos lo que ESTA función LANZÓ: si reusamos un Chrome caliente (connect-first) o nos lo
+    // pasó el caller (modo lote/pool), la sesión queda viva. Cerrarlo mataría el keep-alive / el pool.
+    if (browser && spawned) await browser.close().catch(() => {});
   }
 }
