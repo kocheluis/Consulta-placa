@@ -62,7 +62,7 @@ export default function OpengraphImage() {
           Consulta de placa e historial vehicular en Peru
         </div>
         <div style={{ display: 'flex', marginTop: '28px', fontSize: '30px', color: '#A8E9E0' }}>
-          Gratis y con enlaces oficiales: SUNARP, SBS, APESEG, MTC, SUNAT, SAT
+          Gratis y con enlaces oficiales: SUNARP, SBS, APESEG, MTC, ATU, SAT
         </div>
       </div>
     ),

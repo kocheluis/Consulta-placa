@@ -36,7 +36,7 @@ export function HeaderAccount() {
     return (
       <Link
         href="/cuenta"
-        className="hidden font-body text-[14.5px] font-semibold text-foreground hover:text-primary sm:inline"
+        className="font-body text-[14.5px] font-semibold text-foreground hover:text-primary"
       >
         Iniciar sesión
       </Link>

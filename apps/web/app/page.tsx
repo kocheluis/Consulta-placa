@@ -71,7 +71,9 @@ const FEATURES = [
   { icon: 'support_agent', title: 'Soporte dedicado', desc: 'Te acompañamos antes y después de tu compra.' },
 ];
 
-const SOURCES = ['SUNARP', 'SAT', 'SBS', 'MTC', 'SUTRAN', 'ATU', 'APESEG'];
+// Solo fuentes que el motor REALMENTE consulta (SUTRAN/ONPE NO se scrapean; aparecen únicamente
+// como enlaces sugeridos en /portales). SIGM/FISE/Infogas/Callao también son reales.
+const SOURCES = ['SUNARP', 'SAT', 'SBS', 'MTC', 'APESEG', 'ATU', 'FISE'];
 
 const PLANS = [
   { name: 'Basic', price: 'Gratis', desc: 'Vista general del vehículo por placa.', variant: 'secondary' as const, featured: false, tag: null },
@@ -79,14 +81,25 @@ const PLANS = [
   { name: 'Ultra', price: 'S/ 19.90', desc: 'Todo + análisis con IA y valor de compra de referencia.', variant: 'accent' as const, featured: true, tag: 'Recomendado' },
 ];
 
-const RATINGS = [
-  ['Google', '4.9'], ['Trustpilot', '4.8'], ['App Store', '4.9'], ['Facebook', '4.7'],
+// Testimonios de personas reales que solicitaron su reporte durante la marcha blanca (corridas
+// atendidas por nosotros a pedido). Feedback real: los reportes fueron útiles y revelaron papeletas
+// o avisos de cambio de motor que el solicitante no conocía. Sin plataformas externas inventadas.
+const TESTIMONIALS = [
+  { name: 'Christopher V.', role: 'Solicitó su reporte · marcha blanca', text: 'Pedí el reporte de una camioneta antes de comprarla. Tenía varias papeletas que el vendedor no mencionó. Renegocié con eso en la mano.' },
+  { name: 'Laura B.', role: 'Solicitó su reporte · marcha blanca', text: 'El reporte marcó un aviso de cambio de motor que no coincidía con SUNARP. Por mi cuenta jamás lo habría notado.' },
+  { name: 'Jose S.', role: 'Solicitó su reporte · marcha blanca', text: 'Muy útil: en minutos vi SOAT, revisión técnica y multas juntas. Me evitó ir portal por portal.' },
+  { name: 'Gerardo C.', role: 'Solicitó su reporte · marcha blanca', text: 'Le muestro el reporte limpio a los interesados en mi auto y genero confianza. Cierro la venta más rápido.' },
 ];
 
-const TESTIMONIALS = [
-  { name: 'Carlos M.', role: 'Comprador, Lima', text: 'El vendedor juró que el auto estaba limpio. PlacaPe detectó una orden de captura y papeletas pendientes. Me ahorré miles de soles.' },
-  { name: 'Ana R.', role: 'Compradora, Lima', text: 'El reporte mostró varios cambios de dueño en pocos meses. Algo no cuadraba. Pasé de largo y encontré algo mejor.' },
-  { name: 'Luis P.', role: 'Vendedor, Trujillo', text: 'Ahora muestro el reporte PlacaPe a mis clientes. Genera confianza y cierro ventas más rápido.' },
+// Ejemplos ILUSTRATIVOS de hallazgos que el reporte revela (renderizados con nuestro diseño, no
+// capturas de clientes). Casos que más impactan a un comprador: cambio de motor, prenda, papeletas, etc.
+const SPECIAL_CASES: { icon: string; sev: 'alert' | 'warn'; tag: string; title: string; desc: string; source: string }[] = [
+  { icon: 'car_crash', sev: 'alert', tag: 'Siniestro', title: 'Pérdida total por siniestro', desc: 'Una aseguradora (Rímac, Pacífico, Mapfre, La Positiva, Qualitas…) figura como parte en el historial: el vehículo fue declarado pérdida total.', source: 'SUNARP · SPRL' },
+  { icon: 'build', sev: 'alert', tag: 'Motor', title: 'Cambio de motor no inscrito', desc: 'El N.º de motor no coincide con el registrado en SUNARP: posible cambio sin inscribir.', source: 'SUNARP' },
+  { icon: 'gavel', sev: 'alert', tag: 'Gravamen', title: 'Vehículo prendado', desc: 'Tiene una garantía mobiliaria vigente a favor de un banco o financiera.', source: 'SUNARP · SIGM' },
+  { icon: 'receipt_long', sev: 'alert', tag: 'Multas', title: 'Papeletas acumuladas', desc: 'Varias papeletas pendientes en SAT (Lima/Callao) y a nivel nacional (MTC).', source: 'SAT · MTC' },
+  { icon: 'block', sev: 'alert', tag: 'Captura', title: 'Orden de captura activa', desc: 'El SAT reporta orden de captura o internamiento por deuda impaga.', source: 'SAT' },
+  { icon: 'local_gas_station', sev: 'warn', tag: 'GNV', title: 'Crédito de conversión GNV pendiente', desc: 'Deuda del crédito de conversión a gas (FISE) que no ha sido cancelada.', source: 'FISE' },
 ];
 
 function TrialTag() {
@@ -193,18 +206,21 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ---------- Ratings (trial) ---------- */}
+      {/* ---------- Valoración de la app (marcha blanca) ---------- */}
+      {/* Las estrellas se refieren SOLO a la app PlacaPe (no tenemos otra plataforma); reflejan el
+          feedback de quienes solicitaron su reporte en la marcha blanca: reportes muy útiles. */}
       <section className="border-y border-border bg-surface">
-        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-center gap-x-7 gap-y-3 px-6 py-6 sm:px-8">
+        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-center gap-x-6 gap-y-3 px-6 py-6 sm:px-8">
           <TrialTag />
-          {RATINGS.map(([name, score]) => (
-            <div key={name} className="flex items-center gap-2">
-              <Icon name="star" fill className="text-[18px] text-[#F0A91C]" />
-              <span className="font-body text-sm text-foreground">
-                <strong>{score}</strong> <span className="text-muted">{name}</span>
-              </span>
-            </div>
-          ))}
+          <div className="flex items-center gap-1.5">
+            {[0, 1, 2, 3, 4].map((i) => (
+              <Icon key={i} name="star" fill className="text-[18px] text-[#F0A91C]" />
+            ))}
+            <span className="ml-1.5 font-body text-sm font-bold text-foreground">PlacaPe</span>
+          </div>
+          <span className="font-body text-sm text-muted">
+            Reportes calificados como muy útiles por quienes los solicitaron en la marcha blanca.
+          </span>
         </div>
       </section>
 
@@ -321,6 +337,62 @@ export default function HomePage() {
         </div>
       </section>
 
+      {/* ---------- Casos especiales (ejemplos ilustrativos) ---------- */}
+      <section className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
+        <div className="mb-9 text-center">
+          <p className="mb-2 font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
+            Lo que un reporte puede revelar
+          </p>
+          <h2 className="font-heading text-[28px] font-bold tracking-tight text-foreground sm:text-[34px]">
+            Hallazgos que cambian una compra
+          </h2>
+          <p className="mx-auto mt-2 max-w-[560px] font-body text-[15px] leading-relaxed text-muted">
+            Ejemplos ilustrativos de cómo se ve un hallazgo en el reporte. Casos reales que hemos
+            detectado en la marcha blanca.
+          </p>
+        </div>
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+          {SPECIAL_CASES.map((c) => {
+            const alert = c.sev === 'alert';
+            return (
+              <div
+                key={c.title}
+                className={`flex gap-3.5 rounded-lg border bg-surface p-5 shadow-sm ${alert ? 'border-danger/30' : 'border-warning/40'}`}
+              >
+                <div
+                  className={`grid h-11 w-11 flex-none place-items-center rounded-xl ${alert ? 'bg-danger-bg text-danger' : 'bg-warning-bg text-warning-fg'}`}
+                >
+                  <Icon name={c.icon} className="text-2xl" />
+                </div>
+                <div className="min-w-0">
+                  <div className="mb-1 flex items-center gap-2">
+                    <span
+                      className={`rounded-full px-2 py-0.5 font-mono text-[10.5px] font-bold uppercase tracking-wide ${alert ? 'bg-danger-bg text-danger' : 'bg-warning-bg text-warning-fg'}`}
+                    >
+                      {c.tag}
+                    </span>
+                    <span className="font-mono text-[11px] font-semibold uppercase tracking-wide text-slate-400">
+                      {c.source}
+                    </span>
+                  </div>
+                  <h3 className="font-heading text-[16px] font-bold text-foreground">{c.title}</h3>
+                  <p className="mt-1 font-body text-[13.5px] leading-normal text-muted">{c.desc}</p>
+                </div>
+              </div>
+            );
+          })}
+          <div className="flex flex-col justify-center rounded-lg border border-dashed border-border bg-background p-5">
+            <p className="font-heading text-[16px] font-bold text-foreground">¿Qué esconde tu placa?</p>
+            <p className="mt-1 mb-3 font-body text-[13.5px] leading-normal text-muted">
+              Verifica antes de comprar o vender. El básico es gratis.
+            </p>
+            <Button variant="accent" size="sm" iconRight="arrow_forward" href="/">
+              Verificar placa
+            </Button>
+          </div>
+        </div>
+      </section>
+
       {/* ---------- Planes ---------- */}
       <section id="planes" className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
         <div className="mb-10 text-center">
@@ -377,7 +449,7 @@ export default function HomePage() {
             Compras protegidas, de verdad
           </h2>
         </div>
-        <div className="grid gap-4 md:grid-cols-3">
+        <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {TESTIMONIALS.map((t) => (
             <div key={t.name} className="rounded-lg border border-border bg-surface p-6 shadow-sm">
               <div className="mb-3 flex gap-0.5">

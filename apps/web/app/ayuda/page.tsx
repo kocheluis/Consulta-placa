@@ -7,12 +7,12 @@ import { Input } from '@/components/ui/Input';
 import { Icon } from '@/components/ui/Icon';
 
 const CATS = [
-  { icon: 'search', title: 'Consultas y reportes', count: 8 },
-  { icon: 'credit_card', title: 'Pagos y planes', count: 6 },
-  { icon: 'account_circle', title: 'Mi cuenta', count: 5 },
-  { icon: 'verified_user', title: 'Fuentes y datos', count: 7 },
-  { icon: 'storefront', title: 'Empresas', count: 4 },
-  { icon: 'gpp_good', title: 'Seguridad', count: 3 },
+  { icon: 'search', title: 'Consultas y reportes' },
+  { icon: 'credit_card', title: 'Pagos y planes' },
+  { icon: 'account_circle', title: 'Mi cuenta' },
+  { icon: 'verified_user', title: 'Fuentes y datos' },
+  { icon: 'storefront', title: 'Empresas' },
+  { icon: 'gpp_good', title: 'Seguridad' },
 ];
 
 const FAQS = [
@@ -22,7 +22,7 @@ const FAQS = [
   },
   {
     q: '¿De dónde provienen los datos?',
-    a: 'Consolidamos registros oficiales: SUNARP, SAT, SBS, MTC, SUTRAN, APESEG, ATU y ONPE, entre otros. Cada hallazgo del reporte indica su fuente.',
+    a: 'Consolidamos registros oficiales: SUNARP, SAT (Lima y Callao), SBS, MTC, APESEG, ATU, SIGM (gravámenes) y FISE/Infogas (GNV), entre otros. Cada hallazgo del reporte indica su fuente.',
   },
   {
     q: '¿Cuánto demora la consulta?',
@@ -98,7 +98,6 @@ export default function AyudaPage() {
                 </div>
                 <div className="flex-1">
                   <p className="font-body text-[15.5px] font-bold text-foreground">{c.title}</p>
-                  <p className="mt-0.5 text-[13px] text-muted">{c.count} artículos</p>
                 </div>
                 <Icon name="chevron_right" className="text-[22px] text-slate-400" />
               </div>

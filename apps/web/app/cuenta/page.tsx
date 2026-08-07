@@ -22,7 +22,7 @@ type View = 'login' | 'register' | 'forgot';
 
 /* ── Panel de marca (columna izquierda) ───────────────────────────── */
 const TRUST_POINTS = [
-  { icon: 'account_balance', t: '+10 fuentes nacionales', d: 'SUNARP, SAT, SBS, MTC, SUTRAN, ONPE y más.' },
+  { icon: 'account_balance', t: '+10 fuentes nacionales', d: 'SUNARP, SAT, SBS, MTC, APESEG, ATU y más.' },
   { icon: 'bolt', t: 'Resultado en segundos', d: 'Consolidamos todo en un reporte claro.' },
   { icon: 'lock', t: 'Pago y datos protegidos', d: 'Cifrado de extremo a extremo en cada consulta.' },
 ];

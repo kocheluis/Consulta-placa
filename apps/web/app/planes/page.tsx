@@ -43,7 +43,7 @@ const FEATURES: { label: string; plans: PlanId[] }[] = [
   { label: 'Siniestralidad (SBS)', plans: ['pro', 'ultra'] },
   { label: 'Orden de captura (SAT)', plans: ['pro', 'ultra'] },
   { label: 'Descarga en PDF', plans: ['pro', 'ultra'] },
-  { label: 'Gravámenes (SBS)', plans: ['ultra'] },
+  { label: 'Gravámenes (SUNARP / SIGM)', plans: ['ultra'] },
   { label: 'Valorización de mercado', plans: ['ultra'] },
   { label: 'Análisis con IA', plans: ['ultra'] },
   { label: 'Alertas de vencimiento', plans: ['ultra'] },

@@ -214,7 +214,7 @@ export default function ReporteEjemploPage() {
           <Card padded className="border-azul-200 bg-azul-50">
             <p className="mb-2 font-body text-xs font-bold uppercase tracking-wide text-azul-700">Fuentes nacionales</p>
             <div className="flex flex-wrap gap-1.5">
-              {['SUNARP', 'SAT', 'SBS', 'MTC', 'SUTRAN', 'ATU', 'APESEG', 'ONPE'].map((s) => (
+              {['SUNARP', 'SAT', 'SBS', 'MTC', 'APESEG', 'ATU', 'SIGM', 'FISE'].map((s) => (
                 <Tag key={s} variant="source">
                   {s}
                 </Tag>

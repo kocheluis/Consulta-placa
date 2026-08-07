@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { Analytics } from '@vercel/analytics/react';
 import { Button } from '@/components/ui/Button';
 import { HeaderAccount } from '@/components/HeaderAccount';
+import { MobileMenu } from '@/components/MobileMenu';
 import './globals.css';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://placape.pe';
@@ -132,9 +133,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
             </nav>
             <div className="ml-auto flex items-center gap-3 sm:ml-0">
               <HeaderAccount />
-              <Button variant="accent" size="sm" iconRight="arrow_forward" href="/">
-                Verificar placa
-              </Button>
+              <div className="hidden sm:block">
+                <Button variant="accent" size="sm" iconRight="arrow_forward" href="/">
+                  Verificar placa
+                </Button>
+              </div>
+              <MobileMenu links={NAV_LINKS} />
             </div>
           </div>
         </header>
