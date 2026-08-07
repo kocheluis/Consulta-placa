@@ -308,17 +308,13 @@ export async function runApeseg(
     // → 'networkidle' se cuelga 60s aunque la página cargó. Abajo se espera el formulario real (placaInput).
     await page.goto('https://www.soat.com.pe/servicios-soat/', { waitUntil: 'domcontentloaded', timeout: 60000 });
     await wait(2500);
-    // frameLocator re-resuelve el iframe en cada uso (resiliente a recargas para pedir un captcha nuevo).
-    const fl = page.frameLocator('iframe[src*="consulta-soat"], iframe[src*="webapp.apeseg"]');
-    const placaInput = fl.locator('#placa, input[placeholder*="laca" i]').first();
-    const capInput = fl.locator('#captcha, input[placeholder*="aptcha" i]').first();
-    const img = fl.locator('img.captcha-img, img[class*="aptcha" i]').first();
 
-    // INSTRUMENTACIÓN (para NO asumir la causa): el SPA encadena captcha→verify→login→certificados.
-    // Un listener registra el status de cada eslabón; por intento anotamos si aparecieron placa/captcha
-    // y qué status trajo /certificados. Así el ERROR distingue: drift de selectores (pv/iv=0) ·
-    // captcha mal leído / verify rechaza (verify≠200) · anti-bot IP datacenter (verify/login=403) ·
-    // endpoint cambiado (certs nunca dispara pese a verify=200).
+    // INSTRUMENTACIÓN: el SPA encadena captcha(imagen)→verify→login→certificados, PERO desde ago-2026
+    // exige además un **Cloudflare Turnstile** ("Complete la validación de seguridad"): sin su token el
+    // verify del captcha de imagen puede pasar (valid:true) y aun así NO se dispara login/certificados
+    // (validado local, IP residencial → NO es bloqueo de IP). Por eso resolvemos el Turnstile con CapSolver
+    // (igual que SUNARP), inyectamos `cf-turnstile-response` y reciclamos ese token entre reintentos del
+    // captcha de imagen (la imagen se refresca sola tras "Captcha incorrecto"; el token sobrevive al fallo).
     const api: Record<string, number> = {};
     const onResp = (r: Response): void => {
       const u = r.url();
@@ -329,35 +325,75 @@ export async function runApeseg(
       if (k) api[k] = r.status();
     };
     page.on('response', onResp);
+
+    // Localiza el frame del SPA (webapp.apeseg) y el sitekey del Turnstile (del iframe de Cloudflare).
+    const findSpa = async (): Promise<Frame | null> => {
+      for (let k = 0; k < 24; k++) { const f = page.frames().find((fr) => /consulta-soat|webapp\.apeseg/i.test(fr.url())); if (f) return f; await wait(500); }
+      return null;
+    };
+    const findSitekey = async (): Promise<string | null> => {
+      for (let k = 0; k < 24; k++) { const f = page.frames().find((fr) => /challenges\.cloudflare\.com/i.test(fr.url())); const m = f && /\/(0x[A-Za-z0-9_]+)\//.exec(f.url()); if (m) return m[1]!; await wait(500); }
+      return null;
+    };
+    // Turnstile con tope de tiempo (el poll de CapSolver puede llegar a 120s; lo acotamos a ~55s).
+    const solveTsCapped = (sitekey: string, url: string): Promise<string> => Promise.race([
+      solver.solveTurnstile(sitekey, url).catch(() => ''),
+      new Promise<string>((res) => setTimeout(() => res(''), 55000)),
+    ]);
+
     const diag: string[] = [];
     let capErr = '';
+    let tsDiag = '';
     let certs: Array<Record<string, unknown>> | null = null;
-    for (let i = 1; i <= 4 && !certs; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(2000); } // captcha nuevo
+
+    // Hasta 2 RONDAS: cada ronda = (re)carga + Turnstile fresco. Dentro, varios intentos del captcha de
+    // imagen SIN recargar (reusando el token). La 1ª ronda usa la carga inicial; la 2ª recarga (fallback).
+    for (let round = 1; round <= 2 && !certs; round++) {
+      if (round > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(2500); }
+      const spa = await findSpa();
+      if (!spa) { diag.push(`r${round}[sin-frame-spa]`); continue; }
+      const placaInput = spa.locator('#placa, input[placeholder*="laca" i]').first();
+      const capInput = spa.locator('#captcha, input[placeholder*="aptcha" i]').first();
+      const img = spa.locator('img.captcha-img, img[class*="aptcha" i], img[src*="captcha" i]').first();
+      const btn = spa.locator('button:has-text("Consultar"), button[type="submit"]').first();
       const pv = await placaInput.waitFor({ state: 'visible', timeout: 20000 }).then(() => 1).catch(() => 0);
-      const iv = await img.waitFor({ state: 'visible', timeout: 15000 }).then(() => 1).catch(() => 0);
-      await wait(500);
       await placaInput.fill(plate).catch(() => {});
-      // readCaptcha LANZA si la imagen no cargó → lo atrapamos por intento (antes abortaba los 4).
-      let cap = '';
-      try { cap = await readCaptcha(solver, img); } catch (e) { capErr = (e as Error).message; }
-      await capInput.fill(cap).catch(() => {});
-      // Si el captcha es válido, el SPA encadena verify→login→certificados. Capturamos ESA respuesta
-      // (el JSON que queremos). Si el captcha falla, no se dispara y el waitForResponse expira → reintenta.
-      const respP = page.waitForResponse((r) => /\/certificados\/placa\//i.test(r.url()), { timeout: 15000 }).catch(() => null);
-      await fl.locator('button:has-text("Consultar"), button[type="submit"]').first().click().catch(() => {});
-      const resp = await respP;
-      diag.push(`a${i}[pv=${pv} iv=${iv} cap="${cap}"(${cap.length}) certs=${resp ? resp.status() : 'none'}]`);
-      if (resp && resp.status() === 200) {
-        const j: unknown = await resp.json().catch(() => null);
-        if (Array.isArray(j)) certs = j as Array<Record<string, unknown>>;
+
+      // Resuelve el Turnstile de esta ronda e inyecta el token en el hidden del SPA.
+      const sitekey = await findSitekey();
+      let token = '';
+      if (sitekey) { token = await solveTsCapped(sitekey, spa.url()); }
+      tsDiag = `ts=${sitekey ? (token ? `ok(${token.length})` : 'sin-token') : 'sin-sitekey'}`;
+      const injectTs = (): Promise<void> => token
+        ? spa.evaluate((tk) => { document.querySelectorAll('input[name="cf-turnstile-response"],textarea[name="cf-turnstile-response"]').forEach((el) => { (el as HTMLInputElement).value = tk; }); }, token).catch(() => {})
+        : Promise.resolve();
+
+      for (let i = 1; i <= 4 && !certs; i++) {
+        const iv = await img.waitFor({ state: 'visible', timeout: 15000 }).then(() => 1).catch(() => 0);
+        await wait(400);
+        // readCaptcha LANZA si la imagen no cargó → lo atrapamos por intento (antes abortaba todo).
+        let cap = '';
+        try { cap = await readCaptcha(solver, img); } catch (e) { capErr = (e as Error).message; }
+        await capInput.fill('').catch(() => {});
+        await capInput.fill(cap).catch(() => {});
+        await injectTs(); // re-inyecta el token JUSTO antes del clic (el widget puede pisarlo)
+        // Con captcha válido + Turnstile presente el SPA encadena verify→login→certificados: capturamos ESA
+        // respuesta. Si el captcha falla, no se dispara y el waitForResponse expira → la imagen se refresca.
+        const respP = page.waitForResponse((r) => /\/certificados\/placa\//i.test(r.url()), { timeout: 15000 }).catch(() => null);
+        await btn.click().catch(() => {});
+        const resp = await respP;
+        diag.push(`r${round}a${i}[pv=${pv} iv=${iv} cap="${cap}"(${cap.length}) certs=${resp ? resp.status() : 'none'}]`);
+        if (resp && resp.status() === 200) {
+          const j: unknown = await resp.json().catch(() => null);
+          if (Array.isArray(j)) certs = j as Array<Record<string, unknown>>;
+        } else { await wait(1500); } // deja al SPA refrescar la imagen de captcha
       }
     }
     page.off('response', onResp);
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     if (!certs) {
-      const detail = `${diag.join(' ')} · api:${JSON.stringify(api)}${capErr ? ` · capErr:${capErr}` : ''}`;
-      return { ...base, status: 'ERROR', summary: `captcha/API sin respuesta (4) · ${detail}`, screenshot: shot, ms: Date.now() - t0 };
+      const detail = `${diag.join(' ')} · ${tsDiag} · api:${JSON.stringify(api)}${capErr ? ` · capErr:${capErr}` : ''}`;
+      return { ...base, status: 'ERROR', summary: `captcha/Turnstile/API sin respuesta · ${detail}`, screenshot: shot, ms: Date.now() - t0 };
     }
     if (certs.length === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin SOAT en APESEG', data: {}, screenshot: shot, ms: Date.now() - t0 };
 
