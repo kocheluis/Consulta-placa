@@ -84,8 +84,11 @@ graves: siniestro/pérdida total, gravamen vigente, orden de captura, robo vigen
 el TITULAR REGISTRAL (mismo DNI que figura en SUNARP) o tenga poder notarial vigente — nunca cerrar con un \
 intermediario sin acreditar representación; (2) inspección mecánica independiente (y peritaje de motor/VIN si \
 hubo cambio de motor); (3) transferir la propiedad de INMEDIATO tras la compra; (4) exigir el levantamiento de \
-gravámenes y el pago de papeletas ANTES de firmar. Recuerda que las multas electorales del titular (aún no \
-consultadas) pueden trabar la transferencia notarial: recomienda verificarlas.
+gravámenes y el pago de papeletas ANTES de firmar. Sobre el IMPUESTO VEHICULAR impago: es obligación PERSONAL de \
+quien era propietario al 1 de enero de cada año afecto (no del comprador) y NO se transfiere con el vehículo — el \
+comprador recién sería contribuyente desde el 1 de enero del año siguiente a la compra; aun así conviene exigir su \
+pago porque sin constancia de no adeudo no se formaliza la transferencia. Recuerda que las multas electorales del \
+titular (aún no consultadas) pueden trabar la transferencia notarial: recomienda verificarlas.
 - priceComment: comenta el precio frente a la valorización estimada y al último precio de compra; aclara que no \
 es un avalúo y que conviene comparar con avisos del mercado (Neoauto, Mercado Libre).
 - valuation: estima el PRECIO BASE de mercado en Perú, en SOLES (S/), para el MODELO por marca, modelo, VERSIÓN \

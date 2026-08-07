@@ -1372,7 +1372,7 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
       </div>
       {p.sat.pendingTotal > 0 ? (
         <StatusLine tone="danger" icon="error">
-          Deuda REAL confirmada en el SAT: {money(p.sat.pendingTotal)} en {p.sat.pendingCount} cuota(s) — años {p.sat.pendingYears.join(', ')}. Exige que el vendedor las cancele antes de comprar; las impagas las asumes tú.
+          Deuda REAL confirmada en el SAT: {money(p.sat.pendingTotal)} en {p.sat.pendingCount} cuota(s) — años {p.sat.pendingYears.join(', ')}. Es obligación PERSONAL de quien era propietario al 1 de enero de esos años (no del comprador): el impuesto vehicular no se transfiere con el vehículo. Aun así, exige que el vendedor la cancele antes de la transferencia — sin constancia de no adeudo no se formaliza, y una cobranza coactiva podría trabar un embargo sobre la partida.
         </StatusLine>
       ) : (
         <StatusLine tone="success" icon="verified">Impuesto vehicular al día en el SAT de Lima — sin deuda pendiente.</StatusLine>
@@ -1501,7 +1501,7 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
           </div>
           {p.currentOwnerSince && (
             <p className="mt-1 font-body text-[11px] text-slate-400">
-              El titular actual adquirió el vehículo el {p.currentOwnerSince} (acto notarial). Ese es el dato que decide quién debía cada año — no la fecha de inscripción en SUNARP. Las cuotas impagas de CUALQUIER año quedan atadas a la placa y las asume el comprador.
+              El titular actual adquirió el vehículo el {p.currentOwnerSince} (acto notarial). Esa fecha decide quién era contribuyente cada año (el dueño al 1 de enero) — no la de inscripción en SUNARP. El impuesto vehicular es una obligación PERSONAL de ese propietario: no se transfiere al comprador, que recién sería contribuyente desde el 1 de enero del año siguiente a la compra. Aun así conviene exigir al vendedor que lo cancele: sin constancia de no adeudo no se formaliza la transferencia.
             </p>
           )}
         </div>
