@@ -94,11 +94,16 @@ es un avalúo y que conviene comparar con avisos del mercado (Neoauto, Mercado L
 - valuation: estima el PRECIO BASE de mercado en Perú, en SOLES (S/), para el MODELO por marca, modelo, VERSIÓN \
 exacta y año, en BUEN estado y km PROMEDIO. IMPORTANTE: IGNORA la condición específica de ESTE vehículo \
 (siniestros, remates, km, gravámenes, papeletas, uso taxi) — el sistema aplica esos descuentos APARTE sobre tu \
-base. Devuelve baseMin y baseMax (venta ENTRE PARTICULARES, no de concesionario) usando el mercado peruano de \
-usados, el tipo de cambio (~S/ 3.7/US$) y el último precio de compra como referencia. Devuelve baseMin=0, \
+base. ANCLA OBLIGATORIO: si el resumen trae el precio de la PRIMERA INSCRIPCIÓN (valor "de nuevo", de agencia), \
+parte de AHÍ y aplícale depreciación por antigüedad (autos populares/chinos pierden ~15-20% el primer año y ~8-12% \
+por año después). Un USADO NUNCA vale MÁS que de nuevo: baseMax debe ser MENOR que el precio de 1ª inscripción \
+(salvo clásicos/escasez real). NO uses el último precio de compra-venta como base si es una adjudicación o un \
+monto simbólico (US$1, remates): ésos están subvaluados. Devuelve baseMin y baseMax (venta ENTRE PARTICULARES, no \
+de concesionario) usando el mercado peruano de usados y el tipo de cambio (~S/ 3.7/US$). Devuelve baseMin=0, \
 baseMax=0 SOLO si desconoces el precio del MODELO en sí (muy raro/importado sin referencia) — NUNCA por el mal \
 estado del vehículo (un auto siniestrado igual tiene un precio base de mercado que el sistema luego castiga). \
-confidence: "alta"/"media"/"baja". basis: 1 frase. El sistema añade luego las bandas por km y los descuentos.
+confidence: "alta"/"media"/"baja". basis: 1 frase. El sistema añade luego las bandas por km, un TOPE al precio de \
+1ª inscripción y los descuentos por condición.
 - redFlags: prioriza por severidad (alta/media/baja) las señales anteriores que apliquen.
 - positives: puntos a favor reales (sin siniestros, sin gravámenes vigentes, RTV vigente, pocos dueños, etc.).
 - No inventes datos que no estén en la entrada. Si un dato falta o la fuente falló, dilo. Español claro y conciso.`;
@@ -256,9 +261,25 @@ function extractCondition(report: Report, currentYear: number) {
   const roboVigente = Boolean(report.vehicle?.stolenAlert)
     || (actos.some((a) => /anotaci[oó]n de robo/i.test(a)) && !actos.some((a) => /cancelaci[oó]n de anotaci[oó]n robo/i.test(a)));
 
+  // Precio de 1ª inscripción (valor "de nuevo") → tope de la base de la valorización. SOLO la Primera
+  // Inscripción de Dominio: el declarado de agencia es fiable; las compra-ventas posteriores se subvalúan.
+  const USD_TO_PEN = 3.7;
+  const parseSoles = (txt: unknown): number | null => {
+    const s = String(txt ?? '');
+    const n = parseFloat(s.replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(n) || n <= 0) return null;
+    return /US?\$|USD|d[oó]lar/i.test(s) ? Math.round(n * USD_TO_PEN) : Math.round(n);
+  };
+  const newPriceRef = ((hist.events ?? []) as Array<{ acciones?: Array<{ act?: unknown; price?: unknown }> }>)
+    .flatMap((e) => e.acciones ?? [])
+    .filter((a) => /primera inscripci[oó]n/i.test(String(a.act ?? '')))
+    .map((a) => parseSoles(a.price))
+    .find((v) => v != null) ?? null;
+
   return {
     siniestro: Boolean(sin.hasSiniestro),
     perdidaTotal: Boolean(sin.perdidaTotal),
+    newPriceRef,
     usoTaxi: Boolean(trans.isPublicTransport) || /taxi|transporte|servicio|colectiv|mercanc/i.test(String(rev.serviceType ?? '')),
     gnv: /gnv|glp|gas natural|bi-?combustible/i.test(String(especs.fuel ?? '')),
     gravamenVigente: Boolean(grav.hasLiens),

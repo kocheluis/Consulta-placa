@@ -16,6 +16,9 @@ export interface ValuationInput {
   /** Rango base de mercado en S/ (de la IA). 0/0 → no se pudo estimar. */
   baseMin: number;
   baseMax: number;
+  /** Precio de 1ª inscripción en S/ (valor "de nuevo", de agencia). Tope de seguridad: un usado NO puede
+   *  valer más que de nuevo. `null` si no se conoce o no es creíble. */
+  newPriceRef?: number | null;
   year: number | null;
   currentYear: number;
   confidence: 'alta' | 'media' | 'baja';
@@ -73,6 +76,16 @@ export function buildValuation(input: ValuationInput): Valuation {
     };
   }
 
+  // Tope de seguridad de la BASE: un usado no vale más que cuando salió de agencia. Anclamos al precio de
+  // 1ª inscripción (el declarado de agencia suele ser real; las compra-ventas posteriores sí se subvalúan).
+  // Solo capa hacia ABAJO y solo si ese precio es creíble (>S/3,500 → evita topes con valores token). Al
+  // capar, preservamos la proporción min/max para no colapsar el rango a un punto.
+  const newRef = input.newPriceRef ?? null;
+  const capped = newRef != null && newRef > 3500 && baseMax > newRef;
+  const bMax = capped ? newRef : baseMax;
+  const bMin = capped ? Math.round(newRef * (baseMin / baseMax)) : baseMin;
+  const basis = capped ? `${input.basis} · base topada al precio de 1ª inscripción (un usado no vale más que de nuevo)` : input.basis;
+
   // Ajustes por condición: multiplicadores acumulativos + deducciones fijas.
   const adjustments: ValuationAdjustment[] = [];
   let mult = 1;
@@ -106,8 +119,8 @@ export function buildValuation(input: ValuationInput): Valuation {
   const bands: ValuationBand[] = kmBands(expectedKm).map((b) => ({
     label: b.label,
     kmRange: b.kmRange,
-    priceMin: round500(baseMin * (1 + b.factor) * mult - papeletas),
-    priceMax: round500(baseMax * (1 + b.factor) * mult - papeletas),
+    priceMin: round500(bMin * (1 + b.factor) * mult - papeletas),
+    priceMax: round500(bMax * (1 + b.factor) * mult - papeletas),
     ...(b.expected ? { isExpected: true } : {}),
   }));
 
@@ -122,9 +135,9 @@ export function buildValuation(input: ValuationInput): Valuation {
         : 'alta';
 
   return {
-    currency: 'PEN', available: true, baseMin: round500(baseMin), baseMax: round500(baseMax), expectedKm,
+    currency: 'PEN', available: true, baseMin: round500(bMin), baseMax: round500(bMax), expectedKm,
     bands, adjustments,
     netMin: expected.priceMin, netMax: expected.priceMax,
-    confidence, basis: input.basis, ...(roboVigente ? { blocked: true } : {}), disclaimer,
+    confidence, basis, ...(roboVigente ? { blocked: true } : {}), disclaimer,
   };
 }

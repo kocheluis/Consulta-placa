@@ -48,6 +48,23 @@ describe('buildValuation', () => {
     expect(total.confidence).not.toBe('alta');
   });
 
+  it('tope de base: un usado no vale más que de nuevo (se ancla al precio de 1ª inscripción)', () => {
+    const sinTope = buildValuation(base({ baseMin: 53_000, baseMax: 56_000 }));
+    const conTope = buildValuation(base({ baseMin: 53_000, baseMax: 56_000, newPriceRef: 48_300 }));
+    expect(conTope.baseMax).toBeLessThan(sinTope.baseMax);
+    expect(conTope.baseMax).toBeLessThanOrEqual(48_500); // ~48,300 redondeado a 500
+    expect(conTope.baseMin).toBeLessThan(conTope.baseMax); // mantiene el rango, no colapsa a un punto
+    expect(conTope.basis).toMatch(/inscripci[oó]n/i);
+  });
+
+  it('el tope NO sube la base ni actúa con un precio de nuevo poco creíble (token) o base ya menor', () => {
+    const ref = buildValuation(base({ baseMin: 40_000, baseMax: 44_000 }));
+    // precio de nuevo "token" (US$1 → S/…) → se ignora
+    expect(buildValuation(base({ baseMin: 40_000, baseMax: 44_000, newPriceRef: 3 })).baseMax).toBe(ref.baseMax);
+    // base ya por debajo del precio de nuevo → no capa
+    expect(buildValuation(base({ baseMin: 40_000, baseMax: 44_000, newPriceRef: 48_300 })).baseMax).toBe(ref.baseMax);
+  });
+
   it('papeletas se descuentan como monto fijo (no %)', () => {
     const v = buildValuation(base({ papeletasPendientes: 990 }));
     const sin = buildValuation(base());
