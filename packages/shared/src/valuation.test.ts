@@ -41,8 +41,8 @@ describe('buildValuation', () => {
     const limpio = buildValuation(base());
     const accidente = buildValuation(base({ siniestro: true }));
     const total = buildValuation(base({ siniestro: true, perdidaTotal: true }));
-    expect(total.netMax).toBeLessThan(accidente.netMax); // pérdida total pega más fuerte
-    expect(total.netMax).toBeLessThan(limpio.netMax * 0.66); // ~0.65 del limpio
+    expect(total.netMax).toBeLessThan(accidente.netMax); // pérdida total pega más fuerte (−25% vs −22%)
+    expect(total.netMax).toBeLessThanOrEqual(limpio.netMax * 0.76); // ~0.75 del limpio
     expect(total.adjustments.map((a) => a.factor)).toContain('Pérdida total (vendido por aseguradora)');
     expect(total.adjustments.map((a) => a.factor)).not.toContain('Siniestro / accidente registrado');
     expect(total.confidence).not.toBe('alta');

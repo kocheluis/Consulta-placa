@@ -82,10 +82,10 @@ export function buildValuation(input: ValuationInput): Valuation {
     mult *= 1 - factor;
     adjustments.push({ factor: factorName, impact: pct(factor), detail });
   };
-  // PÉRDIDA TOTAL confirmada (aseguradora adjudica/remata) castiga MUCHO más que un accidente SBS suelto:
-  // el mercado paga bastante menos por un vehículo reconstruido tras pérdida total. −35% vs −22%.
+  // PÉRDIDA TOTAL confirmada (aseguradora adjudica/remata) castiga más que un accidente SBS suelto:
+  // el mercado paga menos por un vehículo reconstruido tras pérdida total. −25% vs −22%.
   if (input.perdidaTotal) {
-    apply(true, 0.35, 'Pérdida total (vendido por aseguradora)', 'Una aseguradora lo adjudicó/remató tras un siniestro con pérdida total → reconstruido: castigo fuerte de precio y reventa. Exige peritaje.');
+    apply(true, 0.25, 'Pérdida total (vendido por aseguradora)', 'Una aseguradora lo adjudicó/remató tras un siniestro con pérdida total → reconstruido: castigo de precio y reventa. Exige peritaje.');
   } else {
     apply(input.siniestro, 0.22, 'Siniestro / accidente registrado', 'Registra un siniestro/accidente en la SBS → castigo de precio y menor reventa.');
   }
