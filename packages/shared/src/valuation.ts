@@ -21,7 +21,8 @@ export interface ValuationInput {
   confidence: 'alta' | 'media' | 'baja';
   basis: string;
   // Condición (del reporte):
-  siniestro: boolean;        // siniestro/pérdida total registrado (SBS/aseguradora/remate por choque)
+  siniestro: boolean;        // accidente/siniestro registrado (SBS) → castigo moderado
+  perdidaTotal: boolean;     // PÉRDIDA TOTAL confirmada (aseguradora en el historial / remate) → castigo fuerte
   usoTaxi: boolean;          // uso taxi/servicio (ATU/CITV) → desgaste
   gnv: boolean;              // conversión a GNV
   gravamenVigente: boolean;  // carga vigente
@@ -81,7 +82,13 @@ export function buildValuation(input: ValuationInput): Valuation {
     mult *= 1 - factor;
     adjustments.push({ factor: factorName, impact: pct(factor), detail });
   };
-  apply(input.siniestro, 0.22, 'Siniestro / pérdida total', 'Registra siniestro o remate por choque → castigo fuerte de precio y reventa.');
+  // PÉRDIDA TOTAL confirmada (aseguradora adjudica/remata) castiga MUCHO más que un accidente SBS suelto:
+  // el mercado paga bastante menos por un vehículo reconstruido tras pérdida total. −35% vs −22%.
+  if (input.perdidaTotal) {
+    apply(true, 0.35, 'Pérdida total (vendido por aseguradora)', 'Una aseguradora lo adjudicó/remató tras un siniestro con pérdida total → reconstruido: castigo fuerte de precio y reventa. Exige peritaje.');
+  } else {
+    apply(input.siniestro, 0.22, 'Siniestro / accidente registrado', 'Registra un siniestro/accidente en la SBS → castigo de precio y menor reventa.');
+  }
   apply(input.usoTaxi, 0.18, 'Uso como taxi/servicio', 'Desgaste mayor por uso comercial (motor, suspensión, tapicería).');
   apply(input.gnv, 0.06, 'Conversión a GNV', 'Muchos compradores descuentan por la conversión (tanque, garantía, mantenimiento).');
   apply(input.transfers >= 4, 0.04, 'Muchos dueños', `${input.transfers} transferencias de dominio → menor demanda.`);
@@ -111,7 +118,7 @@ export function buildValuation(input: ValuationInput): Valuation {
   // Confianza: baja si la IA ya venía dudosa o hay señales que distorsionan mucho el precio.
   const confidence: Valuation['confidence'] =
     roboVigente || input.confidence === 'baja' ? 'baja'
-      : input.siniestro || input.confidence === 'media' ? 'media'
+      : input.siniestro || input.perdidaTotal || input.confidence === 'media' ? 'media'
         : 'alta';
 
   return {

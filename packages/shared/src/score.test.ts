@@ -15,6 +15,7 @@ const soatActive: InsurancePolicy = {
 const soatInactive: InsurancePolicy = { ...soatActive, hasActiveSoat: false };
 const noSini: SiniestroIndicator = { hasSiniestro: false, periodYears: 5 };
 const withSini: SiniestroIndicator = { hasSiniestro: true, periodYears: 5 };
+const withPerdidaTotal: SiniestroIndicator = { hasSiniestro: true, perdidaTotal: true, periodYears: 5 };
 
 function makeReport(opts: {
   vehicle?: boolean;
@@ -102,6 +103,14 @@ describe('computeScore', () => {
     expect(ins.level).toBe(ScoreLevel.WARNING);
     expect(ins.reasons.some((r) => r.toLowerCase().includes('siniestralidad'))).toBe(true);
     expect(s.overall).toBe(81);
+  });
+
+  it('PÉRDIDA TOTAL topa el veredicto en Alerta (no "apto"), aun con lo demás limpio', () => {
+    const s = computeScore(makeReport({ soat: soatActive, sini: withPerdidaTotal }));
+    // Sin el tope, LEGAL 100 + INSURANCE 30 daría ~70 (GOOD/limpio) → el cap lo baja a BAD.
+    expect(s.level).toBe(ScoreLevel.BAD);
+    expect(s.overall).toBeLessThanOrEqual(49);
+    expect(concept(s, ScoreConcept.INSURANCE).reasons.some((r) => /p[eé]rdida total/i.test(r))).toBe(true);
   });
 
   it('sin ninguna señal puntuable → overall null, UNKNOWN, cobertura 0', () => {

@@ -1732,13 +1732,9 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
       </div>
     );
   }
-  // Banderas DURAS (siniestro/pérdida total): aseguradora o casa de remate → alerta.
-  const hardTxt = [
-    h.flags.aseguradora && 'aseguradora',
-    h.flags.remate && 'remate',
-  ]
-    .filter(Boolean)
-    .join(' · ');
+  // Banderas DURAS (pérdida total): una ASEGURADORA figura como parte del historial (adjudicación tras
+  // siniestro) o hay un REMATE por siniestro → el vehículo fue vendido por la aseguradora como pérdida total.
+  const perdidaTotal = h.flags.aseguradora || h.flags.remate;
   // El timeline viene cronológico ascendente; mostramos lo más reciente primero.
   const events = [...h.events].reverse();
   const MAX = 12;
@@ -1752,15 +1748,17 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
           {h.totalAsientos} asiento(s)
         </Badge>
       </div>
-      {hardTxt && (
-        <StatusLine tone="warning" icon="flag">
-          Banderas en el historial: {hardTxt}
+      {perdidaTotal && (
+        <StatusLine tone="danger" icon="car_crash">
+          {h.flags.aseguradora
+            ? 'Pérdida total: una aseguradora figura como parte en el historial. El vehículo fue vendido por la aseguradora tras un siniestro (adjudicación / remate por choque) — muy probablemente reconstruido. Exige un peritaje serio y considera el fuerte castigo de precio y reventa.'
+            : 'Aparece un remate / casa de subastas en el historial: posible adjudicación por siniestro (pérdida total). Verifica el motivo del remate y exige un peritaje.'}
         </StatusLine>
       )}
       {/* "Financiera" es señal BLANDA (una entidad financiera/banco aparece en el historial:
           compra financiada o leasing, muy común). Solo mandamos a «Gravámenes» si ahí HAY algo
           (carga vigente o levantada); si no, la nota lo aclara para no confundir. */}
-      {h.flags.financiera && !hardTxt && (
+      {h.flags.financiera && !perdidaTotal && (
         <StatusLine tone="neutral" icon="account_balance">
           {h.flags.gravamen
             ? 'Aparece una entidad financiera en su historial (compra financiada o leasing). Revisa «Gravámenes / prendas» para el estado vigente de la carga.'

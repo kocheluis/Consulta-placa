@@ -4,7 +4,7 @@ import { buildValuation, type ValuationInput } from './valuation.js';
 const base = (over: Partial<ValuationInput> = {}): ValuationInput => ({
   baseMin: 50_000, baseMax: 58_000, year: 2020, currentYear: 2026,
   confidence: 'alta', basis: 'Kia Rio 2020, versión EX',
-  siniestro: false, usoTaxi: false, gnv: false, gravamenVigente: false, gravamenMonto: null,
+  siniestro: false, perdidaTotal: false, usoTaxi: false, gnv: false, gravamenVigente: false, gravamenMonto: null,
   papeletasPendientes: 0, transfers: 1, roboVigente: false, revisionVencida: false, ...over,
 });
 
@@ -32,9 +32,20 @@ describe('buildValuation', () => {
     // ~0.78 × 0.82 ≈ 0.64 del precio limpio
     expect(danado.netMax).toBeLessThan(limpio.netMax * 0.7);
     expect(danado.adjustments.map((a) => a.factor)).toEqual(
-      expect.arrayContaining(['Siniestro / pérdida total', 'Uso como taxi/servicio']),
+      expect.arrayContaining(['Siniestro / accidente registrado', 'Uso como taxi/servicio']),
     );
     expect(danado.confidence).not.toBe('alta');
+  });
+
+  it('pérdida total castiga MÁS que un accidente suelto (−35% vs −22%) con etiqueta propia', () => {
+    const limpio = buildValuation(base());
+    const accidente = buildValuation(base({ siniestro: true }));
+    const total = buildValuation(base({ siniestro: true, perdidaTotal: true }));
+    expect(total.netMax).toBeLessThan(accidente.netMax); // pérdida total pega más fuerte
+    expect(total.netMax).toBeLessThan(limpio.netMax * 0.66); // ~0.65 del limpio
+    expect(total.adjustments.map((a) => a.factor)).toContain('Pérdida total (vendido por aseguradora)');
+    expect(total.adjustments.map((a) => a.factor)).not.toContain('Siniestro / accidente registrado');
+    expect(total.confidence).not.toBe('alta');
   });
 
   it('papeletas se descuentan como monto fijo (no %)', () => {

@@ -79,8 +79,11 @@ interface RawConcept {
   /** 0–100, o `null` si no hay datos. */
   score: number | null;
   reasons: string[];
-  /** Señal crítica (dealbreaker) que fuerza el general a BAD. */
+  /** Señal crítica (dealbreaker) que fuerza el general a BAD (≤15). */
   critical: boolean;
+  /** Tope del veredicto general: la señal no es dealbreaker pero impide que el score lea "limpio".
+   *  Ej.: pérdida total → tope 49 (BAD/Alerta) sin llevarlo casi a cero como el robo. */
+  capAt?: number;
 }
 
 function scoreLegal(report: Report): RawConcept {
@@ -108,15 +111,22 @@ function scoreInsurance(report: Report): RawConcept {
       reasons.push('Sin SOAT vigente registrado.');
     }
   }
+  let capAt: number | undefined;
   if (sini) {
-    if (sini.hasSiniestro) {
+    if (sini.perdidaTotal) {
+      // Pérdida total confirmada (aseguradora en el historial / remate por siniestro): mucho más grave
+      // que un accidente suelto. Hunde el concepto y TOPA el veredicto general en Alerta (no "apto").
+      score -= 70;
+      capAt = 49;
+      reasons.push('PÉRDIDA TOTAL: el vehículo fue vendido o rematado por una aseguradora tras un siniestro — reconstruido; exige un peritaje serio.');
+    } else if (sini.hasSiniestro) {
       score -= 45;
       reasons.push(`Registra siniestralidad (últimos ${sini.periodYears} años).`);
     } else {
       reasons.push('Sin siniestros registrados.');
     }
   }
-  return { score: clamp(score), reasons, critical: false };
+  return { score: clamp(score), reasons, critical: false, ...(capAt != null ? { capAt } : {}) };
 }
 
 function scoreDebts(report: Report): RawConcept {
@@ -163,7 +173,9 @@ export function computeScore(report: Report): VehicleScore {
   const weighted =
     known.reduce((acc, r) => acc + (r.raw.score as number) * WEIGHTS[r.concept], 0) / knownWeight;
   const hasCritical = raws.some((r) => r.raw.critical);
-  const overall = hasCritical ? Math.min(clamp(weighted), 15) : clamp(weighted);
+  // Tope del veredicto: la señal más severa con `capAt` impide leer "limpio" sin ser dealbreaker (crítico).
+  const capAt = raws.reduce((m, r) => Math.min(m, r.raw.capAt ?? 100), 100);
+  const overall = hasCritical ? Math.min(clamp(weighted), 15) : Math.min(clamp(weighted), capAt);
   const level = hasCritical ? ScoreLevel.BAD : levelFromScore(overall);
 
   return { overall, level, letter: letterFromScore(overall), coverage, concepts };

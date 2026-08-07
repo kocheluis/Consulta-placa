@@ -151,7 +151,7 @@ function buildSummary(report: Report): Record<string, unknown> {
       : 'fuente no disponible',
     soat: byKind('SEGUROS') ? { vigente: seg.hasActiveSoat, compania: seg.insurer } : 'fuente no disponible',
     siniestralidad: byKind('SINIESTRALIDAD')
-      ? { registraSiniestro: sin.hasSiniestro, accidentesSoat: sin.accidentes, periodoAnios: sin.periodYears, subasta: auction ? { tipo: auction.tipo, fuente: auction.fuente, estado: auction.estado } : null }
+      ? { registraSiniestro: sin.hasSiniestro, perdidaTotal: Boolean(sin.perdidaTotal), accidentesSoat: sin.accidentes, periodoAnios: sin.periodYears, subasta: auction ? { tipo: auction.tipo, fuente: auction.fuente, estado: auction.estado } : null }
       : 'fuente no disponible',
     papeletas: byKind('PAPELETAS') ? { cantidad: pap.total, montoPendiente: pap.pendingAmount } : 'fuente no disponible',
     ordenCaptura: byKind('CAPTURA') ? { registra: cap.hasCapture } : 'fuente no disponible',
@@ -258,6 +258,7 @@ function extractCondition(report: Report, currentYear: number) {
 
   return {
     siniestro: Boolean(sin.hasSiniestro),
+    perdidaTotal: Boolean(sin.perdidaTotal),
     usoTaxi: Boolean(trans.isPublicTransport) || /taxi|transporte|servicio|colectiv|mercanc/i.test(String(rev.serviceType ?? '')),
     gnv: /gnv|glp|gas natural|bi-?combustible/i.test(String(especs.fuel ?? '')),
     gravamenVigente: Boolean(grav.hasLiens),

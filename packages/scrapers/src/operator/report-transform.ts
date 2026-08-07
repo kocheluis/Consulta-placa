@@ -202,7 +202,10 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       tipo: String(s.tipo ?? ''), aseguradora: (s.aseguradora as string) ?? null,
       desde: (s.desde as string) ?? null, hasta: (s.hasta as string) ?? null, cantidad: num(s.cantidad),
     }));
-    const pay: SiniestroIndicator = { hasSiniestro: Boolean(hasSiniestro), periodYears, accidentes: sbsAccidentes, siniestros, auction };
+    // PÉRDIDA TOTAL confirmada: aseguradora como parte del historial (adjudicación tras siniestro) o
+    // remate por siniestro/aseguradora. NO la disparan los accidentes SBS por sí solos (pueden ser leves).
+    const perdidaTotal = Boolean(histSiniestro) || auctionSiniestro;
+    const pay: SiniestroIndicator = { hasSiniestro: Boolean(hasSiniestro), perdidaTotal, periodYears, accidentes: sbsAccidentes, siniestros, auction };
     src.push({ kind: SectionKind.SINIESTRALIDAD, source: SourceId.SBS, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
   } else if (sbs) {
     src.push({ kind: SectionKind.SINIESTRALIDAD, source: SourceId.SBS, status: SectionStatus.UNAVAILABLE, fetchedAt: at });

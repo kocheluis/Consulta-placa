@@ -82,6 +82,10 @@ export interface Siniestro {
 /** Payload de la sección SINIESTRALIDAD. */
 export interface SiniestroIndicator {
   hasSiniestro: boolean;
+  /** PÉRDIDA TOTAL confirmada: una aseguradora figura como parte del historial (adjudicación) o
+   *  el vehículo apareció en un remate por siniestro/aseguradora. Señal MUCHO más grave que un
+   *  simple registro de accidente en la SBS → castigo fuerte de precio y veredicto. */
+  perdidaTotal?: boolean;
   periodYears: number;
   /** N° TOTAL de accidentes reportados a la SBS (suma de todas las pólizas: SOAT/Vehicular/CAT). */
   accidentes?: number | null;
