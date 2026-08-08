@@ -76,6 +76,17 @@ físicos contra la tarjeta de identificación y el registro.
 - COHERENCIA DE PRECIO: compara el último precio de compra registrado + la antigüedad + la valorización estimada; \
 si el precio de venta está muy por encima del mercado o del último precio, adviértelo.
 
+QUÉ NO ES BANDERA (no inventes riesgos):
+- DATOS FALTANTES ≠ DEFECTO. Una fuente marcada "fuente no disponible" es un VACÍO de la consulta (falló o no \
+aplica), NO un problema del vehículo: menciónalo como límite de la consulta, SIN banderas de riesgo ni bajar el \
+veredicto a "precaución" por ello.
+- RTV (revisión técnica): recién es obligatoria según la ANTIGÜEDAD del vehículo. En autos NUEVOS/recientes su \
+ausencia (o "fuente no disponible") es NORMAL —aún no les toca— y NO es bandera. Marca la RTV SOLO si está VENCIDA \
+cuando ya le correspondía por antigüedad.
+- AÑO-MODELO: que sea el año en curso o el SIGUIENTE es normal (venta anticipada del próximo modelo), NUNCA una \
+anomalía; tampoco impide valorar el precio.
+- El MODELO exacto (usa "modeloCompleto" = marca + modelo + versión) es la referencia para la valorización.
+
 Reglas de salida:
 - verdict: "comprar" (sin señales relevantes), "precaucion" (señales que exigen verificación) o "evitar" (señales \
 graves: siniestro/pérdida total, gravamen vigente, orden de captura, robo vigente).
@@ -147,8 +158,11 @@ function buildSummary(report: Report): Record<string, unknown> {
   const compras = eventos.filter((e) => /compra\s*-?\s*venta|adjudicaci[oó]n/i.test(String(e.acto ?? '')) && e.precio);
   const ultimaCompra = compras[compras.length - 1] ?? null;
 
+  // Modelo COMPLETO para la valorización: SUNARP da el modelo genérico ("GLORY", "X70FL"); la versión de la
+  // ficha ("SUV 1.8L", "1.5T 6MT 4X2 FULL") lo precisa. Se combinan para que la IA estime el precio del trim exacto.
+  const modeloCompleto = v ? [v.brand, v.model, especs.version].filter(Boolean).join(' ') || null : null;
   return {
-    vehiculo: v ? { marca: v.brand, modelo: v.model, anio: v.year, color: v.color, placa: v.plateDisplay, alertaRobo: v.stolenAlert } : null,
+    vehiculo: v ? { marca: v.brand, modelo: v.model, modeloCompleto, anio: v.year, color: v.color, placa: v.plateDisplay, alertaRobo: v.stolenAlert } : null,
     // Ficha técnica del asiento registral (sin PII): versión exacta + características → afina el
     // comentario de precio (una versión GNV/tope de gama no vale igual que la base) y el uso.
     identidadEspecifica: byKind('IDENTIDAD_ESPECIFICA')
@@ -221,7 +235,15 @@ export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | 
   const openai = !!OPENAI_KEY();
   if (!anthropic && !openai) { console.log('[ia] sin ANTHROPIC_API_KEY ni OPENAI_API_KEY → omito análisis IA'); return null; }
   const summary = buildSummary(report);
-  const userText = `Analiza este vehículo y devuelve tu recomendación de compra.\n\nDATOS (JSON):\n${JSON.stringify(summary, null, 2)}`;
+  // FECHA ACTUAL explícita: sin ella la IA asume su fecha de entrenamiento (~2023) y marca como
+  // "anomalía" un año-modelo 2026/2027 y falla la valorización ("año no comercial"). Con la fecha real,
+  // entiende que el año-modelo del año en curso o el siguiente es normal (venta anticipada).
+  const today = (report.generatedAt || new Date().toISOString()).slice(0, 10);
+  const curYear = Number(today.slice(0, 4)) || new Date().getFullYear();
+  const userText = `Analiza este vehículo y devuelve tu recomendación de compra.\n\n`
+    + `FECHA ACTUAL: ${today} (año ${curYear}). Es NORMAL que el AÑO-MODELO sea ${curYear} o ${curYear + 1} `
+    + `(las marcas venden por adelantado el modelo del próximo año): NO lo trates como anomalía ni como `
+    + `impedimento para valorar el precio.\n\nDATOS (JSON):\n${JSON.stringify(summary, null, 2)}`;
 
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), 90_000);

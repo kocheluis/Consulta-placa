@@ -1056,7 +1056,7 @@ function SectionBody({
   }
 
   if (entry.key === 'identidad_especifica') {
-    return section ? <IdentidadEspecificaBody section={section} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
+    return section ? <IdentidadEspecificaBody section={section} brand={vehicle?.brand} model={vehicle?.model} onRetry={onRetry} /> : <ComingSoon blurb={entry.blurb} />;
   }
 
   if (entry.key === 'soat') {
@@ -1639,15 +1639,18 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
   );
 }
 
-function IdentidadEspecificaBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
+function IdentidadEspecificaBody({ section, brand, model, onRetry }: { section: SectionResult; brand?: string | null; model?: string | null; onRetry: () => void }) {
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const s = section.payload as VehicleSpecs | undefined;
   if (!s) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
+  // Modelo COMPLETO = marca + modelo (de SUNARP) + versión (ficha técnica). SUNARP da el modelo genérico
+  // ("GLORY", "X70FL"); la versión ("SUV 1.8L", "1.5T 6MT 4X2 FULL") lo precisa → se muestran combinados.
+  const fullModel = [brand, model, s.version].filter(Boolean).join(' ');
   return (
     <div className="flex flex-col gap-3">
-      {s.version && (
-        <StatusLine tone="neutral" icon="tune">
-          Versión: <strong>{s.version}</strong>
+      {fullModel && (
+        <StatusLine tone="neutral" icon="directions_car">
+          Modelo: <strong>{fullModel}</strong>
         </StatusLine>
       )}
       <DefGrid
