@@ -162,7 +162,16 @@ export interface RevisionTecnica {
 
 /** Payload de la sección TRANSPORTE (ATU — uso como taxi/transporte). */
 export interface TransporteInfo {
+  /** true = FUE o ES vehículo de servicio público (señal para el desgaste/valor). Ver `currentlyPublic`. */
   isPublicTransport: boolean;
+  /** true = HOY está registrado/habilitado como servicio público (ficha SUNARP actual o ATU vigente). */
+  currentlyPublic?: boolean;
+  /** true = fue servicio público en algún momento (aunque hoy sea particular). */
+  wasPublic?: boolean;
+  /** Fechas de los asientos "Cambio de Tipo de Uso" (para mostrar cuándo dejó de ser público). */
+  usageChangeDates?: string[];
+  /** Fecha de la 1ª inscripción (acota el periodo en que fue público, si empezó como tal). */
+  firstInscriptionDate?: string | null;
   modality: string | null;
   detail: string | null;
   /** Titular de la habilitación (empresa o persona). PII de tercero: enmascarar antes de

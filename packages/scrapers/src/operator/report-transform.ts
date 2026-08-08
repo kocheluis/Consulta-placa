@@ -292,10 +292,27 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const hasRegistralUse = !!especsUse?.usage;
   if (atuOk || hasRegistralUse) {
     const d = data(atu);
+    // Historial de TIPO DE USO: un vehículo puede haber sido taxi/servicio público y luego cambiar a
+    // particular. La ficha ACTUAL (especsUse) muestra el estado de hoy; los asientos "Cambio de Tipo de
+    // Uso" del historial dicen CUÁNDO cambió. Así distinguimos "es público" de "FUE público" (evita el
+    // mensaje confuso "SERVICIO PÚBLICO" cuando hoy figura como particular).
+    const histTl = (data(by('HISTORIAL')).timeline ?? []) as Array<Record<string, unknown>>;
+    const fechaDe = (a: Record<string, unknown>): string | null => (a.fechaAsiento as string) || (a.fechaPresentacion as string) || null;
+    const usageChangeDates = histTl.filter((a) => /tipo\s+de\s+uso/i.test(String(a.acto ?? ''))).map(fechaDe).filter((x): x is string => !!x);
+    const firstInscriptionDate = histTl.filter((a) => /primera inscripci[oó]n/i.test(String(a.acto ?? ''))).map(fechaDe).find((x): x is string => !!x) ?? null;
+    // ATU vigente = habilitación con vigencia (proxy de "hoy es público"); sin vigencia lo tratamos como
+    // señal de que LO FUE. La ficha registral actual manda para "hoy".
+    const atuVigente = Boolean(d.isPublicTransport) && !!d.vigencia;
+    const currentlyPublic = pubUse.isPublic || atuVigente;
+    const wasPublic = currentlyPublic || Boolean(d.isPublicTransport) || usageChangeDates.length > 0;
     // PII minimizada (Ley 29733): titular ATU (nombre + documento) enmascarado; el dato crudo solo
     // vive en la fuente del VPS (operador).
     const pay: TransporteInfo = {
-      isPublicTransport: Boolean(d.isPublicTransport) || pubUse.isPublic,
+      isPublicTransport: wasPublic, // para la valorización: el desgaste por uso intensivo aplica aunque hoy sea particular
+      currentlyPublic,
+      wasPublic,
+      usageChangeDates,
+      firstInscriptionDate,
       modality: (d.modalidad as string) ?? null,
       detail: (d.estado as string) ?? null,
       holder: maskOwnerName((d.titular as string) ?? null),

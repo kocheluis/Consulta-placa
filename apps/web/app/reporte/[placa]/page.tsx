@@ -1687,11 +1687,31 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
   const t = section.payload as TransporteInfo | undefined;
   if (!t) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
   const hasAtu = t.modality != null || t.detail != null || t.validUntil != null;
+  const changes = t.usageChangeDates ?? [];
+  // Periodo aproximado como servicio público: si empezó en la 1ª inscripción y hay UN solo cambio de
+  // tipo de uso, va de esa inscripción hasta el cambio. `añosEntre` estima la duración (fechas dd/mm/aaaa).
+  const parseFecha = (s?: string | null): number | null => {
+    const m = /(\d{2})\/(\d{2})\/(\d{4})/.exec(s ?? '');
+    return m ? Date.UTC(Number(m[3]), Number(m[2]) - 1, Number(m[1])) : null;
+  };
+  const publicUntil = changes.length ? changes[changes.length - 1]! : null;
+  const publicFrom = changes.length === 1 ? t.firstInscriptionDate ?? null : null;
+  const fromMs = parseFecha(publicFrom), toMs = parseFecha(publicUntil);
+  const anios = fromMs != null && toMs != null && toMs > fromMs ? Math.round(((toMs - fromMs) / (365.25 * 864e5)) * 10) / 10 : null;
+  const periodoTxt = publicFrom && publicUntil
+    ? `Fue de servicio público ≈ desde su 1ª inscripción (${publicFrom}) hasta el cambio a particular (${publicUntil})${anios ? ` — ~${anios} año(s)` : ''}.`
+    : publicUntil
+      ? `Cambió de tipo de uso a particular el ${publicUntil}; antes figuraba como servicio público.`
+      : 'Consta una habilitación de servicio público (no se pudo fechar el cambio).';
   return (
     <div className="flex flex-col gap-3">
-      {t.isPublicTransport ? (
+      {t.currentlyPublic ? (
         <StatusLine tone="warning" icon="local_taxi">
-          Registrado para SERVICIO PÚBLICO{t.serviceKind ? ` — ${t.serviceKind}` : ''} · uso intensivo (mayor desgaste)
+          Registrado ACTUALMENTE para SERVICIO PÚBLICO{t.serviceKind ? ` — ${t.serviceKind}` : ''} · uso intensivo (mayor desgaste)
+        </StatusLine>
+      ) : t.wasPublic ? (
+        <StatusLine tone="warning" icon="history">
+          FUE vehículo de SERVICIO PÚBLICO — hoy figura como particular. {periodoTxt} El uso intensivo previo puede implicar mayor desgaste: pídelo peritar.
         </StatusLine>
       ) : (
         <StatusLine tone="success" icon="verified">
@@ -1701,8 +1721,9 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
       {/* La señal registral (asiento) es nacional; la ATU cubre la habilitación de Lima/Callao. */}
       <DefGrid
         items={[
-          ['Tipo de uso (asiento SUNARP)', t.registralUsage],
+          ['Tipo de uso ACTUAL (asiento SUNARP)', t.registralUsage],
           ['Categoría', t.category],
+          ...(t.wasPublic && !t.currentlyPublic ? [['Cambio(s) de tipo de uso', changes.join(' · ') || null] as [string, string | null]] : []),
           ['Modalidad (ATU)', t.modality],
           ['Vigencia', t.validUntil],
           ['Titular', t.holder],
