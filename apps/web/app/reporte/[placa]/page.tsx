@@ -1687,6 +1687,9 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
   const t = section.payload as TransporteInfo | undefined;
   if (!t) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
   const hasAtu = t.modality != null || t.detail != null || t.validUntil != null;
+  // Fallback para reportes viejos (sin los campos nuevos): trata isPublicTransport como "hoy es público".
+  const currentlyPublic = t.currentlyPublic ?? t.isPublicTransport;
+  const wasPublic = t.wasPublic ?? t.isPublicTransport;
   const changes = t.usageChangeDates ?? [];
   // Periodo aproximado como servicio público: si empezó en la 1ª inscripción y hay UN solo cambio de
   // tipo de uso, va de esa inscripción hasta el cambio. `añosEntre` estima la duración (fechas dd/mm/aaaa).
@@ -1705,11 +1708,11 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
       : 'Consta una habilitación de servicio público (no se pudo fechar el cambio).';
   return (
     <div className="flex flex-col gap-3">
-      {t.currentlyPublic ? (
+      {currentlyPublic ? (
         <StatusLine tone="warning" icon="local_taxi">
           Registrado ACTUALMENTE para SERVICIO PÚBLICO{t.serviceKind ? ` — ${t.serviceKind}` : ''} · uso intensivo (mayor desgaste)
         </StatusLine>
-      ) : t.wasPublic ? (
+      ) : wasPublic ? (
         <StatusLine tone="warning" icon="history">
           FUE vehículo de SERVICIO PÚBLICO — hoy figura como particular. {periodoTxt} El uso intensivo previo puede implicar mayor desgaste: pídelo peritar.
         </StatusLine>
@@ -1723,7 +1726,7 @@ function TransporteBody({ section, onRetry }: { section: SectionResult; onRetry:
         items={[
           ['Tipo de uso ACTUAL (asiento SUNARP)', t.registralUsage],
           ['Categoría', t.category],
-          ...(t.wasPublic && !t.currentlyPublic ? [['Cambio(s) de tipo de uso', changes.join(' · ') || null] as [string, string | null]] : []),
+          ...(wasPublic && !currentlyPublic ? [['Cambio(s) de tipo de uso', changes.join(' · ') || null] as [string, string | null]] : []),
           ['Modalidad (ATU)', t.modality],
           ['Vigencia', t.validUntil],
           ['Titular', t.holder],
