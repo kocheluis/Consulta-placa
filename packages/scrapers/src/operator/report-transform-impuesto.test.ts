@@ -118,6 +118,29 @@ describe('toWebReport · sección IMPUESTO_VEHICULAR (Capa A — derivada de la 
     expect(p.sat?.paidCount).toBe(4);
     expect(p.sat?.multaPaidTotal).toBe(261.44); // multa por omiso, separada del impuesto
     expect(p.sat?.multaPendingTotal).toBe(0);
+    // El SAT conoce los 3 ejercicios devengados (2024/2025 pagados, 2026 pendiente) → sin hueco.
+    expect(p.sat?.unemittedYears).toEqual([]);
+  });
+
+  it('CJX-459 (robo/pérdida total): SAT solo registra 2024 pagado y NADA de 2025 → hueco unemittedYears=[2025]', () => {
+    // Devengados 2024-2026 (1ª inscripción 2023, consulta en 2026). El SAT muestra 2024 pagado y CERO
+    // pendiente, pero no emitió 2025 (vehículo fuera del padrón por baja/robo). "Sin deuda" ≠ "pagado".
+    const s = impuestoOf([
+      res('HISTORIAL', 'ENCONTRADO', { timeline: [asiento('2023-00099999', 'Primera Inscripción de Dominio', 'US$ 12,510.01')] }),
+      res('SAT_IMPUESTO', 'ENCONTRADO', {
+        found: true, pendingTotal: 0, pendingCount: 0, paidTotal: 525.90, paidCount: 4,
+        paidYears: [2024], pendingYears: [], multaPaidTotal: 0, multaPendingTotal: 0,
+        cuotas: [
+          { year: 2024, cuota: '1', total: 0, pagado: 138.49, deuda: 0, vencimiento: '29/02/2024', estado: 'pagado' },
+          { year: 2024, cuota: '2', total: 0, pagado: 131.88, deuda: 0, vencimiento: '31/05/2024', estado: 'pagado' },
+        ],
+      }),
+    ]);
+    const p = s?.payload as ImpuestoVehicularPayload;
+    expect(p.dueYears).toEqual([2024, 2025, 2026]);
+    expect(p.sat?.pendingTotal).toBe(0);
+    // 2024 lo conoce (pagado); 2026 es el año en curso (cuotas pueden no estar emitidas) → solo 2025 es hueco.
+    expect(p.sat?.unemittedYears).toEqual([2025]);
   });
 
   it('sin fuente SAT → payload.sat = null (solo estimado Capa A)', () => {

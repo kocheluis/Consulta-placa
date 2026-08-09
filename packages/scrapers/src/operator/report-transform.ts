@@ -195,6 +195,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
           estado: (subData.estado as string) ?? null,
           fuente: ((subData.fuente as string) ?? 'SUPERBID').toUpperCase(),
           tipo: subFlags.siniestro ? 'siniestro' : 'aseguradora',
+          // Solo afirmamos ROBO si el portal lo dice (nombre de la subasta / lote: "robo" / "recuperado");
+          // en cualquier otro caso la causa queda desconocida (NO asumimos choque).
+          causa: subFlags.robo ? 'robo' : null,
           boletaUrl: (subData.boletaUrl as string) ?? null,
         }
       : null;
@@ -385,6 +388,8 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         paidCount: num(satData.paidCount),
         paidYears: ((satData.paidYears as number[]) ?? []).map(Number),
         pendingYears: ((satData.pendingYears as number[]) ?? []).map(Number),
+        // Se rellena abajo, en la Capa A, cuando ya conocemos los ejercicios devengados (dueYears).
+        unemittedYears: [],
         multaPaidTotal: num(satData.multaPaidTotal),
         multaPendingTotal: num(satData.multaPendingTotal),
         cuotas: ((satData.cuotas as Array<Record<string, unknown>>) ?? []).map((c) => ({
@@ -394,7 +399,7 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
           vencimiento: (c.vencimiento as string) || null,
         })),
       }
-    : (satRes?.status === 'SIN_REGISTRO' ? { found: false, pendingTotal: 0, pendingCount: 0, paidTotal: 0, paidCount: 0, paidYears: [], pendingYears: [], multaPaidTotal: 0, multaPendingTotal: 0, cuotas: [] } : null);
+    : (satRes?.status === 'SIN_REGISTRO' ? { found: false, pendingTotal: 0, pendingCount: 0, paidTotal: 0, paidCount: 0, paidYears: [], pendingYears: [], unemittedYears: [], multaPaidTotal: 0, multaPendingTotal: 0, cuotas: [] } : null);
 
   // ── GRAVÁMENES + HISTORIAL de transferencias (SPRL + Síguelo) ──
   if (hist?.status === 'ENCONTRADO') {
@@ -525,15 +530,25 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         obligado: (currentOwnerSinceTs == null || currentOwnerSinceTs < Date.UTC(year, 0, 1) ? 'titular' : 'anterior') as 'titular' | 'anterior',
         estimated: estAnnual,
       }));
+      const dueYears = affectedYears.filter((y) => y <= curYear);
+      // Hueco Capa A vs Capa B: ejercicios YA VENCIDOS (< año de consulta) que la Capa A dice devengados
+      // pero que el SAT NO registra —ni pagados ni pendientes—. Si el SAT conoce ALGÚN año (p.ej. 2024
+      // pagado) pero le faltan devengados posteriores, ese "sin deuda pendiente" NO es prueba de pago:
+      // el vehículo probablemente salió del padrón del SAT (baja / suspensión por robo o pérdida total),
+      // o quedó sin declarar (omiso). Se excluye el año en curso (sus cuotas pueden no estar emitidas aún).
+      const satKnown = new Set<number>([...(satVal?.paidYears ?? []), ...(satVal?.pendingYears ?? [])]);
+      const unemittedYears = satVal?.found && satKnown.size > 0
+        ? dueYears.filter((y) => y < curYear && !satKnown.has(y))
+        : [];
       impPay = {
         afecto: curYear <= lastAffectedYear,
-        sat: satVal,
+        sat: satVal ? { ...satVal, unemittedYears } : null,
         registrationYear: regYear,
         affectedYears,
         currentOwnerSince,
         breakdown,
         lastAffectedYear,
-        dueYears: affectedYears.filter((y) => y <= curYear),
+        dueYears,
         upcomingYears: affectedYears.filter((y) => y > curYear),
         declaredValue,
         estimatedAnnual: estAnnual,

@@ -61,6 +61,11 @@ export interface AuctionInfo {
   fuente: string | null;
   /** Tipo derivado de las banderas: "siniestro" / "aseguradora" / "remate". */
   tipo: string | null;
+  /** CAUSA de la pérdida total cuando el portal la revela: "robo" (sustracción / recuperado) vs el
+   *  siniestro genérico (choque/daño) que NO podemos afirmar como robo. null = causa desconocida.
+   *  El motivo cambia el riesgo: un robo recuperado puede estar íntegro pero desmantelado o con
+   *  problemas de identidad (VIN/motor), no necesariamente "reconstruido de un choque". */
+  causa: 'robo' | null;
   /** URL de la boleta informativa SUNARP del lote (si está). */
   boletaUrl: string | null;
 }
@@ -308,6 +313,11 @@ export interface ImpuestoSatValidation {
   /** Años con cuotas PAGADAS y con cuotas PENDIENTES según el SAT. */
   paidYears: number[];
   pendingYears: number[];
+  /** Ejercicios ya DEVENGADOS (Capa A, años ya vencidos) que el SAT NO registra en absoluto —ni pagados
+   *  ni pendientes—. NO significa que se pagaron: es típico de un vehículo que salió del padrón del SAT
+   *  (baja o suspensión de la afectación por robo / pérdida total) o que nunca se declaró («omiso»).
+   *  Por eso un "sin deuda pendiente" con estos años presentes NO es un "al día" limpio. */
+  unemittedYears: number[];
   /** Multa por declaración extemporánea (ser "omiso"), si el SAT la registra — separada del impuesto (S/). */
   multaPaidTotal: number;
   multaPendingTotal: number;

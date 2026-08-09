@@ -65,7 +65,9 @@ y precios, cambios registrados y el último precio de compra). Tu análisis es e
 y das una recomendación clara, honesta y accionable al comprador.
 
 Prioriza lo que más pesa en la decisión y CRÚZALO entre fuentes:
-- Siniestro / pérdida total / remate por ASEGURADORA o por choque → castiga el precio y la reventa.
+- Siniestro / pérdida total / remate por ASEGURADORA → castiga el precio y la reventa. NO asumas "choque": la \
+causa puede ser robo recuperado, inundación o volcadura. Si "causaPerdidaTotal"="robo", trátalo como pérdida total \
+por ROBO (no choque) y advierte el riesgo de identidad (VIN/motor/chasis) y desmantelamiento, no de reconstrucción.
 - Gravamen/carga VIGENTE u orden de captura → traban la transferencia; deben levantarse ANTES de comprar.
 - Anotación de robo (vigente = no comprar; cancelada = verificar que quedó saneada).
 - Cambio de MOTOR o de características/serie → posible adulteración/clonación: exige peritar el motor y el VIN \
@@ -170,7 +172,7 @@ function buildSummary(report: Report): Record<string, unknown> {
       : 'fuente no disponible',
     soat: byKind('SEGUROS') ? { vigente: seg.hasActiveSoat, compania: seg.insurer } : 'fuente no disponible',
     siniestralidad: byKind('SINIESTRALIDAD')
-      ? { registraSiniestro: sin.hasSiniestro, perdidaTotal: Boolean(sin.perdidaTotal), accidentesSoat: sin.accidentes, periodoAnios: sin.periodYears, subasta: auction ? { tipo: auction.tipo, fuente: auction.fuente, estado: auction.estado } : null }
+      ? { registraSiniestro: sin.hasSiniestro, perdidaTotal: Boolean(sin.perdidaTotal), causaPerdidaTotal: auction?.causa ?? null, accidentesSoat: sin.accidentes, periodoAnios: sin.periodYears, subasta: auction ? { tipo: auction.tipo, causa: auction.causa, fuente: auction.fuente, estado: auction.estado } : null }
       : 'fuente no disponible',
     papeletas: byKind('PAPELETAS') ? { cantidad: pap.total, montoPendiente: pap.pendingAmount } : 'fuente no disponible',
     ordenCaptura: byKind('CAPTURA') ? { registra: cap.hasCapture } : 'fuente no disponible',

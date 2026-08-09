@@ -30,6 +30,7 @@ const PLATE = /^[A-Z0-9]{6}$/;
 const RX_ASEG = /\b(RIMAC|R[IÍ]MAC|PAC[IÍ]FICO|LA POSITIVA|MAPFRE|INTERSEGURO|QU[AÁ]LITAS|SEGUROS|ASEGURADORA|AVLA|COFACE)\b/i;
 const RX_REMATE = /\b(REMATE|SUBASTA|FINANCIERA|MARTILLER|ADJUDICACI|BANCO|LEASING|SANTANDER|ACCESO CREDITICIO|CAJA|EDPYME|CR[EÉ]DITO|VMC)\b/i;
 const RX_SINIESTRO = /\b(SINIESTR|P[EÉ]RDIDA TOTAL|RECUPERAD)/i;
+const RX_ROBO = /\b(ROBO|ROBAD[OA]|SUSTRACC|RECUPERAD[OA])\b/i;
 
 interface Att { originalFileName?: string; link?: string; createdAt?: string }
 interface Offer { id: number; createAt?: string; endDate?: string; statusId?: number; offerStatus?: { closed?: boolean }; auction?: { desc?: string }; offerDescription?: { offerDescription?: string }; product?: { shortDesc?: string; attachments?: Att[] } }
@@ -43,7 +44,7 @@ function plateFromAtts(atts?: Att[]): { placa: string; link?: string; createdAt?
   return null;
 }
 function classify(text: string): Record<string, boolean> {
-  return { aseguradora: RX_ASEG.test(text), remate: RX_REMATE.test(text), siniestro: RX_SINIESTRO.test(text) };
+  return { aseguradora: RX_ASEG.test(text), remate: RX_REMATE.test(text), siniestro: RX_SINIESTRO.test(text), robo: RX_ROBO.test(text) };
 }
 function parseDesc(s: string): Record<string, string | undefined> {
   const up = (s ?? '').toUpperCase();

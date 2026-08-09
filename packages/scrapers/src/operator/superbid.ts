@@ -47,6 +47,9 @@ const CHROME = findChrome();
 const RX_ASEG = /\b(RIMAC|R[IÍ]MAC|PAC[IÍ]FICO|LA POSITIVA|MAPFRE|INTERSEGURO|QU[AÁ]LITAS|SEGUROS|ASEGURADORA)\b/i;
 const RX_REMATE = /\b(REMATE|SUBASTA|FINANCIERA|MARTILLER[OA]|ADJUDICACI[OÓ]N|BANCO|LEASING)\b/i;
 const RX_SINIESTRO = /\b(SINIESTR|P[EÉ]RDIDA TOTAL|RECUPERAD)/i;
+// ROBO explícito: solo cuando el portal lo dice (nombre de subasta / título del lote). "RECUPERAD[O]"
+// casi siempre es un vehículo recuperado de robo. NO inferimos robo del choque ni al revés.
+const RX_ROBO = /\b(ROBO|ROBAD[OA]|SUSTRACC|RECUPERAD[OA])\b/i;
 
 export interface SuperbidOptions {
   brand?: string;
@@ -61,13 +64,13 @@ export interface SuperbidResult {
   subasta?: string;     // nombre de la subasta (ej. "23º SUBASTA RIMAC")
   loteUrl?: string;
   boletaUrl?: string;   // URL del PDF de la boleta SUNARP (anexo)
-  flags: { aseguradora: boolean; remate: boolean; siniestro: boolean };
+  flags: { aseguradora: boolean; remate: boolean; siniestro: boolean; robo: boolean };
   error?: string;
 }
 
 /** Normaliza un título de lote para clasificar la subasta cuando no hay nombre. */
-function clasificar(texto: string): { aseguradora: boolean; remate: boolean; siniestro: boolean } {
-  return { aseguradora: RX_ASEG.test(texto), remate: RX_REMATE.test(texto), siniestro: RX_SINIESTRO.test(texto) };
+function clasificar(texto: string): { aseguradora: boolean; remate: boolean; siniestro: boolean; robo: boolean } {
+  return { aseguradora: RX_ASEG.test(texto), remate: RX_REMATE.test(texto), siniestro: RX_SINIESTRO.test(texto), robo: RX_ROBO.test(texto) };
 }
 
 /**
@@ -81,7 +84,7 @@ export async function buscarSuperbid(plateRaw: string, opts: SuperbidOptions = {
   const brand = (opts.brand ?? '').toUpperCase();
   const model = (opts.model ?? '').toUpperCase().split(/\s+/)[0] ?? ''; // 1ª palabra del modelo
   const year = String(opts.year ?? '');
-  const out: SuperbidResult = { ok: false, found: false, flags: { aseguradora: false, remate: false, siniestro: false } };
+  const out: SuperbidResult = { ok: false, found: false, flags: { aseguradora: false, remate: false, siniestro: false, robo: false } };
   if (!CHROME) return { ...out, error: 'No encontré chrome.exe.' };
 
   let browser: Browser | null = null;

@@ -1362,17 +1362,25 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
   const pagadas = p.sat?.cuotas.filter((c) => c.estado === 'pagado') ?? [];
 
   // Capa B: validación REAL en el SAT de Lima (pago confirmado, por placa). Manda sobre el estimado de Capa A.
+  // Tres estados: (1) deuda pendiente real, (2) SIN deuda pendiente PERO faltan ejercicios devengados que el
+  // SAT no registra (hueco: baja/robo/pérdida total u omiso → "sin deuda" ≠ "pagado"), (3) al día limpio.
+  const satGap = p.sat?.unemittedYears ?? [];
+  const satHasGap = (p.sat?.pendingTotal ?? 0) <= 0 && satGap.length > 0;
   const satFound = p.sat && p.sat.found ? (
     <div className="rounded-xl border border-border bg-background p-3">
       <div className="flex items-center justify-between gap-2">
         <span className="font-body text-xs font-bold uppercase tracking-wide text-muted">Validado en SAT de Lima (pago real)</span>
-        <Badge tone={p.sat.pendingTotal > 0 ? 'danger' : 'success'} size="sm" icon={null}>
-          {p.sat.pendingTotal > 0 ? `${money(p.sat.pendingTotal)} pendiente` : 'al día'}
+        <Badge tone={p.sat.pendingTotal > 0 ? 'danger' : satHasGap ? 'warning' : 'success'} size="sm" icon={null}>
+          {p.sat.pendingTotal > 0 ? `${money(p.sat.pendingTotal)} pendiente` : satHasGap ? `sin cuotas ${satGap.join(', ')}` : 'al día'}
         </Badge>
       </div>
       {p.sat.pendingTotal > 0 ? (
         <StatusLine tone="danger" icon="error">
           Deuda REAL confirmada en el SAT: {money(p.sat.pendingTotal)} en {p.sat.pendingCount} cuota(s) — años {p.sat.pendingYears.join(', ')}. Es obligación PERSONAL de quien era propietario al 1 de enero de esos años (no del comprador): el impuesto vehicular no se transfiere con el vehículo. Aun así, exige que el vendedor la cancele antes de la transferencia — sin constancia de no adeudo no se formaliza, y una cobranza coactiva podría trabar un embargo sobre la partida.
+        </StatusLine>
+      ) : satHasGap ? (
+        <StatusLine tone="warning" icon="help">
+          El SAT no registra cuotas de {satGap.join(', ')} pese a que esos ejercicios ya estaban afectos y vencidos. «Sin deuda pendiente» aquí NO significa que se pagaron: lo más probable es que el vehículo saliera del padrón del SAT —baja o suspensión de la afectación por robo / pérdida total— o que nunca se declarara («omiso»). Verifica el estado de baja en SUNARP y pide al SAT una constancia de no adeudo por placa; si el vehículo se reinscribe o se re-empadrona para volver a circular, el SAT puede reactivar esos años (con multa por omiso).
         </StatusLine>
       ) : (
         <StatusLine tone="success" icon="verified">Impuesto vehicular al día en el SAT de Lima — sin deuda pendiente.</StatusLine>
@@ -1458,7 +1466,7 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
             Afecto al Impuesto al Patrimonio Vehicular hasta {p.lastAffectedYear} — ejercicios {p.affectedYears.join(', ')}
           </StatusLine>
           <StatusLine tone="neutral" icon="info">
-            Verifica que estas cuotas estén canceladas antes de comprar: las impagas las asume el nuevo dueño. Si el propietario nunca lo declaró en el SAT es «omiso» y la notaría bloqueará la transferencia hasta que regularice (años atrasados + multa).
+            Verifica que estas cuotas estén canceladas antes de comprar. El impuesto es obligación PERSONAL del propietario al 1 de enero de cada año —no se transfiere al comprador como una carga del vehículo—, pero la notaría exige la constancia de no adeudo para inscribir la transferencia: si el vendedor las dejó impagas (o nunca declaró el vehículo y quedó «omiso»), la transferencia se traba hasta que él regularice (años atrasados + multa).
           </StatusLine>
         </>
       ) : (
@@ -1778,7 +1786,7 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
       {perdidaTotal && (
         <StatusLine tone="danger" icon="car_crash">
           {h.flags.aseguradora
-            ? 'Pérdida total: una aseguradora figura como parte en el historial. El vehículo fue vendido por la aseguradora tras un siniestro (adjudicación / remate por choque) — muy probablemente reconstruido. Exige un peritaje serio y considera el fuerte castigo de precio y reventa.'
+            ? 'Pérdida total: una aseguradora figura como parte en el historial. El vehículo fue adjudicado/rematado por la aseguradora tras un siniestro. El motivo puede ser choque, robo recuperado, inundación o volcadura —la fuente no lo confirma—: exige el detalle a la aseguradora y un peritaje serio (identidad y estructura). El precio y la reventa quedan fuertemente castigados.'
             : 'Aparece un remate / casa de subastas en el historial: posible adjudicación por siniestro (pérdida total). Verifica el motivo del remate y exige un peritaje.'}
         </StatusLine>
       )}
@@ -1887,6 +1895,20 @@ function SiniestroBody({ section, onRetry }: { section: SectionResult; onRetry: 
     <div className="flex flex-col gap-3">
       {(() => {
         const periodo = s.periodYears === 1 ? 'el último año' : `los últimos ${s.periodYears} años`;
+        const esRobo = s.auction?.causa === 'robo';
+        if (s.perdidaTotal) {
+          // PÉRDIDA TOTAL: robo (sustracción/recuperado) vs siniestro genérico. NO afirmamos "choque"
+          // cuando no lo sabemos: el motivo puede ser robo, inundación, volcadura o daño estructural.
+          return esRobo ? (
+            <StatusLine tone="danger" icon="gpp_maybe">
+              Pérdida total por ROBO: el vehículo fue siniestrado por sustracción, la aseguradora lo indemnizó y ahora lo remata. No es un choque — puede estar carrozado e íntegro, pero un recuperado de robo suele venir desmantelado o con problemas de identidad (VIN, número de motor, numeración de chasis). Verifica la anotación de robo y su cancelación en SUNARP y haz peritar la identidad del vehículo antes de comprar.
+            </StatusLine>
+          ) : (
+            <StatusLine tone="danger" icon="car_crash">
+              Pérdida total: el vehículo fue rematado por una aseguradora tras un siniestro. La fuente no confirma el motivo (choque, robo recuperado, inundación o volcadura); exige el detalle del siniestro a la aseguradora y un peritaje serio. La reventa y el precio quedan fuertemente castigados.
+            </StatusLine>
+          );
+        }
         return s.hasSiniestro ? (
           <StatusLine tone="warning" icon="build">
             Registra siniestralidad en {periodo} — se recomienda una inspección exhaustiva para verificar reparaciones.
@@ -1931,7 +1953,7 @@ function SiniestroBody({ section, onRetry }: { section: SectionResult; onRetry: 
           <p className="flex items-center gap-1.5 font-body text-[13px] font-bold text-warning-fg">
             <Icon name="gavel" className="text-[16px]" />
             Apareció en subasta{s.auction.fuente ? ` (${s.auction.fuente})` : ''}
-            {s.auction.tipo ? ` · ${s.auction.tipo}` : ''}
+            {s.auction.causa === 'robo' ? ' · pérdida total por robo' : s.auction.tipo ? ` · ${s.auction.tipo}` : ''}
           </p>
           {s.auction.subasta && (
             <p className="mt-0.5 font-body text-[13px] text-foreground">
