@@ -158,6 +158,10 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     if (!browser) return { ...empty, sede: oficina, vehiculo, error: 'no conecté al Chrome SPRL' };
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
+    // Red de seguridad: cualquier op de locator SIN timeout explícito usaría el default de 30s de
+    // Playwright; en un Chrome contendido eso encadena cuelgues. Se acota a 20s (las esperas legítimas
+    // largas —goto, waitForResponse— pasan su propio timeout explícito, así que no las afecta).
+    page.setDefaultTimeout(20000);
 
     // ── [2] SPRL: login (la sesión ya debería estar asentada por el spawn temprano) ──
     // Login + detección de lockout centralizados en sprl-login.ts (MISMA lógica que reusan el
@@ -174,11 +178,19 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // destruye una sesión que estaba por aparecer (fue el bug de M4S859) → 45s de margen.
     // Comprueba PRIMERO (sesión caliente del keep-alive → sale al toque, sin gastar 1s); solo si
     // no está logueada entra al bucle de espera (re-auth OAuth puede tardar en VPS lento).
+    const tLogin = Date.now();
     let logged = await isLogged();
     for (let i = 0; i < 45 && !logged; i++) { await wait(1000); logged = await isLogged(); }
-    // Si sigue sin sesión (logout/expirada), login automático (autoLogin consigue el
-    // form solo vía force-clear; un re-login sobre sesión válida también es inocuo).
-    if (!logged) { log('sin sesión activa → login automático'); logged = await autoLogin(); }
+    // RECUPERACIÓN SUAVE antes del login destructivo: la sesión puede seguir VIVA pero la página quedó
+    // ilegible (Chrome trabado/contendido → isLogged devolvió '' por timeout). Una navegación LIMPIA a la
+    // base (sin borrar cookies) deja que el re-auth la recupere. Solo si tras esto sigue sin sesión se
+    // hace autoLogin (que SÍ limpia cookies y arriesga lockout por re-login en bucle).
+    if (!logged) {
+      log(`sin sesión activa tras ${Math.round((Date.now() - tLogin) / 1000)}s → intento recuperar la sesión (navegación limpia)`);
+      await page.goto(INGRESO, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+      for (let i = 0; i < 10 && !logged; i++) { await wait(1000); logged = await isLogged(); }
+    }
+    if (!logged) { log('sesión no recuperada → login automático'); logged = await autoLogin(); }
     if (!logged) {
       await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
       const err = blockReason === 'lockout'
@@ -220,9 +232,9 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         await rowBtns.nth(1).click().catch(() => {});
         // En vez de wait(4000) ciego: sale apenas aparecen los títulos (AAAA-NNNNNN) en el body (cap ~4s).
         const rxTit = /\b20\d{2}\s*-\s*\d{6,8}\b/;
-        for (let i = 0; i < 13; i++) { if (rxTit.test(await page.locator('body').innerText().catch(() => ''))) break; await wait(300); }
+        for (let i = 0; i < 13; i++) { if (rxTit.test(await page.locator('body').innerText({ timeout: 3000 }).catch(() => ''))) break; await wait(300); }
       }
-      const bodyText = await page.locator('body').innerText().catch(() => '');
+      const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
       // SUNARP marca la partida como "incompleta, no visualizada por usuario externo" (error DE SUNARP,
       // reportado a su zona registral). La partida existe pero no muestra los asientos → no es error nuestro.
       if (/partida incompleta|no visualizada por usuario externo/i.test(bodyText)) partidaIncompleta = true;

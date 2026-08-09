@@ -17,13 +17,20 @@ const RX_VIVA = /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/;
 const RX_LOCK = /super[oó].{0,15}n[uú]mero de intentos|vuelva m[aá]s tarde|intente.{0,12}m[aá]s tarde|demasiados intentos|cuenta.{0,25}bloqueada/i;
 const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
 
+// innerText SIN timeout usa el default de Playwright (30s). En un Chrome contendido (varios Chromes en
+// 1 vCPU) cada lectura puede agotar esos 30s; en el bucle de 45 chequeos de login eso son ~22 min de
+// cuelgue Y, peor, cada timeout devuelve '' → isLogged=false FALSO → force-clear de una sesión válida +
+// re-login → riesgo de lockout por IP. Acotamos a 4s: un body sano se lee en <100ms; si tarda más, el
+// Chrome está trabado, no solo lento → falla rápido en vez de colgar.
+const bodyText = (page: Page, timeout = 4000): Promise<string> => page.locator('body').innerText({ timeout }).catch(() => '');
+
 /** ¿La sesión SPRL está activa (logueada) en esta página? */
 export async function sprlIsLogged(page: Page): Promise<boolean> {
-  return RX_VIVA.test((await page.locator('body').innerText().catch(() => '')).toUpperCase());
+  return RX_VIVA.test((await bodyText(page)).toUpperCase());
 }
 /** ¿SUNARP muestra el mensaje de bloqueo por exceso de intentos? */
 export async function sprlIsLocked(page: Page): Promise<boolean> {
-  return RX_LOCK.test(await page.locator('body').innerText().catch(() => ''));
+  return RX_LOCK.test(await bodyText(page));
 }
 
 export interface SprlLoginOpts {
@@ -75,7 +82,7 @@ export async function sprlLogin(page: Page, ctx: BrowserContext, opts: SprlLogin
     //  2) Lockout: SUNARP muestra "se superó el número de intentos" en vez del form.
     //  3) Otra cosa (cambio de página / red): logueo qué sirvió para poder diagnosticar.
     if (await sprlIsLogged(page)) { log('sesión recuperada por re-auth (sin form de login)'); return { ok: true, locked: false }; }
-    const bodySnippet = (await page.locator('body').innerText().catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+    const bodySnippet = (await bodyText(page, 5000)).replace(/\s+/g, ' ').trim().slice(0, 200);
     const locked = await sprlIsLocked(page);
     if (locked) log('SPRL bloqueada por SUNARP (exceso de intentos) — sin form de login; no reintento');
     else log(`no apareció el form de login · url=${page.url()} · body="${bodySnippet}"`);
