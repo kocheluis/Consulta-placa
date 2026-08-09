@@ -3,6 +3,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { runHistorialRegistral } from './historial.js';
 import { sprlSlots, type SprlSlot } from './sprl-slots.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
+import { sprlLogin } from './sprl-login.js';
+import { sprlLoginEnabled, loginBackoffOk, recordLoginAttempt } from './sprl-login-backoff.js';
 
 /**
  * POOL de historial registral: corre el historial (SUNARP→SPRL→Síguelo) de MUCHAS placas
@@ -177,17 +179,32 @@ const RX_VIVA = /SALDO|BUSCAR SERVICIOS|CERRAR SESI|HOLA/;
  * keep-alive el puerto sale `perfil-en-uso` y lo salta). Espera CORTA (~8s): solo dispara el re-auth,
  * no bloquea un historial entrante. Nunca lanza: un heartbeat fallido no debe tumbar el pool.
  */
-async function warmSession(browser: Browser): Promise<string> {
+async function warmSession(browser: Browser, slot?: SprlSlot): Promise<string> {
   const ctx = browser.contexts()[0] ?? (await browser.newContext());
   const page = ctx.pages()[0] ?? (await ctx.newPage());
   await page.goto(PARTIDA_URL, { waitUntil: 'domcontentloaded', timeout: 45000 }).catch(() => {});
   let body = '';
   for (let i = 0; i < 8; i++) {
-    body = (await page.locator('body').innerText().catch(() => '')).toUpperCase();
+    // innerText ACOTADO (4s): sin timeout usaría el default de 30s → bajo contención el heartbeat se
+    // colgaría y daría falso CAIDA (mismo bug que ya se arregló en sprl-login.ts).
+    body = (await page.locator('body').innerText({ timeout: 4000 }).catch(() => '')).toUpperCase();
     if (RX_VIVA.test(body)) break;
     await sleep(1000);
   }
-  return RX_VIVA.test(body) ? 'VIVA' : (/PASSWORD|USERNAME|INGRESAR/.test(body) ? 'CAIDA' : 'DESCONOCIDO');
+  const caida = !RX_VIVA.test(body) && /PASSWORD|USERNAME|INGRESAR/.test(body);
+  let state = RX_VIVA.test(body) ? 'VIVA' : (caida ? 'CAIDA' : 'DESCONOCIDO');
+
+  // RE-LOGIN ACOTADO desde el heartbeat. En modo continuo el pool tiene el puerto tomado, así que el
+  // keep-alive SALTA el slot (portBusy) y NUNCA lo re-loguea → una sesión CAIDA (token SSO expirado, que
+  // un simple refresh no recupera) se queda muerta hasta que un reporte paga el login FRÍO — justo lo que
+  // dispara el lockout por IP. El motor es el ÚNICO que alcanza el slot, así que aquí re-sembramos la
+  // sesión: UN login por slot cada BACKOFF (compartido con el keep-alive vía sprl-login-backoff) → sin storm.
+  if (state === 'CAIDA' && slot?.user && slot?.pass && sprlLoginEnabled() && loginBackoffOk(slot.index)) {
+    recordLoginAttempt(slot.index);
+    const r = await sprlLogin(page, ctx, { user: slot.user, pass: slot.pass }).catch(() => ({ ok: false, locked: false }));
+    state = r.ok ? 'VIVA(re-login)' : (r.locked ? 'CAIDA(lockout)' : 'CAIDA(login-fail)');
+  }
+  return state;
 }
 
 /** setTimeout cancelable (para no dejar timers colgando que retrasen el apagado del motor). */
@@ -208,6 +225,7 @@ async function takeWarm(
   browser: Browser | null,
   everyMs: number,
   onBeat: (state: string) => void,
+  slot?: SprlSlot,
 ): Promise<HistorialTask | null> {
   if (!browser || everyMs <= 0) return take();
   const taskP = take();
@@ -221,7 +239,7 @@ async function takeWarm(
     // Chrome muerto (killEngineChrome/crash): no hay sesión que calentar → se reporta (visible en pm2)
     // y se sigue esperando; el worker lo REABRE (auto-sana) apenas llegue la próxima placa.
     if (!browser.isConnected()) { onBeat('DESCONECTADA (Chrome caído; se reabre con la próxima placa)'); continue; }
-    try { onBeat(await warmSession(browser)); } catch { onBeat('ERROR'); /* un heartbeat fallido nunca tumba el pool */ }
+    try { onBeat(await warmSession(browser, slot)); } catch { onBeat('ERROR'); /* un heartbeat fallido nunca tumba el pool */ }
   }
 }
 
@@ -301,7 +319,7 @@ export async function runHistorialPoolLive(
       try {
         for (;;) {
           // Espera la próxima tarea manteniendo CALIENTE la sesión (heartbeat) → evita el cold-login.
-          const task: HistorialTask | null = pending ?? (await takeWarm(take, browser, heartbeatMs, (st) => elog(`heartbeat slot${slot.index} sesión=${st}`)));
+          const task: HistorialTask | null = pending ?? (await takeWarm(take, browser, heartbeatMs, (st) => elog(`heartbeat slot${slot.index} sesión=${st}`), slot));
           pending = null;
           if (!task) return; // canal cerrado → apagado limpio (sale del worker por completo)
           // AUTO-SANA: si algo mató el Chrome parqueado (killEngineChrome de un cancel/manual, crash),
