@@ -94,6 +94,17 @@ describe('maskHistorialParties (dueños ANTERIORES en los asientos del historial
     expect(maskHistorialParties('Compra-Venta · US$ 21,290.00')).toBe('Compra-Venta · US$ 21,290.00');
     expect(maskHistorialParties(null)).toBeNull();
   });
+
+  it('sociedad conyugal separada por " · ": enmascara AMBOS cónyuges (apellidos + DNI)', () => {
+    const raw = 'SOCIEDAD CONYUGAL · UBIDIA CASALLO DE VELAZCO HERMENEGILDA AIDE DNI 08712345 Casado · VELAZCO DONAYRE MARCOS DNI 08767890 Casado';
+    const out = maskHistorialParties(raw)!;
+    expect(out).toContain('SOCIEDAD CONYUGAL'); // etiqueta visible (contexto)
+    expect(out).not.toMatch(/CASALLO|DONAYRE/); // apellidos de ambos enmascarados
+    expect(out).not.toMatch(/08712345|08767890/); // ningún DNI completo
+    expect(out).toContain('087****'); // documentos recortados
+    expect(out).toContain('AIDE'); // nombre de pila visible
+    expect(out).toContain('MARCOS'); // nombre de pila visible
+  });
 });
 
 describe('maskDoc (documento del titular)', () => {

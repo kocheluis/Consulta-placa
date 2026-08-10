@@ -278,7 +278,25 @@ const BXP_GARANTIA_PERSONA =
   'ACREEDOR: MITSUI AUTO FINANCE PERU S.A. RUC 20512334789 PARTIDA 12345678 ________ ' +
   'Título 2023-3635848 Fecha 15/12/2023 12:30:30 Fecha de Asiento 20/12/2023';
 
+const CKQ_SOC_CONYUGAL = // Primera Inscripción con SOCIEDAD CONYUGAL (2 cónyuges) → un cónyuge por línea
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Inscripción de Vehículo 2024 - 00324579 Título Nro Partida 55200100 Placa : CKQ368 ' +
+  'PERSONA NATURAL SOCIEDAD CONYUGAL UBIDIA CASALLO DE VELAZCO HERMENEGILDA AIDE DNI 08712345 Casado ' +
+  'VELAZCO DONAYRE MARCOS DNI 08767890 Casado ' +
+  'Acto Primera Inscripción de Dominio Precio US$ 64,990.00 Forma de Pago CONTADO ' +
+  'Título 2024-324579 Fecha 01/02/2024 16:13:26 Monto Cobrado S/ 89.00 Fecha Asiento 05/02/2024';
+
 describe('parseAsiento · robo y garantía (identificación de campos, BXP793)', () => {
+  it('sociedad conyugal: cada cónyuge queda en su propio campo (no todos apiñados en una línea)', () => {
+    const r = parseAsiento(CKQ_SOC_CONYUGAL);
+    const segs = r.participantes.split(' · ');
+    expect(segs[0]).toBe('SOCIEDAD CONYUGAL');
+    expect(segs).toContain('UBIDIA CASALLO DE VELAZCO HERMENEGILDA AIDE DNI 08712345 Casado');
+    expect(segs).toContain('VELAZCO DONAYRE MARCOS DNI 08767890 Casado');
+    expect(segs).toHaveLength(3);
+    expect(r.acto).toBe('Primera Inscripción de Dominio');
+  });
+
   it('robo: acto = "Anotación de Robo"; el boletín PNP va en observación, no en la cabecera', () => {
     const r = parseAsiento(BXP_ROBO);
     expect(r.acto).toBe('Anotación de Robo');

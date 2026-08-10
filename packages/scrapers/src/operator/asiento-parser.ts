@@ -195,6 +195,29 @@ function formatParte(label: string, raw: string): string {
   return parts.join(' · ');
 }
 
+/**
+ * Separa un bloque de participantes con VARIAS personas (copropiedad / SOCIEDAD CONYUGAL) en campos
+ * unidos por " · " → el reporte muestra cada persona en su línea (antes: todos apiñados en una).
+ * Solo actúa con ≥2 documentos (2+ personas); con 0-1 deja el texto igual. Mantiene "NOMBRE … DNI num"
+ * JUNTOS a propósito: el enmascarado de PII ancla a ese par, así que separarlos lo rompería.
+ */
+function splitPersonas(raw: string): string {
+  const s = (raw || '').replace(/\s+/g, ' ').trim();
+  if ((s.match(/\b(?:DNI|C\.?E\.?|RUC)\b/gi) ?? []).length < 2) return s; // 0-1 persona → sin cambios
+  let body = s.replace(/^PERSONA\s+(?:NATURAL|JUR[IÍ]DICA)\s+/i, '');
+  let prefix = '';
+  const soc = body.match(/^(SOCIEDAD\s+CONYUGAL|SUCESI[OÓ]N(?:\s+INTESTADA)?)\s+/i);
+  if (soc) { prefix = soc[1]!.toUpperCase().replace(/\s+/g, ' '); body = body.slice(soc[0]!.length); }
+  // Separador tras "DNI/CE/RUC num [estado civil]" cuando le sigue OTRO nombre (nueva persona); si tras
+  // el estado civil viene el fin (última persona), no separa.
+  const withSep = body.replace(
+    /((?:DNI|C\.?E\.?|RUC)\s*\d{6,12}\s*(?:Casad[oa]|Solter[oa]|Viud[oa]|Divorciad[oa]|Convivient\w*)?)\s+(?=[A-ZÁÉÍÓÚÑ][A-Za-zÁÉÍÓÚÑáéíóúñ]+\s)/gi,
+    '$1 · ',
+  );
+  const segs = withSep.split(' · ').map((p) => p.trim()).filter(Boolean);
+  return [prefix, ...segs].filter(Boolean).join(' · ');
+}
+
 export function parseAsiento(textRaw: string): AsientoRecord {
   const text = textRaw
     .replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/gi, ' ')
@@ -235,7 +258,9 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   const fechaAsiento = g(/Fecha (?:de )?Asiento\s*:?\s*(\d{2}\/\d{2}\/\d{4})/i);
   // Participantes: entre "Placa" y "Acto" (compraventa/inscripción); si viene vacío (garantía/
   // cancelación), se arma con DEUDOR/ACREEDOR (soporta ":" y "-" como separador).
-  let participantes = normalizeActo(text.match(/Placa\s*:?\s*[A-Z0-9]{5,8}\s+(.+?)\s+Acto\s+/)?.[1] ?? '');
+  // splitPersonas: si el acto tiene VARIOS propietarios (copropiedad / SOCIEDAD CONYUGAL), los separa
+  // en campos (" · ") para mostrarlos en líneas distintas; con 1 solo deja el texto igual.
+  let participantes = splitPersonas(normalizeActo(text.match(/Placa\s*:?\s*[A-Z0-9]{5,8}\s+(.+?)\s+Acto\s+/)?.[1] ?? ''));
   if (!participantes || /^[.\s_]*$/.test(participantes)) {
     const deu = text.match(/DEUDOR[^:\-]*[:\-]\s*(?:PERSONA \w+\s+)?([A-ZÁÉÍÓÚÑ0-9][^_]+?)\s+(?:RUC|PARTIDA|ACREEDOR|_)/);
     const acr = text.match(/ACREEDOR[^:\-]*[:\-]\s*(?:PERSONA \w+\s+)?([A-ZÁÉÍÓÚÑ0-9][^_]+?)\s+(?:RUC|PARTIDA|REPRESENTANTE|_)/);
