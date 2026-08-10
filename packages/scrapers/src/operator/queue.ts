@@ -50,6 +50,9 @@ export interface PedidoQueue {
   setDone(id: Pedido['id'], reportPath?: string): Promise<void>;
   setError(id: Pedido['id'], msg: string): Promise<void>;
   setDelivered(id: Pedido['id']): Promise<void>;
+  /** ¿El MISMO usuario ya tiene un pedido listo/entregado de esta placa? (para saltar el delay de reúso —
+   *  su propio reporte se muestra al instante). `excludeId` = el pedido actual. */
+  hasDeliveredForUser(userId: string, placa: string, excludeId: Pedido['id']): Promise<boolean>;
 }
 
 const now = () => new Date().toISOString();
@@ -71,6 +74,8 @@ const sqliteQueue: PedidoQueue = {
   async setDone(id, reportPath) { pedidoSetDone(Number(id), reportPath); },
   async setError(id, msg) { pedidoSetError(Number(id), msg); },
   async setDelivered(id) { pedidoSetDelivered(Number(id)); },
+  // Dev/SQLite: la web (cupo por usuario) corre en Supabase, así que aquí no aplica → false (sin delay).
+  async hasDeliveredForUser() { return false; },
 };
 
 // ── Adaptador Supabase (PostgREST) ─────────────────────────────────────────────
@@ -134,6 +139,14 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     async setDone(id, reportPath) { await patch(id, { estado: 'listo', report_path: reportPath ?? null, finished_at: now() }); },
     async setError(id, msg) { await patch(id, { estado: 'error', error: msg, finished_at: now() }); },
     async setDelivered(id) { await patch(id, { estado: 'entregado' }); },
+    async hasDeliveredForUser(userId, placa, excludeId) {
+      // ¿El mismo user_id ya tiene un pedido listo/entregado de esta placa (distinto del actual)?
+      const q = `user_id=eq.${encodeURIComponent(userId)}&placa=eq.${encodeURIComponent(placa)}`
+        + `&estado=in.(listo,entregado)&id=neq.${encodeURIComponent(String(excludeId))}&limit=1`;
+      const r = await fetch(`${base}?${q}`, { headers });
+      if (!r.ok) return false;
+      return ((await r.json()) as unknown[]).length > 0;
+    },
   };
 }
 

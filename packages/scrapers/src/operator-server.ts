@@ -107,6 +107,17 @@ const activeAuto = (): string[] => (autoSourcesOverride && autoSourcesOverride.l
 let memoryEnabled = metaGet<boolean>('memory_enabled') ?? false;
 let memoryTtlH = Math.max(1, Number(metaGet<number>('memory_ttl_hours') ?? 24));
 const reuseResults = new Map<string, OperatorSourceResult[]>(); // job.id → fuentes reusadas a fusionar en finalizeJob
+// Delay MÍNIMO antes de entregar un reporte REUSADO por memoria a un CLIENTE (perceived-work: un reporte
+// que aparece al instante desde caché de otro usuario se ve "regalado"). Se SALTA si es un pedido del
+// operador (consola) o si la placa ya está en el historial del mismo usuario (es su propio reporte).
+const MEMORY_MIN_DELAY_MS = Math.max(0, Number(process.env.MEMORY_MIN_DELAY_MS ?? 60_000));
+const reuseDelayByJob = new Map<string, { at: number; ms: number }>(); // job.id → padding pendiente para el setDone
+const sleep = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms));
+// Fuentes que NO se re-corren en el reúso parcial: fallan SIEMPRE en el VPS (relay GNV bloqueado por red)
+// → re-intentarlas solo gasta tiempo. Se conserva su resultado previo tal cual (Opción B). Configurable.
+const MEMORY_NO_RERUN = new Set(
+  (process.env.MEMORY_NO_RERUN ?? 'fise-gnv,infogas-gnv').split(',').map((s) => s.trim().toLowerCase().replace(/_/g, '-')).filter(Boolean),
+);
 let engineBusy = false; // un solo reporte a la vez (lo que aguanta el VPS); serializa auto + manual
 let currentAutoJobId: string | null = null; // job del pedido que el motor automático atiende ahora
 
@@ -339,10 +350,29 @@ async function planMemoryReuse(placa: string, sources: string[]): Promise<{ reru
   const ageMs = Date.now() - gen;
   if (!gen || !(ageMs >= 0 && ageMs < memoryTtlH * 3600000)) return null; // sin reporte o fuera de la ventana
   const expSet = new Set(sources.map(normSrc));
-  const reuse = (raw.results ?? []).filter((r) => (r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO') && expSet.has(normSrc(r.source)));
+  // reuse = fuentes BUENAS (ENCONTRADO/SIN_REGISTRO) + las "no re-correr" (relay GNV) tal cual estén,
+  // aunque hayan fallado: en el VPS fallan siempre → re-intentarlas solo demora; se conserva su previo.
+  const reuse = (raw.results ?? []).filter((r) => {
+    const n = normSrc(r.source);
+    if (!expSet.has(n)) return false;
+    return r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO' || MEMORY_NO_RERUN.has(n);
+  });
   const goodSet = new Set(reuse.map((r) => normSrc(r.source)));
-  const rerun = sources.filter((s) => !goodSet.has(normSrc(s))); // las que fallaron o faltan
+  const rerun = sources.filter((s) => !goodSet.has(normSrc(s))); // las que fallaron o faltan (excepto no-rerun)
   return { rerun, reuse };
+}
+
+/**
+ * Delay mínimo antes de ENTREGAR un reporte reusado por memoria. 0 = sin espera (entrega directa):
+ *  - pedido del OPERADOR (consola): el operador quiere velocidad, no perceived-work;
+ *  - la placa YA está en el historial de consultas del MISMO usuario → es su propio reporte → instantáneo;
+ *  en cualquier otro caso (cliente que ve por 1ª vez una placa cacheada de otro) → MEMORY_MIN_DELAY_MS.
+ */
+async function reuseDelayFor(p: Pedido): Promise<number> {
+  if (MEMORY_MIN_DELAY_MS <= 0) return 0;
+  if ((p.origin ?? 'servicio') === 'operador') return 0;
+  if (p.userId && (await queue.hasDeliveredForUser(p.userId, p.placa, p.id).catch(() => false))) return 0;
+  return MEMORY_MIN_DELAY_MS;
 }
 
 /**
@@ -468,6 +498,14 @@ async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
     const snap = String(job.id).replace(/[^a-zA-Z0-9_-]/g, '');
     if (snap) await writeFile(join(plateDir(p.placa), `reporte-${snap}.json`), payload, 'utf8').catch(() => {});
   } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
+  // MEMORIA: si fue un reúso parcial de un reporte NO propio del cliente, respeta el mínimo (~1 min) antes
+  // de entregarlo. Si el re-correr ya tardó ≥ el mínimo, no espera nada.
+  const rd = reuseDelayByJob.get(job.id);
+  if (rd) {
+    reuseDelayByJob.delete(job.id);
+    const pad = rd.ms - (Date.now() - rd.at);
+    if (pad > 0) { console.log(`[memoria] ${p.placa}: espera ${Math.round(pad / 1000)}s extra (mínimo de reúso)`); await sleep(pad); }
+  }
   await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
   await notifyReady(p, job.tier);
 }
@@ -587,15 +625,22 @@ function startContinuousRunner(): void {
         const fullSources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
         let jobSources: string[] = [...fullSources];
         let reuse: OperatorSourceResult[] = [];
+        let reuseJobDelay = 0; // padding a respetar en finalizeJob si el reúso parcial termina en <1 min
         if (memoryEnabled && !force) {
           // MEMORIA ON y NO es "Re-generar": reúso parcial por fuente (solo re-corre las fallidas/faltantes).
           // force ⇒ el operador pidió datos FRESCOS explícitamente → salta también la memoria (antes la
           // rama de memoria ignoraba force y "Re-generar" devolvía fuentes cacheadas dentro del TTL).
           const plan = await planMemoryReuse(p.placa, fullSources).catch(() => null);
           if (plan) {
-            if (!plan.rerun.length) { console.log(`[memoria] ${p.placa}: todo fresco (<${memoryTtlH}h) → reúso completo, 0 re-corridas`); await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue; }
-            jobSources = plan.rerun; reuse = plan.reuse;
-            console.log(`[memoria] ${p.placa}: reuso ${reuse.length} · re-corro [${jobSources.join(',')}]`);
+            const reuseDelay = await reuseDelayFor(p).catch(() => 0);
+            if (!plan.rerun.length) {
+              // Reúso COMPLETO: entrega directa, pero para un cliente respeta el mínimo (perceived-work).
+              if (reuseDelay > 0) { console.log(`[memoria] ${p.placa}: reúso completo → espera ${Math.round(reuseDelay / 1000)}s (reporte no propio del usuario)`); await sleep(reuseDelay); }
+              console.log(`[memoria] ${p.placa}: todo fresco (<${memoryTtlH}h) → reúso completo, 0 re-corridas`);
+              await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue;
+            }
+            jobSources = plan.rerun; reuse = plan.reuse; reuseJobDelay = reuseDelay;
+            console.log(`[memoria] ${p.placa}: reuso ${reuse.length} · re-corro [${jobSources.join(',')}]${reuseDelay > 0 ? ` · min ${Math.round(reuseDelay / 1000)}s` : ''}`);
           }
         } else if (!force) {
           try {
@@ -604,6 +649,7 @@ function startContinuousRunner(): void {
         }
         const job: PipelineJob = { id: String(p.id), plate: p.placa, tier, sources: [...jobSources], outDir: plateDir(p.placa), results: [], percent: 0, done: false };
         if (reuse.length) reuseResults.set(job.id, reuse);
+        if (reuseJobDelay > 0) reuseDelayByJob.set(job.id, { at: Date.now(), ms: reuseJobDelay });
         await mkdir(plateDir(p.placa), { recursive: true }).catch(() => {});
         contPedidoById.set(job.id, p);
         contJobs.set(job.id, job);
@@ -837,7 +883,11 @@ const server = createServer(async (req, res) => {
       // Marca de origen: los pedidos creados en la consola son del OPERADOR (los de la web quedan
       // en 'servicio' por el DEFAULT de la columna). Permite distinguirlos en el historial.
       const p = await queue.enqueue({ placa, tier, whatsapp: String(body.whatsapp ?? '') || undefined, email: String(body.email ?? '') || undefined, origin: 'operador' });
-      forceReprocess.add(String(p.id)); // pedidos de la consola (incl. "Re-generar") → datos FRESCOS, sin reúso
+      // "Nuevo pedido" de la consola fuerza datos FRESCOS SOLO si la memoria está OFF (así el operador ve
+      // fresco por defecto). Con 🧠 Memoria ON, respeta el reúso —era el bug: la consola SIEMPRE forzaba,
+      // así que la memoria nunca aplicaba a los pedidos del operador y "recalculaba todo". "Re-generar"
+      // (requeue) sí sigue forzando siempre (regeneración explícita = fresco sí o sí).
+      if (!memoryEnabled) forceReprocess.add(String(p.id));
       console.log(`[cola] pedido encolado ${p.id} · ${p.placa} · tier=${tier} · origen=operador`);
       return sendJson(res, 200, p);
     }
