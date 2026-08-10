@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync } from 'node:fs';
+import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
@@ -94,7 +94,10 @@ async function renderAsientoShot(ctx: BrowserContext, bytes: number[], pngPath: 
     // (solo la página del asiento). Validado con probe local.
     await pg.goto(`${pathToFileURL(pdfPath).href}#toolbar=0&navpanes=0&view=FitH`, { waitUntil: 'load', timeout: 20000 }).catch(() => {});
     await pg.waitForTimeout(1800); // deja renderizar el visor de PDF
-    await pg.screenshot({ path: pngPath }).catch(() => {});
+    const ok = await pg.screenshot({ path: pngPath }).then(() => true).catch(() => false);
+    // "solo captura": si la imagen salió, se borra el PDF temporal; si el render falló, se DEJA como
+    // respaldo (al menos queda el documento en disco).
+    if (ok) { try { unlinkSync(pdfPath); } catch { /* ya no está */ } }
   } finally { await pg.close().catch(() => {}); }
 }
 
