@@ -153,11 +153,16 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     log(`sede=${oficina}`);
   };
 
+  // Referencia a la página para el screenshot de diagnóstico del `catch` (el `page` de abajo es
+  // block-scoped al try → no llega al catch). En el pool continuo este camino de error no guardaba
+  // NI log NI captura → el historial fallaba "en silencio" (el .log terminaba en "Síguelo…").
+  let errPage: Page | null = null;
   try {
     for (let i = 0; i < 20 && !browser; i++) { await wait(700); browser = await cdp().catch(() => null); }
     if (!browser) return { ...empty, sede: oficina, vehiculo, error: 'no conecté al Chrome SPRL' };
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
+    errPage = page;
     // Red de seguridad: cualquier op de locator SIN timeout explícito usaría el default de 30s de
     // Playwright; en un Chrome contendido eso encadena cuelgues. Se acota a 20s (las esperas legítimas
     // largas —goto, waitForResponse— pasan su propio timeout explícito, así que no las afecta).
@@ -338,10 +343,14 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         const batch = valid.slice(i, i + CONC);
         const out = await Promise.all(batch.map(async ([aT, nT], k) => {
           await wait(k * 1800);
+          // Log ANTES de abrir la pestaña: si `ctx.newPage()` revienta (Chrome compartido cerrado a mitad
+          // de Síguelo → "Target closed"), este es el último rastro y señala en qué título murió.
+          log(`Síguelo ${aT}-${nT}…`);
           const pg = await ctx.newPage();
           try {
             let text = await searchSiguelo(pg, aT, nT).catch(() => null);
             if (!text) text = await searchSiguelo(pg, aT, nT).catch(() => null);
+            log(`  ${aT}-${nT}: ${text ? 'asiento OK' : 'sin asiento'}`);
             return { tit: `${aT}-${nT}`, text };
           }
           finally { await pg.close().catch(() => {}); }
@@ -378,7 +387,16 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     };
     return { ok: records.length > 0, sede: oficina, vehiculo, titulos, timeline, caracteristicas, flags };
   } catch (e) {
-    return { ...empty, sede: oficina, vehiculo, error: (e as Error).message };
+    const msg = (e as Error).message;
+    // LOG del error (antes solo se devolvía en `error` → invisible en el .log de la fuente, sobre todo en
+    // el pool continuo). Con esto la causa real aparece en "Logs por fuente → historial".
+    log(`historial ERROR: ${msg}`);
+    // Captura de diagnóstico best-effort. En la ruta single/lote `shotPath` = <outDir>/historial.png → el
+    // panel "Capturas por fuente" la muestra. Si el Chrome ya murió (p. ej. "Target closed") la captura no
+    // sale, pero el mensaje de arriba YA quedó en el log.
+    const errShot = opts.shotPath ?? `${PROFILE}/_historial-error.png`;
+    if (errPage) { const ok = await errPage.screenshot({ path: errShot, fullPage: true }).then(() => true).catch(() => false); if (ok) log(`captura de error → ${errShot}`); }
+    return { ...empty, sede: oficina, vehiculo, error: msg };
   } finally {
     // Solo cerramos lo que ESTA función LANZÓ: si reusamos un Chrome caliente (connect-first) o nos lo
     // pasó el caller (modo lote/pool), la sesión queda viva. Cerrarlo mataría el keep-alive / el pool.

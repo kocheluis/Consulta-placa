@@ -521,7 +521,9 @@ export function mapHistorial(r: HistorialResult, ms: number, shotPath?: string):
   if (r.partidaIncompleta) {
     return { ...base, status: 'SIN_REGISTRO', summary: 'SUNARP no expone el histórico de esta placa (partida incompleta); solo propietario actual', data: { partidaIncompleta: true, sede: r.sede, vehiculo: r.vehiculo, titulos: [], timeline: [], flags: r.flags }, ...(shotPath ? { screenshot: shotPath } : {}), ms };
   }
-  return { ...base, status: 'ERROR', summary: r.error ?? 'No se obtuvo historial', ms };
+  // Al FALLAR, si el runner alcanzó a guardar la captura de diagnóstico en <outDir>/historial.png, se
+  // adjunta para que salga en "Capturas por fuente" (antes el caso ERROR nunca traía screenshot).
+  return { ...base, status: 'ERROR', summary: r.error ?? 'No se obtuvo historial', ...(shotPath ? { screenshot: shotPath } : {}), ms };
 }
 
 export interface BatchLaneOpts {

@@ -1,5 +1,6 @@
 import { chromium, type Browser } from 'playwright';
 import { spawn, type ChildProcess } from 'node:child_process';
+import { join } from 'node:path';
 import { runHistorialRegistral } from './historial.js';
 import { sprlSlots, type SprlSlot } from './sprl-slots.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
@@ -45,7 +46,7 @@ export interface HistorialPoolOpts {
   /** Abre el Chrome CDP de un slot (inyectable para tests). */
   openBrowser?: (slot: SprlSlot) => Promise<{ browser: Browser | null; close: () => Promise<void> }>;
   /** Ejecuta el historial de UNA placa reusando el browser del slot (inyectable para tests). */
-  runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void) => Promise<HistorialResult>;
+  runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void, outDir?: string) => Promise<HistorialResult>;
 }
 
 /**
@@ -85,11 +86,15 @@ async function openSprl(slot: SprlSlot): Promise<{ browser: Browser | null; clos
 const failResult = (error: string): HistorialResult =>
   ({ ok: false, sede: '', vehiculo: null, titulos: [], timeline: [], flags: { aseguradora: false, remate: false, financiera: false, gravamen: false, embargo: false }, error }) as HistorialResult;
 
-const defaultRunOne = (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void): Promise<HistorialResult> =>
+const defaultRunOne = (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void, outDir?: string): Promise<HistorialResult> =>
   runHistorialRegistral(plate, {
     browser: browser ?? undefined, sprlUser: slot.user, sprlPass: slot.pass, port: slot.port, profile: slot.profile, log,
     // Síguelo en paralelo (conc. 2 por placa) si HISTORIAL_PARALLEL=1 → ~2× en autos con varios títulos.
     parallel: process.env.HISTORIAL_PARALLEL === '1',
+    // `shotPath` en la carpeta del reporte (no en el perfil): la captura de SUNARP (éxito) y la de error
+    // caen en <outDir>/historial.png → el panel "Capturas por fuente" la muestra. Antes el pool no lo
+    // pasaba y el historial nunca tenía captura (menos aún al fallar).
+    ...(outDir ? { shotPath: join(outDir, 'historial.png') } : {}),
   });
 
 /**
@@ -166,7 +171,7 @@ export interface HistorialPoolLiveOpts {
    *  `HISTORIAL_LOCKOUT_COOLDOWN_MS` o 30 min. */
   cooldownMs?: number;
   openBrowser?: (slot: SprlSlot) => Promise<{ browser: Browser | null; close: () => Promise<void> }>;
-  runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void) => Promise<HistorialResult>;
+  runOne?: (plate: string, slot: SprlSlot, browser: Browser | null, log: (m: string) => void, outDir?: string) => Promise<HistorialResult>;
 }
 
 const PARTIDA_URL = 'https://sprl.sunarp.gob.pe/sprl/main/partidas-base-grafica-registral';
@@ -336,7 +341,7 @@ export async function runHistorialPoolLive(
           const plog = (m: string): void => { logs.push(m); slog(slot.index, m); opts.onLog?.(task, m); };
           const t0 = Date.now();
           let result: HistorialResult;
-          try { result = await runOne(task.plate, slot, browser, plog); }
+          try { result = await runOne(task.plate, slot, browser, plog, task.outDir); }
           catch (e) { result = failResult((e as Error).message); }
           if ((result as { locked?: boolean }).locked) {
             slog(slot.index, `slot ${slot.index} BLOQUEADO por IP → failover al siguiente slot (reintenta ${task.plate})`);
