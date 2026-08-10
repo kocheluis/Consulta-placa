@@ -1379,9 +1379,22 @@ function ImpuestoVehicularBody({ section, onRetry }: { section: SectionResult; o
           Deuda REAL confirmada en el SAT: {money(p.sat.pendingTotal)} en {p.sat.pendingCount} cuota(s) — años {p.sat.pendingYears.join(', ')}. Es obligación PERSONAL de quien era propietario al 1 de enero de esos años (no del comprador): el impuesto vehicular no se transfiere con el vehículo. Aun así, exige que el vendedor la cancele antes de la transferencia — sin constancia de no adeudo no se formaliza, y una cobranza coactiva podría trabar un embargo sobre la partida.
         </StatusLine>
       ) : satHasGap ? (
-        <StatusLine tone="warning" icon="help">
-          El SAT no registra cuotas de {satGap.join(', ')} pese a que esos ejercicios ya estaban afectos y vencidos. «Sin deuda pendiente» aquí NO significa que se pagaron: lo más probable es que el vehículo saliera del padrón del SAT —baja o suspensión de la afectación por robo / pérdida total— o que nunca se declarara («omiso»). Verifica el estado de baja en SUNARP y pide al SAT una constancia de no adeudo por placa; si el vehículo se reinscribe o se re-empadrona para volver a circular, el SAT puede reactivar esos años (con multa por omiso).
-        </StatusLine>
+        <>
+          <StatusLine tone="warning" icon="help">
+            El SAT no registra cuotas de {satGap.join(', ')} aunque esos ejercicios ya estaban afectos y vencidos. «Sin deuda pendiente» NO prueba que se pagaron — hay que confirmar cuál de estos dos escenarios aplica:
+          </StatusLine>
+          <div className="rounded-lg border border-border bg-surface p-3 text-[13px] leading-snug text-foreground">
+            <p className="mb-2">
+              <strong className="text-success">Descargo por robo / pérdida total (lo más probable en este caso):</strong> el dueño o la aseguradora presentó al SAT la declaración jurada de robo —con la denuncia policial y la anotación del robo en la partida SUNARP— y el vehículo salió del padrón desde el año siguiente. Es correcto: esos ejercicios ya no se emiten, no hay deuda que pagar.
+            </p>
+            <p>
+              <strong className="text-danger">Omiso (nunca se declaró):</strong> el vehículo no llegó a registrarse en el SAT. La deuda existe aunque no figure, y la notaría trabará la transferencia hasta que el propietario regularice (años atrasados + multa).
+            </p>
+          </div>
+          <StatusLine tone="neutral" icon="info">
+            Para distinguirlos y protegerte: (1) pide al SAT de Lima la <strong>constancia de no adeudo por placa</strong> (acredita la placa sin deuda al momento de emisión); (2) verifica en SUNARP la anotación de robo y su <strong>cancelación por recupero</strong>; (3) el impuesto lo debe el propietario al 1 de enero de cada año —no eres contribuyente de años anteriores a tu compra—, así que conserva el acta de adjudicación como descargo si el SAT intentara cobrártelos al reinscribir.{p.lastAffectedYear ? ` Además, este vehículo queda inafecto desde ${p.lastAffectedYear + 1} (cumplidos los 3 años del impuesto).` : ''}
+          </StatusLine>
+        </>
       ) : (
         <StatusLine tone="success" icon="verified">Impuesto vehicular al día en el SAT de Lima — sin deuda pendiente.</StatusLine>
       )}
