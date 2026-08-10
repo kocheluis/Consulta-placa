@@ -323,10 +323,14 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     const records: AsientoRecord[] = [];
     const procesar = (text: string | null, tit: string) => {
       if (!text) return;
-      // Depuración (SIGUELO_DEBUG=1): vuelca el texto crudo COMPLETO del asiento para afinar la
-      // extracción de características (N° de Versión, carrocería, cilindrada…) de "Identidad específica".
-      // Sin recorte: las características de la Primera Inscripción pueden ir más allá de los 3000 chars.
-      if (process.env.SIGUELO_DEBUG) log(`  [DEBUG asiento ${tit}] ${text} [/DEBUG]`);
+      // Depuración (SIGUELO_DEBUG=1): vuelca SOLO el texto legible del asiento para afinar el parser.
+      // `pdfBytesToText` deja una cola de bytes de la imagen del PDF (basura `ÿÿÿ`/`�`); el `�` (U+FFFD)
+      // aparece SOLO en esa cola → cortamos ahí, quitamos lo no imprimible y acotamos. Antes volcaba
+      // decenas de miles de chars binarios al log (ilegible). En prod, apagar SIGUELO_DEBUG lo elimina.
+      if (process.env.SIGUELO_DEBUG) {
+        const clean = text.split('�')[0]!.replace(/[^\t\x20-\x7EÀ-ſ°º]/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 1600);
+        log(`  [DEBUG asiento ${tit}] ${clean} [/DEBUG]`);
+      }
       // Un título puede traer VARIOS asientos (p. ej. Compra-Venta + Cancelación de Afectación) → todos.
       for (const rec of parseAsientos(text)) {
         records.push(rec);

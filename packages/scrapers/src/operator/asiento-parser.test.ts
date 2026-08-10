@@ -258,6 +258,47 @@ describe('agruparAsientos (un asiento = un título, con N acciones)', () => {
   });
 });
 
+// ── Datos REALES de BXP793: (1) Anotación de Robo → el acto debe ser "Anotación de Robo" y el boletín
+// de la PNP va como OBSERVACIÓN (antes se pegaba al nombre del acto → cabecera larguísima); (2) garantía
+// con deudor PERSONA → los campos (nombre+DNI, estado civil, dirección) se separan por " · ".
+const BXP_ROBO =
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Anotación de Embargo 2025 - 03019811 Título Nro Partida 55103923 Placa : BXP793 ________ ' +
+  'Acto Anotación de Robo Observación POR BOLETIN DE VEHICULOS ROBADOS Nº 1421-2025-COMOPPOL-DIRNOS PNP- ' +
+  'DIRTTSV/DIVPIRV-UNITCE.,DEL 06 DE OCTUBRE DE 2025, EMITIDO POR JESUS M. ATAUQUI GUTIERREZ - JEFE DE UNITCE DIVPIRV-PNP. ________ ' +
+  'SOLICITANTE - ENTIDAD TUTELAR POLICIA NACIONAL DEL PERU PP 1421-2025 ________ ' +
+  'Documento: Boletin de DIROVE Funcionario: Policia Nacional del Peru - 1421-2025 COMOPPOL-D Fecha: 06/10/2025 ________ ' +
+  'Título 2025-3019811 Fecha 10/10/2025 09:43:00 Monto Cobrado S/ 0.00 Recibo 2025-196-15518(LIMA) Fecha Asiento 21/10/2025';
+
+const BXP_GARANTIA_PERSONA =
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Constitución Garantía Mobiliaria y Otros Actos 2023 - 03635848 Título Nro Partida 55103923 Placa : BXP793 ________ ' +
+  'Participantes DEUDOR / CONSTITUYENTE: PERSONA NATURAL EBER PALOMINO CRUZ DNI 70012345 Soltero ' +
+  'OTROS PROVIV. AMPLIACION PACAYAL, MZ. E LOTE 1, Carabayllo, Lima, Lima ' +
+  'ACREEDOR: MITSUI AUTO FINANCE PERU S.A. RUC 20512334789 PARTIDA 12345678 ________ ' +
+  'Título 2023-3635848 Fecha 15/12/2023 12:30:30 Fecha de Asiento 20/12/2023';
+
+describe('parseAsiento · robo y garantía (identificación de campos, BXP793)', () => {
+  it('robo: acto = "Anotación de Robo"; el boletín PNP va en observación, no en la cabecera', () => {
+    const r = parseAsiento(BXP_ROBO);
+    expect(r.acto).toBe('Anotación de Robo');
+    expect(r.acto).not.toMatch(/Observaci/i);
+    expect(r.observacion).toContain('POR BOLETIN DE VEHICULOS ROBADOS');
+    expect(r.observacion).not.toContain('SOLICITANTE'); // corta antes del bloque siguiente
+  });
+
+  it('garantía con deudor PERSONA: nombre+DNI juntos, estado civil y dirección como campos separados', () => {
+    const r = parseAsiento(BXP_GARANTIA_PERSONA);
+    expect(r.acto).toBe('Constitución Garantía Mobiliaria y Otros Actos');
+    const segs = r.participantes.split(' · ');
+    // Nombre+documento van JUNTOS (para que el enmascarado los detecte); el resto, aparte.
+    expect(segs[0]).toBe('Deudor: EBER PALOMINO CRUZ DNI 70012345');
+    expect(segs).toContain('Soltero');
+    expect(segs.some((s) => s.startsWith('Dirección: OTROS PROVIV'))).toBe(true);
+    expect(r.participantes).toContain('Acreedor: MITSUI AUTO FINANCE');
+  });
+});
+
 // Caso REAL de BHC294 (batch de tipificación): el asiento de garantía 2018-02919994 degradó a
 // BINARIO en pdfBytesToText → el acto salía con 10 KB de basura. El parser debe emitir un
 // registro "no legible" limpio, conservando el título (para no perder el conteo del asiento).

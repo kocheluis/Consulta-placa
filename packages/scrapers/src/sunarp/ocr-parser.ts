@@ -75,13 +75,22 @@ export function parseSunarpOcr(ocrText: string, plateDisplay: string): SourceRes
 
     // El/los propietario(s) van en la(s) línea(s) siguientes (hasta el pie).
     if (label.includes('propietario')) {
-      const names: string[] = [];
-      if (value) names.push(value);
+      const rawLines: string[] = [];
+      if (value) rawLines.push(value);
       for (let j = i + 1; j < lines.length; j++) {
         if (TIMESTAMP_RE.test(lines[j]!) || lines[j]!.includes(':')) break;
-        names.push(lines[j]!);
+        rawLines.push(lines[j]!);
       }
-      owner = cleanValue(names.join(' '));
+      // Cada propietario va en su PROPIA línea ("APELLIDOS, NOMBRES" → una coma). Se conservan como
+      // dueños SEPARADOS (una línea sin coma es continuación del anterior por wrap del OCR → se une) y
+      // se juntan con " / " para que el reporte muestre cada propietario aparte (antes: todo en 1 línea).
+      const owners: string[] = [];
+      for (const n of rawLines.map((s) => cleanValue(s)).filter((x): x is string => !!x)) {
+        const prev = owners[owners.length - 1];
+        if (prev && !prev.includes(',')) owners[owners.length - 1] = `${prev} ${n}`;
+        else owners.push(n);
+      }
+      owner = owners.length ? owners.join(' / ') : null;
       continue;
     }
 

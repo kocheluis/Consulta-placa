@@ -1838,7 +1838,18 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
                           Precio: <strong>{a.price}</strong>
                         </span>
                       )}
-                      {a.parties && <span className="font-body text-[13px] text-muted">{a.parties}</span>}
+                      {a.parties && (
+                        // Los campos vienen separados por " · " (Deudor · DNI · estado civil · Dirección ·
+                        // Acreedor) → cada uno en su propia línea, en vez de un bloque apretado.
+                        <div className="flex flex-col gap-0.5">
+                          {a.parties.split(' · ').map((seg, k) => (
+                            <span key={k} className="font-body text-[13px] text-muted">{seg}</span>
+                          ))}
+                        </div>
+                      )}
+                      {a.note && (
+                        <span className="font-body text-[12px] italic leading-snug text-muted">Obs.: {a.note}</span>
+                      )}
                     </div>
                   ))}
                   {e.title && <span className="font-mono text-[11px] text-slate-400">{e.title}</span>}
@@ -1858,9 +1869,23 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
 }
 
 function PropietariosBody({ owner }: { owner: OwnerInfo }) {
+  // Copropiedad: SUNARP puede traer varios propietarios (un "APELLIDOS, NOMBRES" por persona), unidos
+  // con " / " en el origen. Se muestra cada uno en su propia línea en vez de todos pegados.
+  const names = owner.name.split(' / ').map((s) => s.trim()).filter(Boolean);
   return (
     <div>
-      <p className="font-body text-[15px] font-medium text-foreground">{owner.name}</p>
+      {names.length > 1 ? (
+        <ul className="flex flex-col gap-1">
+          {names.map((n, i) => (
+            <li key={i} className="flex gap-2 font-body text-[15px] font-medium text-foreground">
+              <span className="text-muted">{i + 1}.</span>
+              <span>{n}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="font-body text-[15px] font-medium text-foreground">{owner.name}</p>
+      )}
       {owner.note && <p className="mt-1 font-body text-xs text-muted">{owner.note}</p>}
     </div>
   );

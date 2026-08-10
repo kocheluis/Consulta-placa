@@ -453,8 +453,10 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         act: clip(a.acto, 80),
         price: clip(a.precio || a.montoPagado, 40),
         // Dueños ANTERIORES = terceros (Ley 29733): personas (nombre+DNI) enmascaradas; las
-        // empresas (acreedores/financieras) y el texto del acto quedan legibles.
-        parties: maskHistorialParties(clip(a.participantes, 140)),
+        // empresas (acreedores/financieras) y el texto del acto quedan legibles. 220 chars: los
+        // campos ahora vienen etiquetados y separados por " · " (deudor/doc/civil/dirección/acreedor).
+        parties: maskHistorialParties(clip(a.participantes, 220)),
+        note: clip(a.observacion, 240) || null,
       })),
     }));
     // Transferencias de dominio = compraventas + adjudicaciones (cuenta ACCIONES: un asiento en

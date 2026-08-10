@@ -27,6 +27,8 @@ export interface AsientoRecord {
   fechaPresentacion: string;
   fechaAsiento: string;
   participantes: string;
+  /** Observación/detalle registral del acto (motivo del robo, tipo de conversión, etc.); '' si no trae. */
+  observacion: string;
   documentos: AsientoDoc[];
   flags: AsientoFlags;
   /** Ficha técnica del vehículo si el asiento la trae (Primera Inscripción / Cambio de Características); null si no. */
@@ -170,6 +172,29 @@ export function splitAsientos(fullText: string): string[] {
   return starts.map((s, i) => fullText.slice(s, starts[i + 1] ?? fullText.length));
 }
 
+/** Limpia texto de detalle (observación): quita la cola binaria del PDF, colapsa espacios y acota. */
+function cleanDetalle(s: string): string {
+  return (s || '').replace(/[^\t\x20-\x7EÀ-ſ°º]/g, ' ').replace(/_{2,}/g, ' ').replace(/\s+/g, ' ').replace(/\s*\.\s*$/, '').trim().slice(0, 240);
+}
+
+/**
+ * Estructura una parte (Deudor/Acreedor) en campos separados por " · " para que el reporte los muestre
+ * en LÍNEAS distintas (antes iba todo apretado en una). Mantiene "NOMBRE … DNI num" JUNTOS a propósito:
+ * el enmascarado de PII (maskHistorialParties) ancla al par nombre+documento, así que separarlos lo
+ * rompería. Solo aparta el estado civil y la dirección como campos propios.
+ */
+function formatParte(label: string, raw: string): string {
+  const s = (raw || '').replace(/\s+/g, ' ').trim();
+  const m = s.match(/^(.+?\s+(?:DNI|C\.?E\.?|RUC|CARN\w*)\s*[0-9]+)\s*(.*)$/i);
+  if (!m) return `${label}: ${s}`;
+  const parts = [`${label}: ${m[1]!.trim()}`];
+  const rest = (m[2] || '').trim();
+  const cm = rest.match(/^(Solter[oa]|Casad[oa]|Viud[oa]|Divorciad[oa]|Convivient\w*)\b[.,]?\s*(.*)$/i);
+  if (cm) { parts.push(cm[1]!); if (cm[2]!.trim()) parts.push(`Dirección: ${cm[2]!.trim()}`); }
+  else if (rest) parts.push(`Dirección: ${rest}`);
+  return parts.join(' · ');
+}
+
 export function parseAsiento(textRaw: string): AsientoRecord {
   const text = textRaw
     .replace(/Este documento solo tiene fines informativos[^_]*?registral\.?/gi, ' ')
@@ -191,7 +216,9 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   const placa = g(/Placa\s*:?\s*([A-Z0-9]{5,8})/i);
   // Acto EXPLÍCITO: etiqueta "Acto" con A MAYÚSCULA (evita "Fecha del acto constitutivo").
   // Si no hay acto explícito (garantías), el acto = el tipo de la cabecera.
-  const actoExpl = normalizeActo(text.match(/(?:^|[_\s])Acto\s+(.+?)\s+(?:Precio|Monto|Forma|Documento|Participantes|DEUDOR|_)/)?.[1] ?? '');
+  // El acto se corta ANTES de "Observación" (antes se comía todo el texto de la observación → cabecera
+  // larguísima; caso robo "Anotación de Robo Observación EN VIRTUD…" y cambio de características).
+  const actoExpl = normalizeActo(text.match(/(?:^|[_\s])Acto\s+(.+?)\s+(?:Precio|Monto|Forma|Documento|Participantes|Observaci[oó]n|DEUDOR|_)/)?.[1] ?? '');
   const actoRaw = actoExpl || tipo;
   // Si el asiento degradó a BINARIO (streams que pdfBytesToText no supo extraer), el acto sale como
   // basura: se emite "no legible" conservando el título (para no perder el conteo del asiento ni
@@ -212,8 +239,12 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   if (!participantes || /^[.\s_]*$/.test(participantes)) {
     const deu = text.match(/DEUDOR[^:\-]*[:\-]\s*(?:PERSONA \w+\s+)?([A-ZÁÉÍÓÚÑ0-9][^_]+?)\s+(?:RUC|PARTIDA|ACREEDOR|_)/);
     const acr = text.match(/ACREEDOR[^:\-]*[:\-]\s*(?:PERSONA \w+\s+)?([A-ZÁÉÍÓÚÑ0-9][^_]+?)\s+(?:RUC|PARTIDA|REPRESENTANTE|_)/);
-    participantes = [deu?.[1] && `Deudor: ${deu[1].trim()}`, acr?.[1] && `Acreedor: ${acr[1].trim()}`].filter(Boolean).join(' · ');
+    // Cada campo (deudor, doc, estado civil, dirección, acreedor) queda separado por " · " → el reporte
+    // los muestra en líneas distintas en vez de un bloque apretado.
+    participantes = [deu?.[1] && formatParte('Deudor', deu[1].trim()), acr?.[1] && formatParte('Acreedor', acr[1].trim())].filter(Boolean).join(' · ');
   }
+  // Observación/detalle del acto (va tras "Observación"): se reporta como sub-detalle del asiento.
+  const observacion = legible ? cleanDetalle(text.match(/\bObservaci[oó]n\s+(.+?)\s+(?:_|SOLICITANTE|Documento:|DUA\b|Tipo de Uso|T[íi]tulo\s+20\d{2})/i)?.[1] ?? '') : '';
 
   const documentos: AsientoDoc[] = [];
   const docRe = /Documento:\s*(.+?)\s+Funcionario:\s*(.+?)\s+Fecha:\s*(\d{2}\/\d{2}\/\d{4})/gi;
@@ -230,7 +261,7 @@ export function parseAsiento(textRaw: string): AsientoRecord {
     embargo: RX_EMBARGO.test(blob),
   };
 
-  return { tipo: legible ? tipo : NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes: legible ? participantes : '', documentos: legible ? documentos : [], flags, caracteristicas: legible ? parseCaracteristicas(textRaw) : null };
+  return { tipo: legible ? tipo : NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes: legible ? participantes : '', observacion, documentos: legible ? documentos : [], flags, caracteristicas: legible ? parseCaracteristicas(textRaw) : null };
 }
 
 /** Parsea TODOS los asientos que trae el PDF de un título (múltiples actos → múltiples registros). */
@@ -239,7 +270,7 @@ export function parseAsientos(fullText: string): AsientoRecord[] {
 }
 
 /** Una acción/acto individual dentro de un asiento. */
-export interface AsientoAccion { acto: string; precio: string; montoPagado: string; participantes: string }
+export interface AsientoAccion { acto: string; precio: string; montoPagado: string; participantes: string; observacion: string }
 /** Un asiento registral (agrupado por su número de título AAAA-NNNNNN) con TODAS sus acciones. */
 export interface AsientoGrupo {
   titulo: string | null;
@@ -272,7 +303,7 @@ export function agruparAsientos(records: AsientoRecord[]): AsientoGrupo[] {
       porTitulo.set(key, g);
       grupos.push(g);
     }
-    g.acciones.push({ acto: r.acto, precio: r.precio, montoPagado: r.montoPagado, participantes: r.participantes });
+    g.acciones.push({ acto: r.acto, precio: r.precio, montoPagado: r.montoPagado, participantes: r.participantes, observacion: r.observacion });
     (Object.keys(g.flags) as Array<keyof AsientoFlags>).forEach((k) => { if (r.flags?.[k]) g!.flags[k] = true; });
     if (!g.fechaPresentacion && r.fechaPresentacion) g.fechaPresentacion = r.fechaPresentacion;
     if (!g.fechaAsiento && r.fechaAsiento) g.fechaAsiento = r.fechaAsiento;

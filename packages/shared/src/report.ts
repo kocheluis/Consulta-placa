@@ -395,8 +395,11 @@ export interface HistorialAccion {
   act: string | null;
   /** Precio/monto declarado del acto (texto, p. ej. "US$ 16,000.00"). */
   price: string | null;
-  /** Partes intervinientes (comprador/vendedor, o deudor/acreedor), texto. */
+  /** Partes intervinientes (comprador/vendedor, o deudor/acreedor), texto. Los campos van separados
+   *  por " · " para poder mostrarlos en líneas distintas en el reporte. */
   parties: string | null;
+  /** Observación/detalle registral del acto (motivo del robo, tipo de conversión GNV, etc.); null si no. */
+  note?: string | null;
 }
 
 /**
