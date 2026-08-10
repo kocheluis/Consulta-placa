@@ -1,9 +1,10 @@
 /* eslint-disable no-console */
 import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { existsSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
-import { chromium, type Page, type Locator, type Browser } from 'playwright';
+import { chromium, type Page, type Locator, type Browser, type BrowserContext } from 'playwright';
 import { parseAsientos, parseCaracteristicas, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
 import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
@@ -74,6 +75,27 @@ function sgDecrypt(b64: string): string | null {
     const c = crypto.createDecipheriv('aes-256-cbc', dd.subarray(0, 32), dd.subarray(32, 48));
     return Buffer.concat([c.update(data.subarray(16)), c.final()]).toString('utf8');
   } catch { return null; }
+}
+
+/**
+ * Guarda el PDF del asiento y lo renderiza a PNG abriéndolo en el visor de PDF del Chrome (headed) por
+ * `file://` y capturándolo. Es la captura del ASIENTO de Síguelo (con los datos del vehículo), NO la de
+ * SUNARP: usa los bytes que ya trae `listarAsientos`, así no depende de dónde abra el PDF la página del
+ * portal. Best-effort: si el render falla, al menos queda el PDF en disco (`historial.pdf`).
+ */
+async function renderAsientoShot(ctx: BrowserContext, bytes: number[], pngPath: string): Promise<void> {
+  const buf = Buffer.from(bytes.map((n) => (n < 0 ? n + 256 : n))); // bytes firmados −128..127 → 0..255
+  const pdfPath = pngPath.replace(/\.png$/i, '.pdf');
+  writeFileSync(pdfPath, buf);
+  const pg = await ctx.newPage();
+  try {
+    await pg.setViewportSize({ width: 820, height: 1160 }).catch(() => {}); // ~A4 96dpi → cabe la 1ª página
+    // Params del visor de Chrome: sin toolbar ni panel de miniaturas, ajustado al ancho → captura LIMPIA
+    // (solo la página del asiento). Validado con probe local.
+    await pg.goto(`${pathToFileURL(pdfPath).href}#toolbar=0&navpanes=0&view=FitH`, { waitUntil: 'load', timeout: 20000 }).catch(() => {});
+    await pg.waitForTimeout(1800); // deja renderizar el visor de PDF
+    await pg.screenshot({ path: pngPath }).catch(() => {});
+  } finally { await pg.close().catch(() => {}); }
 }
 
 async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promise<void> {
@@ -321,16 +343,15 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const obj = dec ? (JSON.parse(dec) as { list?: Array<{ paginaAsiento?: number[] }> }) : null;
       const bytes = obj?.list?.[0]?.paginaAsiento;
       const text = Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
-      // SCREENSHOT del asiento: el "ojo" abrió el visor del asiento en la página → se captura la del
-      // asiento MÁS RECIENTE que trae ficha técnica (todos los datos del vehículo). Se compara la
-      // recencia (año*1e8+nº) y solo se sobrescribe con uno más nuevo → funciona en secuencial y en
-      // paralelo. Sin shotPath (dev), no captura.
-      if (text && opts.shotPath && parseCaracteristicas(text)) {
+      // CAPTURA del asiento: se renderiza el PDF del asiento MÁS RECIENTE que trae ficha técnica (todos
+      // los datos del vehículo — el "Cambio de Características") a historial.png, desde los BYTES del PDF
+      // (no captura de la página: el portal abre el PDF en el visor/otra pestaña). Se compara la recencia
+      // (año*1e8+nº) → gana el más nuevo, en secuencial y en paralelo. Sin shotPath (dev), no captura.
+      if (Array.isArray(bytes) && text && opts.shotPath && parseCaracteristicas(text)) {
         const ts = Number(anioT) * 1e8 + Number(numeroT);
         if (ts > shotBest) {
           shotBest = ts;
-          await wait(1200); // deja renderizar el visor del asiento antes de capturar
-          await pg.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
+          await renderAsientoShot(ctx, bytes, opts.shotPath).catch(() => {});
           log(`  captura del asiento ${anioT}-${numeroT} (ficha) → historial.png`);
         }
       }
