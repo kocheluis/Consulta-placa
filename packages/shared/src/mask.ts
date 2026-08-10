@@ -21,6 +21,10 @@ export function isCompanyName(name: string | null | undefined): boolean {
 
 const norm = (s: string | null | undefined): string => (s ?? '').replace(/\s+/g, ' ').trim();
 
+/** Dígitos del documento (DNI/CE) que se dejan visibles antes de `****`. El DNI peruano tiene 8 →
+ *  se muestran 5 y se ocultan 3 (pedido del dueño: 2 dígitos más que los 3 originales, para verificar). */
+const DNI_KEEP = 5;
+
 /** Un apellido → 3 primeras letras + ****. Partículas cortas (DE/LA/…) se dejan; 3 letras revela solo 1. */
 function maskToken(t: string): string {
   const s = t.trim();
@@ -78,16 +82,21 @@ export function maskHistorialParties(raw: string | null | undefined): string | n
     const lastComma = toks.reduce((acc, t, i) => (t.endsWith(',') ? i : acc), -1);
     const nameIdx = toks.map((t, i) => (RX_STOP_TOKEN.test(t) ? -1 : i)).filter((i) => i >= 0);
     const lastNameTok = nameIdx.length >= 2 ? nameIdx[nameIdx.length - 1] : -1;
+    // Primer apellido (primer token de nombre) → se deja COMPLETO (pedido del dueño 10-ago-2026: más
+    // legible para verificar contra el vendedor sin exponer del todo). Solo con ≥2 tokens de nombre; con
+    // 1 solo no sabemos si es apellido o nombre → se enmascara.
+    const firstApellido = nameIdx.length >= 2 ? nameIdx[0] : -1;
     const masked = toks.map((t, i) => {
       if (RX_STOP_TOKEN.test(t)) return t; // rol/estado civil/etiqueta/conector → visible
-      if (lastComma >= 0 ? i > lastComma : i === lastNameTok) return t; // nombre de pila → visible
+      const esNombrePila = lastComma >= 0 ? i > lastComma : i === lastNameTok;
+      if (esNombrePila || i === firstApellido) return t; // nombre de pila O primer apellido → tal cual
       const comma = t.endsWith(',') ? ',' : '';
       return `${maskToken(t.replace(/,+$/, ''))}${comma}`;
     }).join(' ');
-    return `${masked} ${doc} ${num.slice(0, 3)}****`;
+    return `${masked} ${doc} ${num.slice(0, DNI_KEEP)}****`;
   });
   // 2) Documentos sueltos que quedaron sin pareja de nombre (igual se recortan).
-  out = out.replace(/\b(DNI|D\.N\.I\.?|C\.?E\.?)\s*:?\s*(\d{6,9})\b/gi, (_m, d: string, n: string) => `${d} ${n.slice(0, 3)}****`);
+  out = out.replace(/\b(DNI|D\.N\.I\.?|C\.?E\.?)\s*:?\s*(\d{6,9})\b/gi, (_m, d: string, n: string) => `${d} ${n.slice(0, DNI_KEEP)}****`);
   return out;
 }
 
@@ -103,5 +112,5 @@ export function maskDoc(raw: string | null | undefined): string | null {
   const tipo = (m[1] ?? '').toUpperCase().replace(/[^A-Z]/g, '');
   const num = m[2] ?? '';
   if (tipo.startsWith('RUC') && /^20\d{9}$/.test(num)) return d; // RUC empresa: público
-  return `${m[1]} ${num.slice(0, 3)}****`; // DNI/CE/RUC-persona
+  return `${m[1]} ${num.slice(0, DNI_KEEP)}****`; // DNI/CE/RUC-persona
 }

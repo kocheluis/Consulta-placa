@@ -4,7 +4,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser } from 'playwright';
-import { parseAsientos, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
+import { parseAsientos, parseCaracteristicas, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
 import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
@@ -272,6 +272,10 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const link = pg.locator('a:has-text("ingresar"), a:has-text("términos"), a:has-text("terminos")').first();
       if (await link.isVisible().catch(() => false)) { await link.click().catch(() => {}); await wait(1200); await pg.locator('button').filter({ hasText: /acepto/i }).filter({ hasNotText: /no\s*acepto/i }).first().click().catch(() => {}); await wait(700); }
     };
+    // Recencia (año*1e8+nº) del asiento capturado en el screenshot del historial. La captura es del
+    // asiento MÁS RECIENTE con ficha técnica (= "todos los datos del vehículo"): así el reporte muestra
+    // la página del asiento vigente, no una captura en blanco.
+    let shotBest = -1;
     async function searchSiguelo(pg: Page, anioT: string, numeroT: string): Promise<string | null> {
       await pg.goto(SIGUELO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       // En vez de wait(1800) ciego: espera a que el formulario esté en el DOM (señal de que el JS
@@ -316,7 +320,21 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (process.env.SIGUELO_DEBUG && dec) log(`  [DEBUG listarAsientos ${anioT}-${numeroT}] ${dec.replace(/"paginaAsiento":\s*\[[-\d,\s]*\]/g, '"paginaAsiento":"<bytes>"').slice(0, 4000)} [/DEBUG]`);
       const obj = dec ? (JSON.parse(dec) as { list?: Array<{ paginaAsiento?: number[] }> }) : null;
       const bytes = obj?.list?.[0]?.paginaAsiento;
-      return Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
+      const text = Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
+      // SCREENSHOT del asiento: el "ojo" abrió el visor del asiento en la página → se captura la del
+      // asiento MÁS RECIENTE que trae ficha técnica (todos los datos del vehículo). Se compara la
+      // recencia (año*1e8+nº) y solo se sobrescribe con uno más nuevo → funciona en secuencial y en
+      // paralelo. Sin shotPath (dev), no captura.
+      if (text && opts.shotPath && parseCaracteristicas(text)) {
+        const ts = Number(anioT) * 1e8 + Number(numeroT);
+        if (ts > shotBest) {
+          shotBest = ts;
+          await wait(1200); // deja renderizar el visor del asiento antes de capturar
+          await pg.screenshot({ path: opts.shotPath, fullPage: true }).catch(() => {});
+          log(`  captura del asiento ${anioT}-${numeroT} (ficha) → historial.png`);
+        }
+      }
+      return text;
     }
 
     const valid = titulos.map((t) => t.split('-')).filter((p) => p[0] && p[1]) as Array<[string, string]>;
