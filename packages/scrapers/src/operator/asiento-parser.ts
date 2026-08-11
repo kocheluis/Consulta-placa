@@ -84,7 +84,14 @@ export function parseCaracteristicas(textRaw: string): VehicleSpecs | null {
     .replace(/_{2,}/g, ' ')
     .replace(/\s+/g, ' ')
     .trim();
-  if (!/Nro\.?\s*VIN/i.test(text) || !/Nro\.?\s*Versi[oó]n/i.test(text)) return null;
+  // Ficha = la tabla de características del vehículo. Se acepta como UNIÓN (superset del criterio viejo):
+  //  · ficha MODERNA: Nro. VIN + Nro. Versión (como antes); o
+  //  · ficha ANTIGUA (p. ej. NISSAN 1998): sin VIN ni Versión, pero con Nro. Serie + Nro. Motor + Marca.
+  // Los gravámenes citan "Marca:"/"Serie:"/"Motor:" del bien SIN el prefijo "Nro." → no dan falso positivo.
+  // Los campos ausentes (VIN/Versión en autos antiguos) quedan null.
+  const hasVin = /Nro\.?\s*VIN/i.test(text), hasVer = /Nro\.?\s*Versi[oó]n/i.test(text);
+  const hasSerie = /Nro\.?\s*Serie/i.test(text), hasMotor = /Nro\.?\s*Motor/i.test(text), hasMarca = /\bMarca\b/i.test(text);
+  if (!((hasVin && hasVer) || (hasSerie && hasMotor && hasMarca))) return null;
 
   // Valor de `label` = lo que sigue hasta la PRÓXIMA etiqueta conocida (lookahead) o el fin.
   const field = (label: string): string | null => {

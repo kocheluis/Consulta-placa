@@ -61,7 +61,39 @@ const ASIENTO_GRAVAMEN =
   'Identificación y descripción del(los) bien(es) Marca: BYD Modelo: F3 Placa: ADY067 ' +
   'Motor: BYD473QD714323110 Serie: LGXC16AF8E0054849 Fecha del acto constitutivo 19/06/2015';
 
+/** Ficha ANTIGUA (NISSAN Frontier 1998, EGU257): trae Nro. Serie + Nro. Motor pero NO Nro. VIN ni
+ *  Nro. Versión (esos campos no existían en el registro de esa época). Debe reconocerse igual. */
+const ASIENTO_ANTIGUO_SIN_VIN =
+  'Este documento solo tiene fines informativos y no constituye publicidad registral. ' +
+  'Cambio de Características 2022 - 01597113 Título Nro Partida 50958307 Placa : EGU257 ' +
+  '________________________________________________________________________ ' +
+  'PERSONA JURIDICA UNIVERSIDAD NACIONAL AGRARIA RUC 14789740 ' +
+  '________________________________________________________________________ ' +
+  'Acto Cambio de Caracteristicas. Observación RECTIFICACIÓN DE CARROCERÍA ' +
+  '________________________________________________________________________ ' +
+  'Tipo de Uso Placa Gubernamental - Vehículos livianos y pesados Categoria N1 ' +
+  'Nro. Serie JN1CHGD22Z0006901 Nro. Motor TD27590982 Marca NISSAN Modelo FRONTIER 4X2 CD ' +
+  'Año Modelo 1998 Color BLANCO Tipo Carrocería PICK UP Nro. Ruedas 4 Nro. Ejes 2 ' +
+  'Fórmula Rodante 4X2 Potencia Motor 66KW@4300RPM Tipo Combustible DIESEL Nro. Cilindros 4 ' +
+  'Cilindrada 2.663 L Longitud 4.88 mt Ancho 1.69 mt Altura 1.64 mt Nro. Asientos 5 Nro. Pasajeros 4 ' +
+  'Peso Bruto 2.590 tn Peso Neto 1.500 tn Carga Util 1.090 tn Placa Anterior PIB316 ' +
+  '________________________________________________________________________ ' +
+  'Documento: Formulario Registral Funcionario: Notario - QUINTANILLA SALINAS Fecha: 30/05/2022 ' +
+  '________________________________________________________________________ ' +
+  'Título 2022-1597113 Fecha 01/06/2022 09:29:06 Monto Cobrado S/ 105.00 Fecha Asiento 04/07/2022';
+
 describe('parseCaracteristicas (ficha técnica del asiento)', () => {
+  it('ficha ANTIGUA (NISSAN 1998, sin Nro. VIN ni Nro. Versión) se reconoce por Serie+Motor+Marca', () => {
+    const c = parseCaracteristicas(ASIENTO_ANTIGUO_SIN_VIN);
+    expect(c).not.toBeNull();
+    expect(c?.version).toBeNull(); // no trae Nro. Versión
+    expect(c?.bodywork).toBe('PICK UP');
+    expect(c?.fuel).toBe('DIESEL');
+    expect(c?.displacement).toBe('2.663 L');
+    // parseAsiento la adjunta → el capturador la prioriza (calidad 2) en autos antiguos.
+    expect(parseAsiento(ASIENTO_ANTIGUO_SIN_VIN).caracteristicas).not.toBeNull();
+  });
+
   it('extrae la ficha del Cambio de Características (incluye Carga Util sin los guiones bajos)', () => {
     expect(parseCaracteristicas(ASIENTO_CAMBIO)).toMatchObject({
       version: 'GL-I GNV', category: 'M1', usage: 'Taxis y Colectivos (Categoria M1)',

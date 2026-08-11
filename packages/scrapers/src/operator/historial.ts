@@ -313,9 +313,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (await link.isVisible().catch(() => false)) { await link.click().catch(() => {}); await wait(1200); await pg.locator('button').filter({ hasText: /acepto/i }).filter({ hasNotText: /no\s*acepto/i }).first().click().catch(() => {}); await wait(700); }
     };
     // Recencia (año*1e8+nº) del asiento capturado en el screenshot del historial. La captura es del
-    // asiento MÁS RECIENTE con ficha técnica (= "todos los datos del vehículo"): así el reporte muestra
-    // la página del asiento vigente, no una captura en blanco.
-    let shotBest = -1;
+    // asiento a capturar. Prioridad: (calidad) el que trae FICHA técnica gana sobre cualquier otro; a
+    // igual calidad, el más reciente (año*1e8+nº). Así, en autos ANTIGUOS cuyos asientos NO traen la
+    // ficha moderna (VIN/versión — p. ej. EGU257, 1998), igual se captura el asiento más reciente y NO
+    // se cae al fallback de la captura de SUNARP. Se renderiza UNA sola vez, al final del Síguelo.
+    let shotCandidate: { bytes: number[]; quality: number; recency: number } | null = null;
     async function searchSiguelo(pg: Page, anioT: string, numeroT: string): Promise<string | null> {
       await pg.goto(SIGUELO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       // En vez de wait(1800) ciego: espera a que el formulario esté en el DOM (señal de que el JS
@@ -361,16 +363,15 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const obj = dec ? (JSON.parse(dec) as { list?: Array<{ paginaAsiento?: number[] }> }) : null;
       const bytes = obj?.list?.[0]?.paginaAsiento;
       const text = Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
-      // CAPTURA del asiento: se renderiza el PDF del asiento MÁS RECIENTE que trae ficha técnica (todos
-      // los datos del vehículo — el "Cambio de Características") a historial.png, desde los BYTES del PDF
-      // (no captura de la página: el portal abre el PDF en el visor/otra pestaña). Se compara la recencia
-      // (año*1e8+nº) → gana el más nuevo, en secuencial y en paralelo. Sin shotPath (dev), no captura.
-      if (Array.isArray(bytes) && text && opts.shotPath && parseCaracteristicas(text)) {
-        const ts = Number(anioT) * 1e8 + Number(numeroT);
-        if (ts > shotBest) {
-          shotBest = ts;
-          await renderAsientoShot(ctx, bytes, opts.shotPath).catch(() => {});
-          log(`  captura del asiento ${anioT}-${numeroT} (ficha) → historial.png`);
+      // Candidato a captura: el asiento CON ficha (calidad 2) gana sobre cualquiera (calidad 1); a igual
+      // calidad, el más reciente. Se guarda solo el mejor (bytes) y se rasteriza UNA vez al final. Así
+      // funciona en secuencial y en paralelo, y los autos antiguos sin ficha igual capturan un asiento.
+      if (Array.isArray(bytes) && text && opts.shotPath) {
+        const quality = parseCaracteristicas(text) ? 2 : 1;
+        const recency = (Number(anioT) || 0) * 1e8 + (Number(numeroT) || 0);
+        const c = shotCandidate;
+        if (!c || quality > c.quality || (quality === c.quality && recency > c.recency)) {
+          shotCandidate = { bytes, quality, recency };
         }
       }
       return text;
@@ -428,6 +429,17 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         procesar(text, `${aT}-${nT}`);
       }
       await sg.close().catch(() => {});
+    }
+
+    // CAPTURA del historial: rasteriza (una vez) el asiento elegido — el más reciente CON ficha técnica
+    // si hay, o el asiento más reciente si ninguno la trae (autos antiguos). Sobrescribe la captura de
+    // SUNARP en historial.png → la miniatura del historial es SIEMPRE un asiento de Síguelo.
+    // Cast: TS no rastrea la asignación hecha dentro del closure `searchSiguelo`, así que aquí lo cree
+    // siempre null. El cast restaura el tipo real (la asignación sí ocurre en runtime).
+    const cand = shotCandidate as { bytes: number[]; quality: number; recency: number } | null;
+    if (cand && opts.shotPath) {
+      await renderAsientoShot(ctx, cand.bytes, opts.shotPath).catch(() => {});
+      log(`  captura del historial → historial.png (${cand.quality === 2 ? 'asiento con ficha' : 'asiento más reciente'})`);
     }
 
     const timeline = construirTimeline(records);
