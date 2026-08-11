@@ -743,17 +743,28 @@ export async function runSatPapeletas(
       `(function(){var els=document.querySelectorAll('#g-recaptcha-response,[name=g-recaptcha-response]');els.forEach(function(e){e.value=${JSON.stringify(token)};e.style.display='block';});})()`,
     );
     await plateFrame.locator('#ctl00_cplPrincipal_CaptchaContinue').click();
-    // En vez de wait(6000) ciego: sondea el frame de resultado hasta que aparezca la respuesta (SAT es
-    // ASP.NET, postback server-side); cap 6000ms + settle antes de parsear las papeletas.
-    for (let k = 0; k < 19; k++) {
+    // Sondea el frame de resultado hasta que el RESULTADO real renderice (SAT es ASP.NET, postback
+    // server-side). El grid trae filas "…dd/mm/aaaa <importe decimal>…"; el negativo dice "no se
+    // encontraron papeletas". ⚠️ NO rompas con el rótulo estático "Papeletas"/"Infracción" del
+    // encabezado: aparece ANTES del postback → lectura prematura del grid vacío → ENCONTRADO sin
+    // monto ni detalle → el reporte solo puede decir "revisar en el portal".
+    const hasResult = (b: string): boolean =>
+      /no se encontraron papeletas/i.test(b) || /\b\d{2}\/\d{2}\/\d{4}\b[\s\S]{0,80}?\b\d[\d,]*\.\d{2}\b/.test(b);
+    for (let k = 0; k < 30; k++) {
       const rf = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
-      const b = (await rf.locator('body').innerText().catch(() => ''));
-      if (/no se encontraron papeletas|papeleta|infracci[oó]n|S\/\s*[0-9]/i.test(b)) break;
+      if (hasResult(await rf.locator('body').innerText().catch(() => ''))) break;
       await wait(300);
     }
-    await wait(400);
-    const resultFrame = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
-    const body = (await resultFrame.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+    await wait(500);
+    let resultFrame = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
+    let body = (await resultFrame.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+    // Servidor lento: si el marcador de resultado aún no está, un último respiro y re-lectura (evita el
+    // falso "ENCONTRADO vacío" que mandaba a "revisar en el portal" con la grilla a medio pintar).
+    if (!hasResult(body)) {
+      await wait(1500);
+      resultFrame = (await findFrameWith(page, '#ctl00_cplPrincipal_txtPlaca')) ?? formFrame;
+      body = (await resultFrame.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
+    }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
     if (new RegExp(`no se encontraron papeletas[^.]*${plate}`, 'i').test(body) || /no se encontraron papeletas/i.test(body)) {
       return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas pendientes en Lima', screenshot: shot, ms: Date.now() - t0 };

@@ -1251,12 +1251,17 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
   if (p.total === 0) {
     return <StatusLine tone="success" icon="verified">{`Sin papeletas pendientes en ${dondeTxt}`}</StatusLine>;
   }
-  const nPapeletas = p.count ?? p.total;
+  // `p.count` = nº REAL de papeletas (si el grid del SAT se pudo leer). Si quedó indefinido, hubo
+  // resultado pero no se leyó el detalle: NO inventamos un conteo (antes caía a `p.total`, que es el
+  // nº de jurisdicciones → mostraba "1 papeleta" engañoso).
+  const knownCount = p.count;
+  const amountTxt = p.pendingAmount > 0 ? ` · S/ ${p.pendingAmount.toFixed(2)} pendiente` : '';
+  const headline = knownCount != null
+    ? `${knownCount} papeleta${knownCount === 1 ? '' : 's'}${amountTxt}`
+    : `Papeletas pendientes${amountTxt || ' · importe no disponible (revísalo en el portal)'}`;
   return (
     <div className="flex flex-col gap-3">
-      <StatusLine tone="warning" icon="receipt_long">
-        {`${nPapeletas} papeleta${nPapeletas === 1 ? '' : 's'}${p.pendingAmount > 0 ? ` · S/ ${p.pendingAmount.toFixed(2)} pendiente` : ''}`}
-      </StatusLine>
+      <StatusLine tone="warning" icon="receipt_long">{headline}</StatusLine>
       {p.benefitAmount && p.benefitAmount > 0 ? (
         <StatusLine tone="success" icon="savings">
           {`Beneficio de pronto pago: S/ ${p.benefitAmount.toFixed(2)}${p.benefitUntil ? ` si cancelas antes del ${p.benefitUntil}` : ''}`}
