@@ -1658,7 +1658,7 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
           <DefGrid
             items={[
               ['Acreedor', it.creditor],
-              ['Monto', it.amount != null ? `S/ ${it.amount.toFixed(2)}` : null],
+              ['Monto', it.amountLabel ?? (it.amount != null ? `S/ ${it.amount.toFixed(2)}` : null)],
               ['Fecha', it.date],
               ['Folio', it.folio ?? null],
             ]}

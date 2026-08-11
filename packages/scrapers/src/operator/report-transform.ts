@@ -72,11 +72,20 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   }
   const src: SourceResult[] = [];
 
-  // GRAVAMENES: SIGM (garantías mobiliarias VIGENTES) es la fuente autoritativa. Si respondió,
-  // reemplaza al heurístico de asientos (más abajo). SIGM cubre prendas/garantías, NO embargos
-  // judiciales. El acreedor/monto no vienen en la lista (están en el "Detalle" → fase 2).
+  // GRAVÁMENES — DOS registros COMPLEMENTARIOS, no uno solo:
+  //  (1) SIGM/RMC (sigm-consulta): el Registro Mobiliario de Contratos.
+  //  (2) el HISTORIAL de la partida vehicular (SPRL/Síguelo): garantías inscritas en el Registro de
+  //      Propiedad Vehicular. Por Ley 28677, la garantía sobre un bien REGISTRADO —el vehículo— se
+  //      inscribe en SU partida, no necesariamente en el RMC.
+  // ⇒ Una garantía mobiliaria sobre el vehículo suele estar en (2) y NO en (1): SIGM devuelve
+  //   SIN_REGISTRO aunque el vehículo TENGA una carga vigente (BSY873: SCANIA SERVICES sobre la flota
+  //   de OBRASCON — un título con muchas partidas, una por vehículo). Por eso SIGM MANDA solo cuando
+  //   ÉL encontró cargas; si viene vacío, el historial de la partida es la fuente autoritativa.
+  // El push de la sección se decide junto al historial (abajo); aquí solo se calcula el payload. Si el
+  // historial NO corrió (fuente ausente), se emite SIGM aquí mismo (única fuente).
   const sigmRes = by('SIGM');
   const sigmOk = !!sigmRes && (sigmRes.status === 'ENCONTRADO' || sigmRes.status === 'SIN_REGISTRO');
+  let sigmPayload: GravamenesPayload | null = null;
   if (sigmOk) {
     const sd = data(sigmRes);
     const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => ({
@@ -90,8 +99,12 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       detail: (f.incumplimiento as string) || null, // del Detalle §5 (descripción del incumplimiento)
       folio: (f.folio as string) || null,
     } as GravamenItem));
-    const sigmPayload: GravamenesPayload = { hasLiens: Boolean(sd.hasLiens) || sigmItems.length > 0, total: sigmItems.length, items: sigmItems };
-    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SIGM, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: sigmPayload });
+    sigmPayload = { hasLiens: Boolean(sd.hasLiens) || sigmItems.length > 0, total: sigmItems.length, items: sigmItems };
+  }
+  const sigmHasLiens = !!sigmPayload && (sigmPayload.total ?? 0) > 0;
+  // Historial ausente (la fuente ni corrió): abajo no se empuja nada → emite SIGM aquí.
+  if (sigmOk && !by('HISTORIAL')) {
+    src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SIGM, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: sigmPayload! });
   }
 
   // ── REGISTRAL + vehículo + titular (SUNARP) ──
@@ -427,21 +440,33 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // una garantía ya cancelada se muestra LEVANTADA, no como carga viva. La cancelación en sí
     // no es una carga y no se lista (caso CHP605: garantía Santander constituida y luego cancelada).
     const constituciones = cargas.filter((a) => !esCancelacion(a));
-    const gravItems: GravamenItem[] = constituciones.map((a, i) => ({
-      type: clip(a.acto, 60) ?? 'Gravamen',
-      // Participantes: personas (nombre+DNI) enmascaradas; empresas acreedoras intactas.
-      creditor: maskHistorialParties(clip(a.participantes, 90)),
-      amount: moneyOrNull(a.precio ?? a.montoPagado),
-      date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
-      status: i < cancelaciones ? 'LEVANTADO' : 'VIGENTE',
-    } as GravamenItem));
+    const gravItems: GravamenItem[] = constituciones.map((a, i) => {
+      // El "Monto de gravamen" (p. ej. "US$ 184,080.00") conserva su MONEDA verbatim (la garantía suele
+      // ser en dólares); no se convierte a número para no pintarlo como S/. Precio/MontoPagado (compra)
+      // sí son numéricos S/. Preferimos el monto de gravamen cuando existe.
+      const montoGrav = ((a.montoGravamen as string) || '').replace(/\s+/g, ' ').trim() || null;
+      return {
+        type: clip(a.acto, 60) ?? 'Gravamen',
+        // Participantes: personas (nombre+DNI) enmascaradas; empresas acreedoras intactas.
+        creditor: maskHistorialParties(clip(a.participantes, 90)),
+        amount: montoGrav ? null : moneyOrNull(a.precio ?? a.montoPagado),
+        amountLabel: montoGrav,
+        date: (a.fechaPresentacion as string) || (a.fechaAsiento as string) || null,
+        status: i < cancelaciones ? 'LEVANTADO' : 'VIGENTE',
+      } as GravamenItem;
+    });
     const gravVigentes = gravItems.filter((it) => it.status !== 'LEVANTADO').length;
     const grav: GravamenesPayload = {
       hasLiens: gravVigentes > 0,
       total: gravItems.length,
       items: gravItems,
     };
-    if (!sigmOk) src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: grav }); // SIGM manda si respondió
+    // SIGM manda SOLO si ÉL encontró cargas (trae el detalle del RMC). Si SIGM vino vacío, el
+    // historial de la partida vehicular es la fuente: detecta la garantía inscrita en el Registro de
+    // Propiedad Vehicular que el RMC no lista (BSY873). Antes, un SIGM vacío tapaba esta sección.
+    src.push(sigmHasLiens
+      ? { kind: SectionKind.GRAVAMENES, source: SourceId.SIGM, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: sigmPayload! }
+      : { kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: grav });
     const titulos = (hd.titulos ?? []) as unknown[];
     // Un mismo asiento (título AAAA-NNNNNN) puede traer VARIAS acciones (dos compra-ventas en
     // tracto sucesivo, o cancelación + compra-venta). Se agrupan por asiento: el reporte cuenta
@@ -578,7 +603,11 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     // omitían estas secciones → la web las pintaba como "Próximamente" (engañoso: sí las
     // ofrecemos, solo que esta consulta falló). Emitirlas como UNAVAILABLE hace que la web
     // muestre "no disponible / reintentar" en su lugar. Ver riesgo de UX de fuente fallida.
-    if (!sigmOk) src.push({ kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at }); // SIGM ya la cubrió
+    // Historial FALLÓ: sin la partida no derivamos gravámenes; queda lo que diga SIGM (sus cargas o
+    // "sin registro en el RMC"). Si SIGM tampoco respondió → no disponible.
+    src.push(sigmOk
+      ? { kind: SectionKind.GRAVAMENES, source: SourceId.SIGM, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: sigmPayload! }
+      : { kind: SectionKind.GRAVAMENES, source: SourceId.SUNARP, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
     // SUNARP marcó la partida como INCOMPLETA ("no visualizada por usuario externo" — error de SUNARP,
     // típico de placas MUY antiguas): NO es fallo nuestro. Mostramos el propietario ACTUAL (de la Consulta
     // Vehicular) y avisamos que el histórico no está disponible, en vez de "no disponible / reintentar".

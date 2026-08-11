@@ -376,6 +376,9 @@ export interface GravamenItem {
   /** Acreedor o entidad a favor de quien se inscribe. */
   creditor: string | null;
   amount: number | null;
+  /** Monto con su MONEDA verbatim (p. ej. "US$ 184,080.00"). El "Monto de gravamen" del asiento suele
+   *  ser en dólares; se muestra tal cual para no confundirlo con soles. Prevalece sobre `amount`. */
+  amountLabel?: string | null;
   date: string | null;
   /** VIGENTE / LEVANTADO. */
   status: string;

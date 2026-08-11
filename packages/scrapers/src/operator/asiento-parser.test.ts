@@ -195,6 +195,9 @@ describe('parseAsientos (multi-acto + normalización, datos CHP605)', () => {
     expect(r.participantes).toContain('Deudor: YENYERE');
     expect(r.participantes).toContain('Acreedor: EMPRESA DE CRÉDITOS SANTANDER');
     expect(r.fechaPresentacion).toMatch(/19\/09\/2023/);
+    // El "Monto de gravamen" se extrae aparte (no es precio de compra) y conserva su moneda verbatim.
+    expect(r.montoGravamen).toBe('S/. 87,750.00');
+    expect(r.precio).toBe(''); // una garantía no trae "Precio"
   });
 
   it('NO marca "remate" por el clausulado de ejecución de la garantía (falso positivo CHP605)', () => {

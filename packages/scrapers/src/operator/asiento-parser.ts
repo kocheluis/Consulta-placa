@@ -23,6 +23,9 @@ export interface AsientoRecord {
   acto: string;
   precio: string;
   montoPagado: string;
+  /** "Monto de gravamen" de una Garantía Mobiliaria/prenda (con su moneda verbatim, p. ej.
+   *  "US$ 184,080.00"); '' si el acto no es una carga. NO es precio de compra. */
+  montoGravamen: string;
   formaPago: string;
   fechaPresentacion: string;
   fechaAsiento: string;
@@ -258,6 +261,9 @@ export function parseAsiento(textRaw: string): AsientoRecord {
   const acto = legible ? actoRaw : NO_LEGIBLE;
   const precio = g(/\bPrecio\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
   const montoPagado = g(/Monto Pagado\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
+  // Garantía Mobiliaria: "Monto de gravamen Determinado US$ 184,080.00" (el "Determinado" es opcional).
+  // Es la cuantía de la carga, NO un precio de compra → se guarda aparte, con su moneda intacta.
+  const montoGravamen = g(/Monto de gravamen(?:\s+Determinado)?\s+((?:US\$|U\$S|S\/\.?|\$)\s*[\d.,]+)/i);
   const formaPago = g(/Forma de Pago\s+(.+?)\s+(?:_|DUA|Documento|Tipo de Uso|T[IÍ]tulo)/i);
   // Fecha de presentación: dos formatos de pie ("Título 2025-740912 Fecha 10/03/2025" y
   // "Título Nro. : 2023 - 2736229 Orden Nro. : … Fecha : 19/09/2023").
@@ -293,7 +299,7 @@ export function parseAsiento(textRaw: string): AsientoRecord {
     embargo: RX_EMBARGO.test(blob),
   };
 
-  return { tipo: legible ? tipo : NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, formaPago, fechaPresentacion, fechaAsiento, participantes: legible ? participantes : '', observacion, documentos: legible ? documentos : [], flags, caracteristicas: legible ? parseCaracteristicas(textRaw) : null };
+  return { tipo: legible ? tipo : NO_LEGIBLE, anio, numero, titulo: anio && numero ? `${anio}-${numero}` : null, partida, placa, acto, precio, montoPagado, montoGravamen, formaPago, fechaPresentacion, fechaAsiento, participantes: legible ? participantes : '', observacion, documentos: legible ? documentos : [], flags, caracteristicas: legible ? parseCaracteristicas(textRaw) : null };
 }
 
 /** Parsea TODOS los asientos que trae el PDF de un título (múltiples actos → múltiples registros). */
