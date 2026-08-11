@@ -2,7 +2,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
-import { pathToFileURL } from 'node:url';
 import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser, type BrowserContext } from 'playwright';
 import { parseAsientos, parseCaracteristicas, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
@@ -77,27 +76,43 @@ function sgDecrypt(b64: string): string | null {
   } catch { return null; }
 }
 
+// pdf.js (CDN) para rasterizar el PDF del asiento a PNG. Se usa el VISOR-NO: render directo a un
+// <canvas> con JS → funciona igual en headless o headed y NO depende del visor de PDF de Chrome (que
+// en el VPS —headless / `--disable-extensions`— salía en blanco). Versión fija (estable).
+const PDFJS_CDN = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174';
+
 /**
- * Guarda el PDF del asiento y lo renderiza a PNG abriéndolo en el visor de PDF del Chrome (headed) por
- * `file://` y capturándolo. Es la captura del ASIENTO de Síguelo (con los datos del vehículo), NO la de
- * SUNARP: usa los bytes que ya trae `listarAsientos`, así no depende de dónde abra el PDF la página del
- * portal. Best-effort: si el render falla, al menos queda el PDF en disco (`historial.pdf`).
+ * Rasteriza a PNG el PDF del ASIENTO de Síguelo (con los datos del vehículo). Usa los BYTES que ya trae
+ * `listarAsientos`, así NO depende de dónde abra el PDF el portal ni del visor de Chrome. Render con
+ * pdf.js sobre un canvas (independiente del entorno). Best-effort: si el render falla (p. ej. la CDN no
+ * responde), deja el PDF en disco (`historial.pdf`) como respaldo; si sale, borra el PDF (solo captura).
  */
 async function renderAsientoShot(ctx: BrowserContext, bytes: number[], pngPath: string): Promise<void> {
   const buf = Buffer.from(bytes.map((n) => (n < 0 ? n + 256 : n))); // bytes firmados −128..127 → 0..255
   const pdfPath = pngPath.replace(/\.png$/i, '.pdf');
-  writeFileSync(pdfPath, buf);
+  writeFileSync(pdfPath, buf); // respaldo por si falla el render
   const pg = await ctx.newPage();
   try {
-    await pg.setViewportSize({ width: 820, height: 1160 }).catch(() => {}); // ~A4 96dpi → cabe la 1ª página
-    // Params del visor de Chrome: sin toolbar ni panel de miniaturas, ajustado al ancho → captura LIMPIA
-    // (solo la página del asiento). Validado con probe local.
-    await pg.goto(`${pathToFileURL(pdfPath).href}#toolbar=0&navpanes=0&view=FitH`, { waitUntil: 'load', timeout: 20000 }).catch(() => {});
-    await pg.waitForTimeout(1800); // deja renderizar el visor de PDF
-    const ok = await pg.screenshot({ path: pngPath }).then(() => true).catch(() => false);
-    // "solo captura": si la imagen salió, se borra el PDF temporal; si el render falló, se DEJA como
-    // respaldo (al menos queda el documento en disco).
-    if (ok) { try { unlinkSync(pdfPath); } catch { /* ya no está */ } }
+    await pg.goto('about:blank').catch(() => {});
+    await pg.addScriptTag({ url: `${PDFJS_CDN}/pdf.min.js` }).catch(() => {});
+    const dataUrl = await pg.evaluate(async ({ b64, worker }) => {
+      const lib = (window as unknown as { pdfjsLib?: any }).pdfjsLib; // eslint-disable-line @typescript-eslint/no-explicit-any
+      if (!lib) return '';
+      lib.GlobalWorkerOptions.workerSrc = worker;
+      const bin = atob(b64); const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      const pdf = await lib.getDocument({ data: arr }).promise;
+      const page = await pdf.getPage(1);
+      const viewport = page.getViewport({ scale: 2 }); // 2× = nítido
+      const canvas = document.createElement('canvas');
+      canvas.width = viewport.width; canvas.height = viewport.height;
+      await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+      return canvas.toDataURL('image/png');
+    }, { b64: buf.toString('base64'), worker: `${PDFJS_CDN}/pdf.worker.min.js` }).catch(() => '');
+    if (dataUrl.startsWith('data:image/png')) {
+      writeFileSync(pngPath, Buffer.from(dataUrl.split(',')[1] ?? '', 'base64'));
+      try { unlinkSync(pdfPath); } catch { /* ya no está */ }
+    }
   } finally { await pg.close().catch(() => {}); }
 }
 
