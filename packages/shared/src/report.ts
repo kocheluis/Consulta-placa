@@ -159,6 +159,10 @@ export interface RevisionTecnica {
   certificate?: string | null;
   /** Tipo de servicio/ámbito del CITV (p. ej. "PROVINCIAL TRANSPORTE ESPECIAL DE PERSONAS - TAXI"). */
   serviceType?: string | null;
+  /** ¿El vehículo es de SERVICIO (taxi/transporte)? Señal robusta (uso registral SPRL + CITV + ATU). Los
+   *  de servicio requieren CITV SEMESTRAL independientemente de ser recientes (a diferencia del particular,
+   *  exento los primeros años). Decide el mensaje: "requiere por ser taxi" vs "aún no requiere". */
+  esServicio?: boolean;
   /** Observaciones REALES del CITV (defectos), ya sin el tipo de servicio mezclado. */
   observaciones?: string | null;
   /** Mención a lunas polarizadas/oscurecidas en el CITV. */

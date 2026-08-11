@@ -1554,7 +1554,10 @@ function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; v
   // el último dígito de la placa. Sin certificado, solo es "vencida" si YA le corresponde; si es
   // nuevo —o no sabemos la edad— NO se alarma.
   const year = vehicle?.year ?? null;
-  const servicio = /taxi|transporte|colectiv|carga|mercanc|servicio/i.test(r.serviceType ?? '');
+  // `esServicio`: señal robusta del transform (uso registral SPRL + CITV + ATU). Fallback: parsear el
+  // tipo de servicio del CITV. Un vehículo de SERVICIO (taxi/transporte) requiere CITV SEMESTRAL desde
+  // temprano — NO está exento por ser reciente, a diferencia del particular.
+  const servicio = r.esServicio ?? /taxi|transporte|colectiv|carga|mercanc|servicio/i.test(r.serviceType ?? '');
   const lastDigit = (params.placa ?? '').replace(/\D/g, '').slice(-1);
   const crono = lastDigit ? CITV_CRONOGRAMA[lastDigit] : undefined;
   const now = new Date();
@@ -1562,20 +1565,30 @@ function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; v
   // Año de la 1ª ITV: particular = 4º año (refYear+3, exento 3 años); servicio = 3er año (refYear+2).
   const dueYear = year != null ? year + (servicio ? 2 : 3) : null;
   const dueMonth = crono?.month ?? 1;
-  const obligado = dueYear != null && (now.getFullYear() > dueYear || (now.getFullYear() === dueYear && now.getMonth() + 1 >= dueMonth));
+  // Un taxi/servicio NUNCA está "exento por nuevo": si no tiene CITV vigente, es una falta (la necesita).
+  const obligado = servicio || (dueYear != null && (now.getFullYear() > dueYear || (now.getFullYear() === dueYear && now.getMonth() + 1 >= dueMonth)));
   const vencida = !r.hasValid && (!noCert || obligado); // tuvo CITV (vencido) o ya obligado sin él
   const cuando = dueYear != null ? `${crono ? `${crono.label} de ` : ''}${dueYear}` : null;
   return (
     <div className="flex flex-col gap-3">
       {r.hasValid ? (
-        <StatusLine tone="success" icon="fact_check">Revisión técnica vigente</StatusLine>
+        <StatusLine tone="success" icon="fact_check">Revisión técnica vigente{servicio ? ' (vehículo de servicio · CITV semestral)' : ''}</StatusLine>
       ) : vencida ? (
-        <StatusLine tone="warning" icon="warning">Revisión técnica vencida o sin registro vigente</StatusLine>
+        <StatusLine tone="warning" icon="warning">
+          {servicio
+            ? 'Revisión técnica vencida — como vehículo de servicio (taxi/transporte) requiere CITV semestral vigente para circular; exige la renovación.'
+            : 'Revisión técnica vencida o sin registro vigente'}
+        </StatusLine>
       ) : (
         <StatusLine tone="success" icon="schedule">
           {cuando
-            ? `Aún no requiere revisión técnica — ${servicio ? 'vehículo de servicio: obligatoria desde el 3er año' : 'particular: obligatoria desde el 4º año'}; le corresponde desde ${cuando}.`
-            : 'Aún no requiere revisión técnica (vehículo nuevo / aún no obligado).'}
+            ? `Aún no requiere revisión técnica — particular: obligatoria desde el 3er año de antigüedad; le corresponde desde ${cuando}.`
+            : 'Aún no requiere revisión técnica (vehículo particular reciente / aún no obligado).'}
+        </StatusLine>
+      )}
+      {servicio && (r.hasValid || r.certificate) && (
+        <StatusLine tone="neutral" icon="local_taxi">
+          Es un vehículo de SERVICIO (taxi/transporte): la revisión técnica es obligatoria de forma SEMESTRAL, por eso figura con CITV aunque el vehículo sea reciente — no es una anomalía.
         </StatusLine>
       )}
       {/lunas|polariza|oscurec/i.test(r.lunasPolarizadas ?? '') && (

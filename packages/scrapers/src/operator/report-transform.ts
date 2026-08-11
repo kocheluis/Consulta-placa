@@ -273,14 +273,15 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
         lastInspection: latest?.vigenteDesde ?? null, validUntil: latest?.vigenteHasta ?? null, result: latest?.resultado ?? null,
         certificate: latest?.nroCertificado ?? null,
         serviceType: (md.tipoServicio as string) ?? null,
+        esServicio: isTaxi,
         observaciones: (md.observaciones as string) ?? null,
         lunasPolarizadas: (md.lunasPolarizadas as string) ?? null,
       };
       src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
     } else if (mtc.status === 'SIN_REGISTRO') {
-      // No hay CITV (auto nuevo / no obligatorio aún): sección disponible y vacía; la web
-      // decide el mensaje según la antigüedad del vehículo ("aún no requiere" vs "vencida").
-      const pay: RevisionTecnica = { hasValid: false, status: null, lastInspection: null, validUntil: null, result: null };
+      // No hay CITV: la web decide el mensaje según la ANTIGÜEDAD y el USO ("aún no requiere" para un
+      // particular reciente vs "vencida/requerida" para un taxi, que la necesita aunque sea nuevo).
+      const pay: RevisionTecnica = { hasValid: false, status: null, lastInspection: null, validUntil: null, result: null, esServicio: isTaxi };
       src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: pay });
     } else {
       src.push({ kind: SectionKind.REVISION_TECNICA, source: SourceId.MTC, status: SectionStatus.UNAVAILABLE, fetchedAt: at });
