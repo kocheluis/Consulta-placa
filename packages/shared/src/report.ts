@@ -573,6 +573,10 @@ export interface Report {
   disclaimer: string;
   vehicle: (VehicleData & { owner: OwnerInfo | null }) | null;
   sections: SectionResult[];
+  /** Instituciones oficiales efectivamente consultadas CON resultado (para el bloque "Fuentes
+   *  consultadas"). Colapsa las fuentes crudas a su institución pública (p. ej. las 3 consultas al SAT
+   *  Lima → "SAT Lima"). Vacío/ausente en reportes viejos → la web cae al set derivado de secciones. */
+  sourcesConsulted?: string[];
   /** true = SUNARP confirmó que la placa NO está registrada (no existe a la fecha). La web muestra un
    *  banner en vez de secciones y NO cobra/consume crédito (no hay datos que entregar). */
   plateNotFound?: boolean;

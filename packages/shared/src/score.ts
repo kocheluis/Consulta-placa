@@ -1,5 +1,8 @@
 import { ScoreConcept, ScoreLevel, SectionKind, SectionStatus } from './enums.js';
-import type { Report, InsurancePolicy, SiniestroIndicator } from './report.js';
+import type {
+  Report, InsurancePolicy, SiniestroIndicator,
+  GravamenesPayload, PapeletasPayload, ImpuestoVehicularPayload, CapturaIndicator,
+} from './report.js';
 
 /**
  * Motor de score del vehículo (nivel PRO). Función PURA y EXPLICABLE:
@@ -12,9 +15,12 @@ import type { Report, InsurancePolicy, SiniestroIndicator } from './report.js';
  *    y se excluye del promedio (se reporta la cobertura por separado).
  *  - Señales críticas (p. ej. robo) fuerzan el veredicto general a BAD.
  *
- * Hoy puntúa con las señales ya disponibles (robo, SOAT, siniestralidad). Los
- * conceptos DEBTS (papeletas/impuesto) y USAGE (revisión técnica, ex-taxi, GNV)
- * quedan `UNKNOWN` hasta conectar sus fuentes; la estructura ya los contempla.
+ * Conceptos activos:
+ *  - LEGAL: robo (dealbreaker) + gravámenes/prendas vigentes (garantía en ejecución topa el veredicto).
+ *  - INSURANCE: SOAT vigente + siniestralidad + pérdida total (topa el veredicto).
+ *  - DEBTS: papeletas pendientes + impuesto vehicular pendiente (SAT) + orden de captura (coactiva, topa).
+ * USAGE (uso/estado) queda FUERA del score por ahora (sin fuente que lo puntúe de forma fiable); su peso
+ * se reparte entre los tres activos. Un concepto sin datos queda `UNKNOWN` y se excluye del promedio.
  */
 
 export interface ConceptScore {
@@ -40,10 +46,10 @@ export interface VehicleScore {
 }
 
 const WEIGHTS: Record<ScoreConcept, number> = {
-  [ScoreConcept.LEGAL]: 0.4,
-  [ScoreConcept.INSURANCE]: 0.3,
-  [ScoreConcept.DEBTS]: 0.15,
-  [ScoreConcept.USAGE]: 0.15,
+  [ScoreConcept.LEGAL]: 0.45,
+  [ScoreConcept.INSURANCE]: 0.35,
+  [ScoreConcept.DEBTS]: 0.2,
+  [ScoreConcept.USAGE]: 0, // desactivado: no se incluye en el cálculo (ver computeScore)
 };
 
 const LABELS: Record<ScoreConcept, string> = {
@@ -91,9 +97,31 @@ function scoreLegal(report: Report): RawConcept {
     return { score: null, reasons: ['Sin datos registrales (SUNARP).'], critical: false };
   }
   if (report.vehicle.stolenAlert) {
-    return { score: 0, reasons: ['Vehículo reportado como robado.'], critical: true };
+    return { score: 0, reasons: ['Anotación de ROBO vigente en SUNARP.'], critical: true };
   }
-  return { score: 100, reasons: ['Sin reporte de robo en SUNARP.'], critical: false };
+  const reasons: string[] = ['Sin anotación de robo en SUNARP.'];
+  let score = 100;
+  let capAt: number | undefined;
+  // Gravámenes/prendas vigentes: el vehículo respalda un crédito. Una garantía normal PENALIZA (hay que
+  // levantarla antes de transferir); una garantía EN EJECUCIÓN (el acreedor está rematando la prenda por
+  // impago) es mucho más grave y TOPA el veredicto general en Alerta.
+  const grav = availablePayload<GravamenesPayload>(report, SectionKind.GRAVAMENES);
+  if (grav) {
+    if (grav.hasLiens) {
+      const enEjecucion = grav.items.some((it) => /EJECUCI/i.test(it.status ?? ''));
+      if (enEjecucion) {
+        score -= 60;
+        capAt = 49;
+        reasons.push('Garantía mobiliaria EN EJECUCIÓN: el acreedor está ejecutando la prenda por falta de pago.');
+      } else {
+        score -= 30;
+        reasons.push('Garantía/prenda vigente: debe levantarse antes de transferir el vehículo.');
+      }
+    } else {
+      reasons.push('Sin gravámenes ni cargas vigentes.');
+    }
+  }
+  return { score: clamp(score), reasons, critical: false, ...(capAt != null ? { capAt } : {}) };
 }
 
 function scoreInsurance(report: Report): RawConcept {
@@ -130,26 +158,49 @@ function scoreInsurance(report: Report): RawConcept {
 }
 
 function scoreDebts(report: Report): RawConcept {
-  // Papeletas / impuesto vehicular: fuente aún no conectada (próximamente).
-  const papeletas = availablePayload<unknown>(report, SectionKind.PAPELETAS);
-  if (papeletas == null) {
-    return { score: null, reasons: ['Multas y deudas: próximamente.'], critical: false };
+  const pap = availablePayload<PapeletasPayload>(report, SectionKind.PAPELETAS);
+  const imp = availablePayload<ImpuestoVehicularPayload>(report, SectionKind.IMPUESTO_VEHICULAR);
+  const cap = availablePayload<CapturaIndicator>(report, SectionKind.CAPTURA);
+  // Ninguna de las fuentes de deuda corrió (típico en BASIC) → sin datos: excluido del promedio.
+  if (!pap && !imp && !cap) {
+    return { score: null, reasons: ['Multas y deudas no consultadas en este nivel.'], critical: false };
   }
-  return { score: 100, reasons: [], critical: false };
-}
-
-function scoreUsage(_report: Report): RawConcept {
-  // Revisión técnica / ex-taxi (ATU) / GNV: fuentes aún no conectadas.
-  return { score: null, reasons: ['Uso y estado: próximamente.'], critical: false };
+  let score = 100;
+  let capAt: number | undefined;
+  const reasons: string[] = [];
+  // Orden de captura (SAT): la deuda escaló a cobranza coactiva y el vehículo puede ser internado → topa.
+  if (cap?.hasCapture) {
+    score -= 60;
+    capAt = 49;
+    reasons.push('Orden de captura vigente (SAT): deuda en cobranza coactiva — el vehículo puede ser internado.');
+  }
+  if (pap) {
+    if (pap.total > 0) {
+      const monto = pap.pendingAmount ?? 0;
+      score -= monto > 0 ? 30 : 20;
+      reasons.push(monto > 0 ? `Papeletas pendientes por S/ ${monto.toFixed(2)}.` : 'Papeletas pendientes de pago.');
+    } else {
+      reasons.push('Sin papeletas pendientes.');
+    }
+  }
+  const satPend = imp?.sat?.pendingTotal ?? 0;
+  if (satPend > 0) {
+    score -= 25;
+    reasons.push(`Impuesto vehicular pendiente por S/ ${satPend.toFixed(2)} en el SAT.`);
+  } else if (imp?.sat?.found) {
+    reasons.push('Impuesto vehicular al día en el SAT.');
+  }
+  return { score: clamp(score), reasons, critical: false, ...(capAt != null ? { capAt } : {}) };
 }
 
 /** Calcula el score del vehículo a partir del reporte ensamblado. */
 export function computeScore(report: Report): VehicleScore {
+  // USAGE (uso/estado) queda fuera: sin fuente que lo puntúe de forma fiable (su peso ya se repartió en
+  // los tres activos). Cuando se conecte, se agrega aquí y se le devuelve su peso.
   const raws: Array<{ concept: ScoreConcept; raw: RawConcept }> = [
     { concept: ScoreConcept.LEGAL, raw: scoreLegal(report) },
     { concept: ScoreConcept.INSURANCE, raw: scoreInsurance(report) },
     { concept: ScoreConcept.DEBTS, raw: scoreDebts(report) },
-    { concept: ScoreConcept.USAGE, raw: scoreUsage(report) },
   ];
 
   const concepts: ConceptScore[] = raws.map(({ concept, raw }) => ({

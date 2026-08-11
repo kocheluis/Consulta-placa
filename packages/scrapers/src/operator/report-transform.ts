@@ -53,6 +53,29 @@ const moneyOrNull = (v: unknown): number | null => {
   return Number.isFinite(n) && n > 0 ? Math.round(n * 100) / 100 : null;
 };
 
+// Fuentes CRUDAS → institución pública, para el bloque "Fuentes consultadas". Varias consultas al mismo
+// portal (SAT_CAPTURA/SAT_PAPELETAS/SAT_IMPUESTO) colapsan a una sola institución ("SAT Lima").
+const SOURCE_INSTITUTION: Record<string, string> = {
+  SUNARP: 'SUNARP', HISTORIAL: 'Síguelo', SIGM: 'SIGM',
+  SAT_CAPTURA: 'SAT Lima', SAT_PAPELETAS: 'SAT Lima', SAT_IMPUESTO: 'SAT Lima',
+  CALLAO_PAPELETAS: 'SAT Callao', MTC_CITV: 'MTC', SBS_SOAT: 'SBS', APESEG_SOAT: 'APESEG',
+  ATU: 'ATU', SUPERBID: 'Superbid', FISE_GNV: 'FISE', INFOGAS_GNV: 'Infogás',
+};
+// Orden estable de exhibición (por relevancia/reconocimiento).
+const INSTITUTION_ORDER = ['SUNARP', 'Síguelo', 'SIGM', 'SAT Lima', 'SAT Callao', 'MTC', 'SBS', 'APESEG', 'ATU', 'Superbid', 'FISE', 'Infogás'];
+
+/** Instituciones consultadas CON resultado (ENCONTRADO/SIN_REGISTRO); las que erraron se omiten para no
+ *  implicar que dieron dato. Ordenadas por INSTITUTION_ORDER. */
+function institutionsConsulted(results: OperatorSourceResult[]): string[] {
+  const set = new Set<string>();
+  for (const r of results) {
+    if (r.status !== 'ENCONTRADO' && r.status !== 'SIN_REGISTRO') continue;
+    const inst = SOURCE_INSTITUTION[r.source];
+    if (inst) set.add(inst);
+  }
+  return INSTITUTION_ORDER.filter((i) => set.has(i));
+}
+
 /** Colapsa espacios/saltos y recorta a `max` para que el reporte no se descuadre. */
 const clip = (v: unknown, max: number): string | null => {
   const s = String(v ?? '').replace(/\s+/g, ' ').trim();
@@ -634,5 +657,6 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   // buildReport agrega COMING_SOON aunque ya aportemos la sección (p. ej. PAPELETAS) → dedupe por kind.
   const seen = new Set<string>();
   report.sections = report.sections.filter((s) => (seen.has(s.kind) ? false : (seen.add(s.kind), true)));
+  report.sourcesConsulted = institutionsConsulted(results);
   return report;
 }

@@ -456,7 +456,12 @@ function ReportView({
   // El reporte de pago aún no está listo → el resto del reporte (gratis) sigue visible; solo el
   // panel PRO/ULTRA muestra la carga (ver <PaidPanelLoading/> en el <main> de abajo).
 
-  const sources = Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
+  // Fuentes consultadas: preferimos la lista a nivel INSTITUCIÓN del reporte (SAT Lima, Síguelo, MTC,
+  // Superbid, FISE, Infogás…). Reportes viejos sin el campo → set derivado de las secciones (colapsado).
+  const sources = report.sourcesConsulted?.length
+    ? report.sourcesConsulted
+    : Array.from(new Set(report.sections.map((s) => s.source).filter(Boolean)));
+  const scoredConcepts = score.concepts.filter((c) => c.score != null);
   const summary = v ? [v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') : 'Vehículo';
 
   return (
@@ -528,28 +533,24 @@ function ReportView({
             )}
           </Card>
 
-          {/* Score por concepto */}
-          <Card title="Score por concepto" icon="insights">
-            <div className="flex flex-col gap-3">
-              {score.concepts.map((c) => (
-                <div key={c.concept} className="flex items-center justify-between gap-2">
-                  <span className="font-body text-sm text-foreground">{c.label}</span>
-                  {c.score != null ? (
+          {/* Score por concepto — solo los conceptos con datos (los no puntuables no se listan). */}
+          {scoredConcepts.length > 0 && (
+            <Card title="Score por concepto" icon="insights">
+              <div className="flex flex-col gap-3">
+                {scoredConcepts.map((c) => (
+                  <div key={c.concept} className="flex items-center justify-between gap-2">
+                    <span className="font-body text-sm text-foreground">{c.label}</span>
                     <span className="flex items-center gap-2">
                       <span className="font-mono text-sm font-bold text-foreground">{c.score}</span>
                       <Badge tone={SCORE_TO_TONE[c.level]} size="sm" icon={null}>
                         {c.level === ScoreLevel.GOOD ? 'OK' : c.level === ScoreLevel.WARNING ? 'Revisar' : 'Alerta'}
                       </Badge>
                     </span>
-                  ) : (
-                    <Badge tone="neutral" size="sm" icon={null}>
-                      Próximamente
-                    </Badge>
-                  )}
-                </div>
-              ))}
-            </div>
-          </Card>
+                  </div>
+                ))}
+              </div>
+            </Card>
+          )}
 
           {sources.length > 0 && (
             <Card padded className="border-azul-200 bg-azul-50">
