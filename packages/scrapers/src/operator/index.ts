@@ -569,9 +569,13 @@ function makeFuelGate(): {
     // llama en Pipeline.submit (sincrónico, antes de rutear a los carriles) → sin carrera.
     arm: (plate) => { waiters.set(plate, create()); },
     resolve: (plate, fuel) => { const w = signal(plate); if (!w.settled) { w.settled = true; w.resolve(fuel); } },
+    // Tope de ESPERA del gate: es solo red de seguridad (el carril historial SIEMPRE resuelve el gate al
+    // terminar, incluso en ERROR). ⚠️ Debe superar el peor historial real: CWC611 tardó 634s (>8 min) con
+    // historial OK y el tope viejo de 8 min mató FISE/Infogas por "dependencia caída" siendo mentira.
+    // Configurable: FUEL_GATE_MS (default 20 min).
     wait: (plate) => Promise.race([
       signal(plate).promise,
-      new Promise<string | null>((r) => { setTimeout(() => r(null), 8 * 60 * 1000); }),
+      new Promise<string | null>((r) => { setTimeout(() => r(null), Number(process.env.FUEL_GATE_MS ?? 20 * 60 * 1000)); }),
     ]),
   };
 }
@@ -867,8 +871,8 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
           const t = await taskQ.take();
           if (!t) break;
           try {
-            // Gate GNV: espera la señal de combustible del SPRL (tope 8 min) y salta si NO es a gas —
-            // así no se gasta captcha en un vehículo que no aplica (FISE/Infogas son solo para GNV).
+            // Gate GNV: espera la señal de combustible del SPRL (tope FUEL_GATE_MS, default 20 min) y
+            // salta si NO es a gas — no se gasta captcha en un vehículo que no aplica (FISE/Infogas = GNV).
             if (GNV_SOURCES.has(t.src)) {
               const fuel = await fuelGate.wait(t.plate);
               // Partida INCOMPLETA en SUNARP → combustible desconocido: se corre IGUAL (por si acaso).

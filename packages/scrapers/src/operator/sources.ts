@@ -144,8 +144,16 @@ export async function runCallao(
     const NODATA = /no hay resultados para mostrar/i;
     let cap = '';
 
+    let sawForm = false;
     for (let i = 1; i <= 5; i++) {
-      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1500); }
+      if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }).catch(() => {}); await wait(1500); }
+      // El portal a ratos sirve la página SIN el formulario (caído/lento del lado del server): si el
+      // input no aparece, recarga y reintenta DENTRO del bucle. Antes el fill lanzaba su timeout de 30s
+      // y mataba la fuente al primer golpe sin usar los 5 reintentos (CWC611, 12-ago-2026 — el portal
+      // estaba vivo minutos después con el mismo DOM).
+      const visible = await valor.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
+      if (!visible) continue;
+      sawForm = true;
       await selectPlaca();
       await valor.fill(plate);
       dialog = '';
@@ -177,7 +185,10 @@ export async function runCallao(
         screenshot: shot, ms: Date.now() - t0 };
     }
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
-    return { ...base, status: 'ERROR', summary: 'Captcha rechazado tras varios intentos', data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
+    // Mensaje honesto según lo que pasó: formulario nunca cargó (portal caído) ≠ captcha rechazado.
+    return { ...base, status: 'ERROR',
+      summary: sawForm ? 'Captcha rechazado tras varios intentos' : 'El formulario del portal de Callao no cargó (portal caído o lento) — reintentar más tarde',
+      data: { captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
   } catch (e) {
     return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
   }
