@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parseSatpPapeletas, parseSatchRows, normalizeInfraccion, RNTV_MULTA } from './sources.js';
+import { parseSatpPapeletas, parseSatchRows, normalizeInfraccion, RNTV_MULTA, parseCajamarcaRecord, parseArequipa } from './sources.js';
 import { toWebReport } from './report-transform.js';
 import { SectionKind, type PapeletasPayload } from '@app/shared';
 import type { OperatorSourceResult } from './index.js';
@@ -57,6 +57,46 @@ describe('SAT Chiclayo (SATCH) · parseSatchRows', () => {
     expect(r.detalle).toHaveLength(2);
     expect(JSON.stringify(r.detalle)).not.toContain('NOMBRE'); // sin infractor/propietario
     expect(r.detalle[0]).toMatchObject({ numero: '1', infraccion: 'G-58', monto: 440 });
+  });
+});
+
+describe('SAT Cajamarca · parseCajamarcaRecord (API JSON)', () => {
+  it('[] → sin papeletas (CHU444 real)', () => {
+    const r = parseCajamarcaRecord([]);
+    expect(r.count).toBe(0);
+    expect(r.total).toBe(0);
+    expect(r.detalle).toHaveLength(0);
+  });
+  it('mapea los campos del JSON y suma montoMulta; NO expone el nombre del infractor (PII)', () => {
+    const r = parseCajamarcaRecord([
+      { nroPapeleta: 'C-001', fechaInfraccion: '10/05/2024', personaInfractorId: 999, nombreInfractor: 'JUAN PEREZ', infraccion: 'G-58', montoMulta: 440, estadoPapeleta: 'Pendiente' },
+      { nroPapeleta: 'C-002', fechaInfraccion: '11/05/2024', nombreInfractor: 'MARIA X', infraccion: 'M-27', montoMulta: 2750, estadoPapeleta: 'Pendiente' },
+    ]);
+    expect(r.count).toBe(2);
+    expect(r.total).toBe(3190);
+    expect(r.detalle[0]).toMatchObject({ numero: 'C-001', fecha: '10/05/2024', infraccion: 'G-58', monto: 440, estado: 'Pendiente' });
+    expect(JSON.stringify(r.detalle)).not.toContain('PEREZ');
+    expect(JSON.stringify(r.detalle)).not.toContain('999'); // ni el personaInfractorId
+  });
+});
+
+describe('SAT Arequipa · parseArequipa (fragmento HTML)', () => {
+  it('alert "No se encontraron resultados" → none', () => {
+    const r = parseArequipa("<script>alert('No se encontraron resultados');window.location='..';</script>");
+    expect(r.none).toBe(true);
+  });
+  it('tabla con filas (fecha+importe) → detalle sin capturar nombres (PII); código y N° por patrón estricto', () => {
+    const html = `<table>
+      <tr><th>Papeleta</th><th>Fecha</th><th>Infractor</th><th>Falta</th><th>Importe</th></tr>
+      <tr><td>1000123456</td><td>15/03/2025</td><td>JUAN PEREZ GARCIA</td><td>M.27</td><td>2,750.00</td></tr>
+      <tr><td>1000987654</td><td>02/07/2024</td><td>MARIA LOPEZ</td><td>G-58</td><td>440.00</td></tr>
+    </table>`;
+    const r = parseArequipa(html);
+    expect(r.none).toBe(false);
+    expect(r.count).toBe(2);
+    expect(r.total).toBe(3190); // 2750 + 440
+    expect(r.detalle[0]).toMatchObject({ numero: '1000123456', fecha: '15/03/2025', infraccion: 'M.27', monto: 2750, estado: 'Pendiente' });
+    expect(JSON.stringify(r.detalle)).not.toContain('PEREZ'); // el nombre NO entra
   });
 });
 

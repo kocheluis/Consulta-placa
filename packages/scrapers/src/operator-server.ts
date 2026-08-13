@@ -65,7 +65,7 @@ const AUTO_SOURCES = process.env.AUTO_SOURCES?.split(',').map((s) => s.trim()).f
   // gas (gate en operator/index.ts); en los demás salen "No aplica" sin gastar captcha/proxy.
   // 'satt-papeletas': SAT Trujillo (récord por placa, SIN captcha); registro con DNI del historial
   // (persona natural) o SATT_DNI/SATT_CELULAR/SATT_CORREO del env (empresa). Gate en operator/index.ts.
-  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'satt-papeletas', 'satp-papeletas', 'satch-papeletas', 'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv'];
+  ?? ['sunarp', 'historial', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas', 'satt-papeletas', 'satp-papeletas', 'satch-papeletas', 'satcaj-papeletas', 'sataqp-papeletas', 'mtc-citv', 'apeseg-soat', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv'];
 // Fuentes del reporte GRATUITO (pedido tier=BASIC): identidad + SOAT + revisión técnica.
 // SOAT vía APESEG (tiempo real, 1 captcha, rápido). NO se corre SBS en BASIC: su escaneo de
 // siniestralidad son 3 tipos = 3 reCAPTCHA (lento) y es un concepto PRO. El paywall hace lo demás.

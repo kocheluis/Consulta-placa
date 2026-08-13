@@ -1,11 +1,14 @@
 // Probe en vivo de las SAT provinciales (récord de papeletas por placa), desde IP residencial.
-// Uso: npx tsx src/probe-sat-prov.ts <satp|satch> <PLACA>
+// Uso: npx tsx src/probe-sat-prov.ts <satp|satch|satcaj|sataqp> <PLACA>
 import { chromium } from 'playwright';
-import { runSatpPapeletas, runSatchPapeletas } from './operator/sources.js';
+import { runSatpPapeletas, runSatchPapeletas, runSatCajamarca, runSatArequipa } from './operator/sources.js';
 
 const which = process.argv[2] ?? 'satp';
 const plate = process.argv[3] ?? 'P2B937';
-const runner = which === 'satch' ? runSatchPapeletas : runSatpPapeletas;
+const RUNNERS: Record<string, typeof runSatpPapeletas> = {
+  satp: runSatpPapeletas, satch: runSatchPapeletas, satcaj: runSatCajamarca, sataqp: runSatArequipa,
+};
+const runner = RUNNERS[which] ?? runSatpPapeletas;
 
 const main = async (): Promise<void> => {
   const browser = await chromium.launch({ headless: true });

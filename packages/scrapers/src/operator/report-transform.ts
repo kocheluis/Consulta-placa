@@ -59,11 +59,12 @@ const SOURCE_INSTITUTION: Record<string, string> = {
   SUNARP: 'SUNARP', HISTORIAL: 'Síguelo', SIGM: 'SIGM',
   SAT_CAPTURA: 'SAT Lima', SAT_PAPELETAS: 'SAT Lima', SAT_IMPUESTO: 'SAT Lima',
   CALLAO_PAPELETAS: 'SAT Callao', SATT_PAPELETAS: 'SATT Trujillo', SATP_PAPELETAS: 'SAT Piura', SATCH_PAPELETAS: 'SAT Chiclayo',
+  SATCAJ_PAPELETAS: 'SAT Cajamarca', SATAQP_PAPELETAS: 'SAT Arequipa',
   MTC_CITV: 'MTC', SBS_SOAT: 'SBS', APESEG_SOAT: 'APESEG',
   ATU: 'ATU', SUPERBID: 'Superbid', FISE_GNV: 'FISE', INFOGAS_GNV: 'Infogás',
 };
 // Orden estable de exhibición (por relevancia/reconocimiento).
-const INSTITUTION_ORDER = ['SUNARP', 'Síguelo', 'SIGM', 'SAT Lima', 'SAT Callao', 'SATT Trujillo', 'SAT Piura', 'SAT Chiclayo', 'MTC', 'SBS', 'APESEG', 'ATU', 'Superbid', 'FISE', 'Infogás'];
+const INSTITUTION_ORDER = ['SUNARP', 'Síguelo', 'SIGM', 'SAT Lima', 'SAT Callao', 'SATT Trujillo', 'SAT Piura', 'SAT Chiclayo', 'SAT Cajamarca', 'SAT Arequipa', 'MTC', 'SBS', 'APESEG', 'ATU', 'Superbid', 'FISE', 'Infogás'];
 
 /** Instituciones consultadas CON resultado (ENCONTRADO/SIN_REGISTRO); las que erraron se omiten para no
  *  implicar que dieron dato. Ordenadas por INSTITUTION_ORDER. */
@@ -269,7 +270,9 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   const satt = by('SATT_PAPELETAS');
   const satp = by('SATP_PAPELETAS');
   const satch = by('SATCH_PAPELETAS');
-  if (satP || callao || satt || satp || satch) {
+  const satcaj = by('SATCAJ_PAPELETAS');
+  const sataqp = by('SATAQP_PAPELETAS');
+  if (satP || callao || satt || satp || satch || satcaj || sataqp) {
     const items: PapeletaItem[] = [];
     const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
     const limaCount = satP?.status === 'ENCONTRADO' ? num(data(satP).count) : 0;
@@ -299,16 +302,28 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     if (satch?.status === 'ENCONTRADO') {
       items.push({ type: `Papeletas Chiclayo${satchCount ? ` (${satchCount})` : ''}${satchEstimado ? ' · monto estimado' : ''}`, entity: 'SAT Chiclayo', date: null, amount: satchAmt, status: 'PENDIENTE' });
     }
-    const anyOk = [satP, callao, satt, satp, satch].some((r) => r && r.status !== 'ERROR');
+    const satcajAmt = satcaj?.status === 'ENCONTRADO' ? num(data(satcaj).total) : 0;
+    const satcajCount = satcaj?.status === 'ENCONTRADO' ? num(data(satcaj).count) : 0;
+    if (satcaj?.status === 'ENCONTRADO') {
+      items.push({ type: `Papeletas Cajamarca${satcajCount ? ` (${satcajCount})` : ''}`, entity: 'SAT Cajamarca', date: null, amount: satcajAmt, status: 'PENDIENTE' });
+    }
+    const sataqpAmt = sataqp?.status === 'ENCONTRADO' ? num(data(sataqp).total) : 0;
+    const sataqpCount = sataqp?.status === 'ENCONTRADO' ? num(data(sataqp).count) : 0;
+    if (sataqp?.status === 'ENCONTRADO') {
+      items.push({ type: `Papeletas Arequipa${sataqpCount ? ` (${sataqpCount})` : ''}`, entity: 'SAT Arequipa', date: null, amount: sataqpAmt, status: 'PENDIENTE' });
+    }
+    const anyOk = [satP, callao, satt, satp, satch, satcaj, sataqp].some((r) => r && r.status !== 'ERROR');
     const checkedScopes: string[] = [];
     if (satP && satP.status !== 'ERROR') checkedScopes.push('Lima (SAT)');
     if (callao && callao.status !== 'ERROR') checkedScopes.push('Callao');
     if (satt && satt.status !== 'ERROR') checkedScopes.push('Trujillo (SATT)');
     if (satp && satp.status !== 'ERROR') checkedScopes.push('Piura (SATP)');
     if (satch && satch.status !== 'ERROR') checkedScopes.push('Chiclayo (SATCH)');
+    if (satcaj && satcaj.status !== 'ERROR') checkedScopes.push('Cajamarca (SAT)');
+    if (sataqp && sataqp.status !== 'ERROR') checkedScopes.push('Arequipa (SAT)');
     const benefitAmount = callao?.status === 'ENCONTRADO' ? num(data(callao).benefit) : 0;
     const benefitUntil = callao?.status === 'ENCONTRADO' ? ((data(callao).benefitUntil as string | null | undefined) ?? null) : null;
-    const papeletaCount = limaCount + callaoCount + sattCount + satpCount + satchCount;
+    const papeletaCount = limaCount + callaoCount + sattCount + satpCount + satchCount + satcajCount + sataqpCount;
     // Detalle COMBINADO de todas las jurisdicciones: cada fila se etiqueta con su `entity` y, cuando el
     // portal no publica el importe (Chiclayo), el monto viene ESTIMADO por la tabla RNTV (estimado=true).
     const scopeDetalle = (r: OperatorSourceResult | undefined, entity: string, estimado: boolean): PapeletaDetalle[] =>
@@ -319,11 +334,13 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       ...scopeDetalle(satt, 'SATT Trujillo', false),
       ...scopeDetalle(satp, 'SAT Piura', false),
       ...scopeDetalle(satch, 'SAT Chiclayo', true),
+      ...scopeDetalle(satcaj, 'SAT Cajamarca', false),
+      ...scopeDetalle(sataqp, 'SAT Arequipa', false),
     ];
     const pay: PapeletasPayload = {
       total: items.length,
       ...(papeletaCount > 0 ? { count: papeletaCount } : {}),
-      pendingAmount: Math.round((limaAmt + callaoAmt + sattAmt + satpAmt + satchAmt) * 100) / 100,
+      pendingAmount: Math.round((limaAmt + callaoAmt + sattAmt + satpAmt + satchAmt + satcajAmt + sataqpAmt) * 100) / 100,
       items, checkedScopes,
       ...(allDetalle.length ? { detalle: allDetalle } : {}),
       ...(benefitAmount > 0 ? { benefitAmount, benefitUntil } : {}),

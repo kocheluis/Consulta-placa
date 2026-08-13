@@ -1065,6 +1065,127 @@ export async function runSatchPapeletas(
   }
 }
 
+/* ───────────────── SAT Cajamarca · Record de vehículo por placa (API JSON, SIN captcha) ───────────────── */
+// satcajamarca.gob.pe/consultas = Vue SPA; el BUSCAR de "Inf. Tránsito · Placa Vehículo" hace
+// **GET `/record_vehiculo?placa=X`** (jQuery ajax type GET) → JSON array. Cada fila (visto en el template
+// Vue): {nroPapeleta, fechaInfraccion, personaInfractorId, nombreInfractor, infraccion, montoMulta,
+// estadoPapeleta}. `[]` = sin papeletas. Total = Σ montoMulta. Validado 13-ago (CHU444 → []). ⚠ PII:
+// nombreInfractor/personaInfractorId son de terceros (Ley 29733) → NO se exponen (solo N°/fecha/código/
+// monto/estado). Sin monto explícito no aplica (la API SÍ trae montoMulta).
+export function parseCajamarcaRecord(rows: Array<Record<string, unknown>>): { count: number; total: number; detalle: PapeletaDetalle[] } {
+  const toNum = (v: unknown): number => { const n = Number(v); return Number.isFinite(n) ? Math.round(n * 100) / 100 : 0; };
+  const detalle: PapeletaDetalle[] = rows.map((r) => ({
+    numero: r.nroPapeleta != null ? String(r.nroPapeleta) : null,
+    fecha: (r.fechaInfraccion as string) || null,
+    infraccion: (r.infraccion as string) || null,
+    monto: toNum(r.montoMulta) || null,
+    estado: (r.estadoPapeleta as string) || null,
+  }));
+  const total = Math.round(detalle.reduce((a, d) => a + (d.monto ?? 0), 0) * 100) / 100;
+  return { count: detalle.length, total, detalle };
+}
+
+export async function runSatCajamarca(
+  page: Page,
+  plate: string,
+  _solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SATCAJ_PAPELETAS', label: 'SAT Cajamarca · Papeletas', category: 'PAPELETAS' };
+  const placa = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase(); // sin guion
+  try {
+    await page.goto('https://www.satcajamarca.gob.pe/consultas', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // La API es del MISMO origen → fetch in-page (conserva cookies). `/record_vehiculo?placa=` (el 301
+    // solo quita la barra final). Sin funciones-helper con nombre dentro del evaluate (landmine __name).
+    const json = await page.evaluate(async (pl) => {
+      const res = await fetch('/record_vehiculo?placa=' + encodeURIComponent(pl), { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
+      try { return await res.json(); } catch { return null; }
+    }, placa);
+    if (!Array.isArray(json)) return { ...base, status: 'ERROR', summary: 'Respuesta no reconocida del SAT Cajamarca', ms: Date.now() - t0 };
+    const r = parseCajamarcaRecord(json as Array<Record<string, unknown>>);
+    // Evidencia: la API no da página → se pinta una tabla mínima (SIN el conductor, PII) y se captura.
+    await page.evaluate((d: { placa: string; rows: PapeletaDetalle[]; total: number }) => {
+      const body = d.rows.map((x, i) => `<tr><td>${i + 1}</td><td>${x.numero ?? ''}</td><td>${x.fecha ?? ''}</td><td>${x.infraccion ?? ''}</td><td style="text-align:right">${x.monto ?? ''}</td><td>${x.estado ?? ''}</td></tr>`).join('');
+      document.body.innerHTML = `<div style="font-family:Arial;padding:18px;color:#222"><h3>SAT Cajamarca — Record de Vehículo · Placa ${d.placa}</h3><table border="1" cellpadding="6" style="border-collapse:collapse;font-size:14px"><thead style="background:#1f2a44;color:#fff"><tr><th>Item</th><th>Papeleta</th><th>Fecha</th><th>Infracción</th><th>Importe (S/)</th><th>Estado</th></tr></thead><tbody>${body || '<tr><td colspan="6" style="text-align:center">Sin papeletas</td></tr>'}</tbody></table><h4 style="color:#b00">Total: S/ ${d.total.toFixed(2)}</h4></div>`;
+    }, { placa, rows: r.detalle, total: r.total });
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    if (r.count === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Cajamarca (SAT)', data: { total: 0, count: 0 }, screenshot: shot, ms: Date.now() - t0 };
+    return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Cajamarca (${r.count}) · S/ ${r.total.toFixed(2)}`, data: { total: r.total, count: r.count, detalle: r.detalle }, screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+/* ───────────────── SAT Arequipa (Muni) · Infracciones pendientes por placa (POST, SIN captcha) ───────────────── */
+// muniarequipa.gob.pe/oficina-virtual/c0nInfrPermisos/faltas/papeletas.php → AJAX **POST `buscar.php`
+// {placa}** (el reCAPTCHA del portal está COMENTADO → no se pide). Devuelve un fragmento HTML que se
+// inyecta en `#resultado`; sin papeletas = `<script>alert('No se encontraron resultados')…`. Título:
+// "CONSULTA DE INFRACCIONES POR PLACA (PENDIENTES)" → lo que lista son PENDIENTES. ⚠ Estructura de la
+// tabla de resultados SIN validar (no hubo placa con papeletas) → parser best-effort anclado por fecha +
+// importe, con patrones ESTRICTOS para no capturar nombres (PII). `data.texto` guarda el crudo para
+// afinar cuando se valide con una placa con deuda.
+function htmlRows(html: string): string[][] {
+  const body = html.replace(/<(script|style)[\s\S]*?<\/\1>/gi, ' ');
+  return [...body.matchAll(/<tr[^>]*>([\s\S]*?)<\/tr>/gi)].map((m) =>
+    [...m[1]!.matchAll(/<t[dh][^>]*>([\s\S]*?)<\/t[dh]>/gi)].map((c) => c[1]!.replace(/<[^>]*>/g, ' ').replace(/&nbsp;/gi, ' ').replace(/\s+/g, ' ').trim()));
+}
+
+export function parseArequipa(html: string): { none: boolean; count: number; total: number; detalle: PapeletaDetalle[] } {
+  if (/no se encontraron resultados/i.test(html)) return { none: true, count: 0, total: 0, detalle: [] };
+  const toNum = (s: string): number => Math.round((parseFloat(String(s).replace(/,/g, '')) || 0) * 100) / 100;
+  const detalle: PapeletaDetalle[] = [];
+  for (const c of htmlRows(html)) {
+    const fecha = c.find((x) => /^\d{2}\/\d{2}\/\d{4}$/.test(x)) ?? null;
+    if (!fecha) continue; // solo filas de dato (descarta cabeceras / pie sin fecha)
+    const monto = [...c].reverse().find((x) => /^\d[\d,]*\.\d{2}$/.test(x));
+    // Patrones ESTRICTOS: un código de falta ("M.27"/"G-58") y un N° largo de dígitos — así NO capturamos
+    // el nombre del infractor/propietario (PII) que pueda venir en otras columnas.
+    const infraccion = c.find((x) => /^[A-Z]{1,3}[-.]?\d{1,3}$/.test(x)) ?? null;
+    const numero = c.filter((x) => /^\d{6,}$/.test(x)).sort((a, b) => b.length - a.length)[0] ?? null;
+    detalle.push({ numero, fecha, infraccion, monto: monto ? toNum(monto) : null, estado: 'Pendiente' });
+  }
+  const total = Math.round(detalle.reduce((a, d) => a + (d.monto ?? 0), 0) * 100) / 100;
+  return { none: false, count: detalle.length, total, detalle };
+}
+
+export async function runSatArequipa(
+  page: Page,
+  plate: string,
+  _solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SATAQP_PAPELETAS', label: 'SAT Arequipa · Papeletas', category: 'PAPELETAS' };
+  const placa = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase(); // sin guion
+  const PAGE_URL = 'https://www.muniarequipa.gob.pe/oficina-virtual/c0nInfrPermisos/faltas/papeletas.php';
+  try {
+    await page.goto(PAGE_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const html = await page.evaluate(async (pl) => {
+      const res = await fetch('buscar.php', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded', 'X-Requested-With': 'XMLHttpRequest' }, body: 'placa=' + encodeURIComponent(pl) });
+      return await res.text();
+    }, placa);
+    const r = parseArequipa(html);
+    if (r.none) {
+      await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+      return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas pendientes en Arequipa (SAT)', data: { total: 0, count: 0 }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    // Evidencia: inyecta el fragmento del portal (sin sus <script> de alert/redirect) en #resultado.
+    await page.evaluate((frag: string) => {
+      const el = document.querySelector('#resultado') ?? document.body;
+      el.innerHTML = frag.replace(/<script[\s\S]*?<\/script>/gi, '');
+    }, html);
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    if (r.count > 0 || r.total > 0) {
+      return { ...base, status: 'ENCONTRADO', summary: `Papeletas pendientes en Arequipa (${r.count}) · S/ ${r.total.toFixed(2)}`,
+        data: { total: r.total, count: r.count, detalle: r.detalle, texto: html.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim().slice(0, 3000) }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    return { ...base, status: 'ERROR', summary: 'Respuesta con resultado pero sin filas reconocidas (validar estructura)', data: { texto: html.slice(0, 3000) }, screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
 /* ───────────────── ATU · Taxi/transporte (captcha imagen) ───────────────── */
 // El portal migró a soluciones.atu.gob.pe (antes sistemas.atu.gob.pe). Form: placa +
 // código de verificación (imagen) + "Buscar". Si la placa está habilitada, muestra

@@ -33,6 +33,8 @@ import {
   runSattPapeletas,
   runSatpPapeletas,
   runSatchPapeletas,
+  runSatCajamarca,
+  runSatArequipa,
   histDniSignal,
   isGasVehicle,
   type OperatorSourceResult,
@@ -56,6 +58,8 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'satt-papeletas': runSattPapeletas, // SATT Trujillo · récord de papeletas por placa (SIN captcha)
   'satp-papeletas': runSatpPapeletas, // SAT Piura · papeletas por placa (SIN captcha; monto explícito)
   'satch-papeletas': runSatchPapeletas, // SAT Chiclayo · récord por placa (SIN captcha; monto estimado RNTV)
+  'satcaj-papeletas': runSatCajamarca, // SAT Cajamarca · API JSON /record_vehiculo (SIN captcha)
+  'sataqp-papeletas': runSatArequipa, // SAT Arequipa (Muni) · POST buscar.php (SIN captcha)
   // 'atu' NO va aquí: corre por CDP (Chrome real + reCAPTCHA v3 nativo) vía runAtuSource.
 };
 
@@ -79,6 +83,8 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'satt-papeletas', label: 'SATT Trujillo · Papeletas (récord por placa, sin captcha)', default: true },
   { id: 'satp-papeletas', label: 'SAT Piura · Papeletas (por placa, sin captcha)', default: true },
   { id: 'satch-papeletas', label: 'SAT Chiclayo · Papeletas (por placa, monto estimado RNTV)', default: true },
+  { id: 'satcaj-papeletas', label: 'SAT Cajamarca · Papeletas (por placa, sin captcha)', default: true },
+  { id: 'sataqp-papeletas', label: 'SAT Arequipa · Papeletas pendientes (por placa, sin captcha)', default: true },
   { id: 'sunarp', label: 'SUNARP · Identidad y titular (CDP · Chrome)', default: false },
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },
@@ -780,7 +786,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
 const NON_HISTORIAL_SOURCES = [
   'sunarp', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas',
   'mtc-citv', 'apeseg-soat', 'sat-impuesto', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv',
-  'satt-papeletas', 'satp-papeletas', 'satch-papeletas',
+  'satt-papeletas', 'satp-papeletas', 'satch-papeletas', 'satcaj-papeletas', 'sataqp-papeletas',
 ];
 
 export interface ContinuousLaneOpts extends BatchLaneOpts {
