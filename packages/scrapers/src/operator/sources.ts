@@ -801,6 +801,116 @@ export async function runSatPapeletas(
   }
 }
 
+/* ───────────────── SATT Trujillo · Récord de papeletas por placa (SIN captcha) ───────────────── */
+// satt.gob.pe/servicios/record-de-infracciones = wrapper Joomla → iframe ASP clásico en
+// digital.satt.gob.pe. Flujo real (validado 13-ago-2026, EGU-257):
+//  (1) registro.asp: form GET {txtdni, txtcelular, txtcorreo} → inserta_datos.asp (captura de datos
+//      del portal; NO valida nada contra la placa) → auto-submit JS a papeletas.html.
+//      ⚠ El input DNI trae un onChange que auto-submitea a OTRO .asp → se navega DIRECTO a
+//      inserta_datos.asp por URL (mismo efecto, sin la mina).
+//  (2) papeletas.html: form frmPLACA {txtdescripcion: placa CON GUION (el JS lo exige), CboBusqueda 03}
+//      → POST KM_WEB_Record.asp = "RECORD DE PAPELETAS POR PLACA" (tabla Afecta·Fecha·Papeleta·Inf.·
+//      Estado·Obligado·Total; sin papeletas = "El propietario de la placa en consulta no presenta
+//      papeletas" + "Total de Papeletas 0 · S/. 0.00"). La CAPTURA de esa página es la evidencia.
+// Identidad del registro: dueño PERSONA NATURAL → un DNI del historial (gate en index.ts); dueño
+// EMPRESA o sin historial → SATT_DNI del env. SATT_CELULAR/SATT_CORREO del env o generados.
+// ⚠ PII: NO se hardcodea ningún DNI/correo real en el repo (es público) — todo por env (placape.env).
+const SATT_BASE = 'https://digital.satt.gob.pe/sigo/servicios/Record%20de%20Infracciones';
+
+/** Placa en el formato del SATT (exige guion): ABC123→ABC-123, AC2399→AC-2399 (motos 2+4). */
+export function formatPlacaSatt(plate: string): string {
+  const p = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase();
+  if (/^[A-Z]{2}\d{4}$/.test(p)) return `${p.slice(0, 2)}-${p.slice(2)}`;
+  return p.length > 3 ? `${p.slice(0, 3)}-${p.slice(3)}` : p;
+}
+
+/** Parsea el texto (innerText) del resultado KM_WEB_Record.asp. Filas ancladas por fecha dd/mm/aaaa
+ *  + un decimal al final (así se descarta el pie "Emitido el : dd/mm/aaaa", sin importes). */
+export function parseSattRecord(bodyRaw: string): { none: boolean; count: number; total: number; detalle: PapeletaDetalle[] } {
+  const body = bodyRaw.replace(/[ \t]+/g, ' ');
+  const toNum = (s: string): number => Math.round((parseFloat(String(s).replace(/,/g, '')) || 0) * 100) / 100;
+  const none = /no presenta papeletas/i.test(body);
+  const count = Number(body.match(/Total de Papeletas\s*:?\s*(\d+)/i)?.[1] ?? 0);
+  const total = toNum(body.match(/Total de Papeletas\s*:?\s*\d+[\s\S]{0,120}?S\/\.?\s*([\d.,]+)/i)?.[1] ?? '0');
+  const RX_ESTADO = /(pendiente|cancelad\w*|coactiv\w*|anulad\w*|fraccionad\w*|pagad\w*)/i;
+  const detalle: PapeletaDetalle[] = [];
+  for (const raw of bodyRaw.split(/\r?\n/)) {
+    const line = raw.replace(/\s+/g, ' ').trim();
+    const tokens = line.split(' ');
+    const di = tokens.findIndex((t) => /^\d{2}\/\d{2}\/\d{4}$/.test(t));
+    if (di < 0) continue;
+    const decimals = tokens.slice(di + 1).filter((t) => /^\d[\d,]*\.\d{2}$/.test(t));
+    if (!decimals.length) continue; // cabecera / "Emitido el" — sin importes
+    const papeleta = (tokens[di + 1] || '').trim() || null;            // N° de papeleta
+    const inf = tokens[di + 2] && !/^\d[\d,]*\.\d{2}$/.test(tokens[di + 2]!) ? tokens[di + 2]! : null; // código Inf.
+    detalle.push({ numero: papeleta, fecha: tokens[di]!, infraccion: inf, monto: toNum(decimals[decimals.length - 1] ?? '0') || null, estado: RX_ESTADO.exec(line)?.[1] ?? null });
+  }
+  return { none, count, total, detalle };
+}
+
+export async function runSattPapeletas(
+  page: Page,
+  plate: string,
+  _solver: CaptchaSolver,
+  shot: string,
+  registroDni?: string | null,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SATT_PAPELETAS', label: 'SATT Trujillo · Papeletas', category: 'PAPELETAS' };
+  try {
+    const dni = (registroDni && /^\d{8}$/.test(registroDni) ? registroDni : null) ?? process.env.SATT_DNI ?? null;
+    if (!dni) {
+      return { ...base, status: 'ERROR', summary: 'Sin DNI para el registro del SATT (dueño empresa o sin historial, y SATT_DNI no está en el env)', ms: Date.now() - t0 };
+    }
+    const celular = process.env.SATT_CELULAR ?? `9${String(Math.floor(Math.random() * 1e8)).padStart(8, '0')}`;
+    const correo = process.env.SATT_CORREO ?? `consulta_${dni}@example.com`;
+    // (1) Registro (GET por URL): mismo efecto que llenar el form, sin el onChange traicionero.
+    const qs = new URLSearchParams({ txtdni: dni, txtcelular: celular, txtcorreo: correo, B1: 'CONSULTAR RECORD DE PAPELETA' });
+    await page.goto(`${SATT_BASE}/inserta_datos.asp?${qs.toString()}`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    // inserta_datos.asp auto-submitea (JS) a papeletas.html → espera el form de búsqueda.
+    const placaInput = page.locator('form[name="frmPLACA"] input[name="txtdescripcion"]');
+    await placaInput.waitFor({ state: 'visible', timeout: 15000 });
+    // (2) Búsqueda por placa (solo placa — el documento NO es necesario para el resultado).
+    await placaInput.fill(formatPlacaSatt(plate));
+    await page.locator('form[name="frmPLACA"] input[type="submit"]').click();
+    // Resultado (POST server-side): sondea hasta que la página del récord esté pintada.
+    for (let k = 0; k < 20; k++) {
+      const b = await page.locator('body').innerText().catch(() => '');
+      if (/RECORD DE PAPELETAS|no presenta papeletas|Total de Papeletas/i.test(b)) break;
+      await wait(300);
+    }
+    const body = await page.locator('body').innerText().catch(() => '');
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {}); // evidencia = página del récord
+    const r = parseSattRecord(body);
+    const dniMasked = `${dni.slice(0, 3)}*****`; // trazabilidad sin exponer el DNI completo
+    if (r.none || (/Total de Papeletas/i.test(body) && r.count === 0)) {
+      return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Trujillo (SATT)', data: { total: 0, count: 0, registroDni: dniMasked }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    if (r.count > 0 || r.detalle.length > 0) {
+      const count = r.count || r.detalle.length;
+      const total = r.total || Math.round(r.detalle.reduce((a, d) => a + (d.monto ?? 0), 0) * 100) / 100;
+      return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Trujillo (${count}) · S/ ${total.toFixed(2)}`,
+        data: { total, count, detalle: r.detalle, registroDni: dniMasked, texto: body.slice(0, 4000) }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    return { ...base, status: 'ERROR', summary: 'Respuesta no reconocida del SATT', screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+/** DNI de una PERSONA NATURAL en el historial (para el registro del SATT): primer "DNI ########" en
+ *  los participantes del timeline. Dueño EMPRESA (solo RUC) o historial caído → null → identidad del
+ *  env. Dato crudo del motor (la máscara del reporte vive en report-transform). */
+export function histDniSignal(
+  result: { timeline?: Array<{ participantes?: string }> } | null | undefined,
+): string | null {
+  for (const t of result?.timeline ?? []) {
+    const m = /\bDNI\s*:?\s*(\d{8})\b/i.exec(String(t?.participantes ?? ''));
+    if (m) return m[1]!;
+  }
+  return null;
+}
+
 /* ───────────────── ATU · Taxi/transporte (captcha imagen) ───────────────── */
 // El portal migró a soluciones.atu.gob.pe (antes sistemas.atu.gob.pe). Form: placa +
 // código de verificación (imagen) + "Buscar". Si la placa está habilitada, muestra

@@ -30,6 +30,8 @@ import {
   runSbs,
   runFiseGnv,
   runInfogas,
+  runSattPapeletas,
+  histDniSignal,
   isGasVehicle,
   type OperatorSourceResult,
 } from './sources.js';
@@ -49,6 +51,7 @@ const SOURCE_RUNNERS: Record<string, Runner> = {
   'sat-impuesto': runSatImpuesto, // VALIDA el pago del impuesto vehicular por placa (SAT Lima; Capa B)
   'fise-gnv': runFiseGnv, // deuda del crédito de conversión GNV (FISE, reCAPTCHA v3 → API JSON)
   'infogas-gnv': runInfogas, // estado GNV + ¿tiene crédito? (Infogas, reCAPTCHA v2). ⚠ Cloudflare delante
+  'satt-papeletas': runSattPapeletas, // SATT Trujillo · récord de papeletas por placa (SIN captcha)
   // 'atu' NO va aquí: corre por CDP (Chrome real + reCAPTCHA v3 nativo) vía runAtuSource.
 };
 
@@ -69,6 +72,7 @@ export const OPERATOR_SOURCES: Array<{ id: string; label: string; default: boole
   { id: 'sigm', label: 'SIGM · Gravámenes / garantías mobiliarias (CDP)', default: true },
   { id: 'fise-gnv', label: 'FISE · Deuda del crédito de conversión GNV', default: false },
   { id: 'infogas-gnv', label: 'Infogas · Estado GNV / ¿tiene crédito? (⚠ Cloudflare)', default: false },
+  { id: 'satt-papeletas', label: 'SATT Trujillo · Papeletas (récord por placa, sin captcha)', default: true },
   { id: 'sunarp', label: 'SUNARP · Identidad y titular (CDP · Chrome)', default: false },
   { id: 'historial', label: 'SPRL+Síguelo · Historial, precios y banderas (CDP)', default: false },
   { id: 'superbid', label: 'Superbid · ¿en subasta? (siniestro/remate, experimental)', default: false },
@@ -90,6 +94,9 @@ export interface OperatorReportOptions {
   timeoutMs?: number;
   /** SUNARP CDP: más margen para que el operador resuelva el Turnstile a mano. */
   manualSunarp?: boolean;
+  /** SATT Trujillo: DNI del historial para el registro del portal (dueño persona natural). null/ausente
+   *  → el runner usa SATT_DNI del env (dueño empresa, historial caído o retry suelto de la consola). */
+  sattDni?: string | null;
 }
 
 export interface OperatorReport {
@@ -237,7 +244,10 @@ export async function runSingleSource(
   const browser = await chromium.launch({ headless: opts.headless ?? true, ...(proxy ? { proxy } : {}) });
   try {
     const ctx = await browser.newContext({ locale: 'es-PE' });
-    const r = await withPage(ctx, (p) => runner(p, plate, solver, shot));
+    // SATT recibe además el DNI del historial (5º arg); las demás fuentes usan la firma estándar.
+    const r = await withPage(ctx, (p) => sourceId === 'satt-papeletas'
+      ? runSattPapeletas(p, plate, solver, shot, opts.sattDni ?? null)
+      : runner(p, plate, solver, shot));
     logLine(opts.outDir, sourceId, resultLog(r));
     return r;
   } catch (e) {
@@ -684,6 +694,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
   const solver = (): CaptchaSolver => createCaptchaSolver({ provider: opts.captchaProvider ?? 'capsolver', apiKey: opts.captchaApiKey });
   const lanes: Array<{ sources: string[]; run: Lane }> = [];
   const fuelGate = makeFuelGate(); // gate GNV: historial resuelve el combustible; FISE/Infogas esperan
+  const dniGate = makeFuelGate(); // gate SATT: historial resuelve un DNI del dueño (persona natural)
 
   // Historial: 2 hilos SPRL (1 login por cuenta, reúso de sesión entre placas).
   lanes.push({ sources: ['historial'], run: async (plates, report) => {
@@ -691,6 +702,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
     await runHistorialPool(plates.map((p) => p.plate), {
       onResult: (pr) => {
         fuelGate.resolve(pr.plate, gasFuelSignal(pr.result)); // libera el gate GNV (gas robusto: ficha + conversión)
+        dniGate.resolve(pr.plate, histDniSignal(pr.result)); // libera el gate SATT (DNI del historial o null)
         report(pr.plate, mapHistorial(pr.result, pr.ms, join(outBy.get(pr.plate) ?? '', 'historial.png')));
       },
     });
@@ -712,6 +724,19 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
           }
           try { report(p.plate, await runSingleSource(p.plate, id, baseOpts(p.outDir))); }
           catch (e) { report(p.plate, { source: id.toUpperCase().replace(/-/g, '_'), label: id, category: 'GNV', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
+        }
+      } });
+      continue;
+    }
+    // SATT Trujillo: el registro usa un DNI del historial cuando el dueño es persona natural → espera
+    // la señal (empresa/historial caído → null → identidad del env). A diferencia de GNV, NUNCA
+    // dep-falla: SATT corre siempre (el DNI solo cambia con quién se registra la consulta).
+    if (id === 'satt-papeletas') {
+      lanes.push({ sources: [id], run: async (plates, report) => {
+        for (const p of plates) {
+          const dni = await dniGate.wait(p.plate);
+          try { report(p.plate, await runSingleSource(p.plate, id, { ...baseOpts(p.outDir), sattDni: dni })); }
+          catch (e) { report(p.plate, { source: 'SATT_PAPELETAS', label: id, category: 'PAPELETAS', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
         }
       } });
       continue;
@@ -749,6 +774,7 @@ export function buildBatchLanes(opts: BatchLaneOpts): Array<{ sources: string[];
 const NON_HISTORIAL_SOURCES = [
   'sunarp', 'superbid', 'sat-captura', 'sat-papeletas', 'callao-papeletas',
   'mtc-citv', 'apeseg-soat', 'sat-impuesto', 'sbs-soat', 'atu', 'sigm', 'fise-gnv', 'infogas-gnv',
+  'satt-papeletas',
 ];
 
 export interface ContinuousLaneOpts extends BatchLaneOpts {
@@ -775,6 +801,9 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
   // (o si el SPRL falla → fuel null) la señal resuelve null y GNV se SALTA (no se confirma gas).
   // Bounded por la vida del motor (se limpia en cada deploy/reinicio).
   const fuelGate = makeFuelGate();
+  // Gate SATT (misma maquinaria): el historial resuelve un DNI de persona natural del timeline; el
+  // carril ligero lo espera antes de correr satt-papeletas (empresa/caído → null → identidad del env).
+  const dniGate = makeFuelGate();
   // Gate de EXISTENCIA (ver makeExistGate): el carril ligero corre SUNARP PRIMERO y resuelve si la placa
   // existe; el carril de historial (y las demás fuentes ligeras) lo consultan para SALTARSE una placa
   // inexistente sin gastar tiempo/captcha (evita los ~90-280s de apeseg/historial para una placa que no
@@ -802,6 +831,7 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
           if (exists === false) {
             report(it.plate, plateNotFoundSkip('historial'));
             fuelGate.resolve(it.plate, null); // que el gate GNV no cuelgue por el historial saltado
+            dniGate.resolve(it.plate, null); // ídem gate SATT
             continue; // toma la siguiente
           }
           startLog(it.outDir, 'historial', it.plate); // crea historial.log
@@ -816,6 +846,7 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
         // heartbeatMs / cooldownMs: default desde el entorno (HISTORIAL_HEARTBEAT_MS / HISTORIAL_LOCKOUT_COOLDOWN_MS).
         onResult: (pr) => {
           fuelGate.resolve(pr.plate, gasFuelSignal(pr.result)); // libera el gate GNV (gas robusto: ficha + conversión)
+          dniGate.resolve(pr.plate, histDniSignal(pr.result)); // libera el gate SATT (DNI del historial o null)
           report(pr.plate, mapHistorial(pr.result, pr.ms, join(outByPlate.get(pr.plate) ?? '', 'historial.png')));
         },
       });
@@ -851,16 +882,17 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
             if (notFound) {
               // Placa inexistente → NO se corre nada más: se reportan las demás como saltadas y se cierra.
               fuelGate.resolve(it.plate, null);
+              dniGate.resolve(it.plate, null);
               for (const src of others) report(it.plate, plateNotFoundSkip(src));
               continue;
             }
             // Existe → sigue el flujo normal con las demás fuentes (SUNARP ya corrió).
-            if (!it.sources.includes('historial')) fuelGate.resolve(it.plate, null);
+            if (!it.sources.includes('historial')) { fuelGate.resolve(it.plate, null); dniGate.resolve(it.plate, null); }
             for (const src of others) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
           } else {
             // Sin SUNARP en el pedido → no se puede gatear existencia (se corre todo, como antes).
             existGate.resolve(it.plate, null);
-            if (!it.sources.includes('historial')) fuelGate.resolve(it.plate, null);
+            if (!it.sources.includes('historial')) { fuelGate.resolve(it.plate, null); dniGate.resolve(it.plate, null); }
             for (const src of nonHist) taskQ.push({ plate: it.plate, src, outDir: it.outDir });
           }
         }
@@ -881,7 +913,10 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
                 if (!isGasVehicle(fuel)) { report(t.plate, gnvSkip(t.src, fuel)); continue; }
               }
             }
-            report(t.plate, await runSingleSource(t.plate, t.src, baseOpts(t.outDir)));
+            // SATT: espera el DNI del historial (persona natural) para el registro del portal; empresa o
+            // historial caído → null → identidad del env. Nunca dep-falla: SATT corre igual.
+            const extra = t.src === 'satt-papeletas' ? { sattDni: await dniGate.wait(t.plate) } : {};
+            report(t.plate, await runSingleSource(t.plate, t.src, { ...baseOpts(t.outDir), ...extra }));
           } catch (e) { report(t.plate, { source: t.src.toUpperCase(), label: t.src, category: 'OTRO', status: 'ERROR', summary: (e as Error).message, ms: 0 }); }
         }
       };
@@ -891,7 +926,7 @@ export function buildContinuousLanes(opts: ContinuousLaneOpts): { lanes: Pipelin
 
   // armGates lo llama Pipeline.submit (una vez por corrida, antes de rutear) → re-consultar una placa
   // arranca con señales FRESCAS (combustible + existencia), sin reusar las de una corrida anterior.
-  return { lanes: [historialLane, lightLane], armGates: (plate: string) => { fuelGate.arm(plate); existGate.arm(plate); } };
+  return { lanes: [historialLane, lightLane], armGates: (plate: string) => { fuelGate.arm(plate); dniGate.arm(plate); existGate.arm(plate); } };
 }
 
 async function runSuperbidSource(
