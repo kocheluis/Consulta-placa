@@ -81,4 +81,24 @@ describe('toWebReport · PAPELETAS con SATP y SATCH', () => {
     expect(p.items.map((i) => i.entity)).toEqual(['SAT Piura', 'SAT Chiclayo']);
     expect(p.items.find((i) => i.entity === 'SAT Chiclayo')?.type).toContain('estimado');
   });
+
+  it('combina el DETALLE de todas las jurisdicciones, etiquetando entity y marcando el estimado', () => {
+    const p = papeletasOf([
+      res('SATP_PAPELETAS', 'ENCONTRADO', { total: 2779.60, count: 1, detalle: [
+        { numero: 'M2017025413', fecha: '16/04/2017', infraccion: 'M.27', descripcion: 'CONDUCIR SIN CITV', monto: 2779.60, estado: 'ORD' },
+      ] }),
+      res('SATCH_PAPELETAS', 'ENCONTRADO', { total: 440, count: 1, estimado: true, detalle: [
+        { numero: '1', fecha: '01/01/2025', infraccion: 'G-58', monto: 440, estado: 'Pendiente' },
+      ] }),
+    ]);
+    expect(p.detalle).toHaveLength(2);
+    const piura = p.detalle!.find((d) => d.infraccion === 'M.27')!;
+    expect(piura.entity).toBe('SAT Piura');
+    expect(piura.estimado).toBeFalsy(); // Piura trae monto real
+    expect(piura.descripcion).toBe('CONDUCIR SIN CITV');
+    const chiclayo = p.detalle!.find((d) => d.infraccion === 'G-58')!;
+    expect(chiclayo.entity).toBe('SAT Chiclayo');
+    expect(chiclayo.estimado).toBe(true); // Chiclayo = estimado RNTV
+    expect(chiclayo.monto).toBe(440);
+  });
 });

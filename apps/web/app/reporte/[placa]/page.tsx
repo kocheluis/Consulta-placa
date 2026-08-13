@@ -1270,24 +1270,36 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
       ) : null}
       <DefGrid items={p.items.map((it) => [it.entity, it.amount > 0 ? `S/ ${it.amount.toFixed(2)}` : 'Pendiente (revisar en el portal)'] as [string, string])} />
       {p.detalle && p.detalle.length > 0 && (
-        <ol className="flex flex-col gap-2">
-          {p.detalle.map((d, i) => (
-            <li key={i} className="rounded-lg border border-border bg-surface p-2.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="font-body text-[13px] font-semibold text-foreground">
-                  {d.infraccion ? `Falta ${d.infraccion}` : 'Papeleta'}{d.numero ? ` · ${d.numero}` : ''}
-                </span>
-                {d.monto != null && d.monto > 0 && <span className="font-mono text-[13px] text-foreground">S/ {d.monto.toFixed(2)}</span>}
-              </div>
-              {(d.fecha || d.estado) && (
-                <div className="mt-0.5 flex flex-wrap gap-x-3 font-body text-[12px] text-muted">
+        <div className="flex flex-col gap-2">
+          <p className="font-body text-[12px] font-semibold uppercase tracking-wide text-muted">Detalle de papeletas</p>
+          <ol className="flex flex-col gap-2">
+            {p.detalle.map((d, i) => (
+              <li key={i} className="rounded-lg border border-border bg-surface p-2.5">
+                <div className="flex items-start justify-between gap-2">
+                  <span className="font-body text-[13px] font-semibold leading-snug text-foreground">
+                    {d.descripcion || (d.infraccion ? `Falta ${d.infraccion}` : 'Papeleta')}
+                  </span>
+                  {d.monto != null && d.monto > 0 && (
+                    <span className="whitespace-nowrap font-mono text-[13px] text-foreground">{d.estimado ? '~' : ''}S/ {d.monto.toFixed(2)}</span>
+                  )}
+                </div>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2.5 gap-y-1 font-body text-[12px] text-muted">
+                  {d.entity && <span className="rounded bg-azul-50 px-1.5 py-0.5 text-[11px] font-semibold text-azul-700">{d.entity}</span>}
+                  {d.infraccion && <span className="font-mono">{d.infraccion}</span>}
+                  {d.numero && <span>N° {d.numero}</span>}
                   {d.fecha && <span>{d.fecha}</span>}
                   {d.estado && <span className="capitalize">{d.estado}</span>}
+                  {d.estimado && <span className="text-slate-400">monto estimado (tabla RNTV)</span>}
                 </div>
-              )}
-            </li>
-          ))}
-        </ol>
+              </li>
+            ))}
+          </ol>
+          {p.detalle.some((d) => d.estimado) && (
+            <p className="font-body text-[11px] leading-snug text-slate-400">
+              Los montos marcados «~» son estimados según la tabla nacional de infracciones (RNTV) porque el portal no publica el importe; el valor real puede variar por rebajas de pronto pago.
+            </p>
+          )}
+        </div>
       )}
     </div>
   );

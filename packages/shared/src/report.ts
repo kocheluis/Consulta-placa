@@ -109,18 +109,25 @@ export interface PapeletaItem {
   status: string;
 }
 
-/** Detalle de una papeleta concreta del portal (SAT Lima), tal como la lista el resultado. */
+/** Detalle de una papeleta concreta, tal como la lista el resultado del portal (SAT Lima, Trujillo,
+ *  Piura, Chiclayo…). Cuando el reporte junta varias jurisdicciones, cada fila trae su `entity`. */
 export interface PapeletaDetalle {
   /** N° de papeleta/documento. */
   numero: string | null;
   /** Fecha de la infracción (dd/mm/aaaa). */
   fecha: string | null;
-  /** Código/descripción de la falta (p. ej. "M27"). */
+  /** Código de la falta (p. ej. "M.27", "G-58"). */
   infraccion: string | null;
   /** Importe de la papeleta (S/). */
   monto: number | null;
-  /** Estado (Pendiente, En cobranza coactiva, etc.), si el portal lo indica. */
+  /** Estado (Pendiente, ORD, En cobranza coactiva, etc.), si el portal lo indica. */
   estado: string | null;
+  /** Jurisdicción de origen (p. ej. "SAT Piura"), cuando el detalle mezcla varias. */
+  entity?: string | null;
+  /** true = el monto es ESTIMADO (el portal no publica el importe → derivado de la tabla RNTV). */
+  estimado?: boolean;
+  /** Descripción legible de la falta, si el portal la trae (p. ej. tooltip de SATP). */
+  descripcion?: string | null;
 }
 
 /** Payload de la sección PAPELETAS (SAT municipal + SUTRAN cinemómetro). */

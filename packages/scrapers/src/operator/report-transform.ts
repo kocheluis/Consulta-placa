@@ -273,7 +273,6 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const items: PapeletaItem[] = [];
     const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
     const limaCount = satP?.status === 'ENCONTRADO' ? num(data(satP).count) : 0;
-    const limaDetalle = satP?.status === 'ENCONTRADO' ? ((data(satP).detalle as PapeletaDetalle[] | undefined) ?? []) : [];
     if (satP?.status === 'ENCONTRADO') items.push({ type: `Infracciones Lima${limaCount ? ` (${limaCount})` : ''}`, entity: 'SAT Lima', date: null, amount: limaAmt, status: 'PENDIENTE' });
     const callaoAmt = callao?.status === 'ENCONTRADO' ? num(data(callao).total) : 0;
     const callaoCount = callao?.status === 'ENCONTRADO' ? num(data(callao).count) : 0;
@@ -310,12 +309,23 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     const benefitAmount = callao?.status === 'ENCONTRADO' ? num(data(callao).benefit) : 0;
     const benefitUntil = callao?.status === 'ENCONTRADO' ? ((data(callao).benefitUntil as string | null | undefined) ?? null) : null;
     const papeletaCount = limaCount + callaoCount + sattCount + satpCount + satchCount;
+    // Detalle COMBINADO de todas las jurisdicciones: cada fila se etiqueta con su `entity` y, cuando el
+    // portal no publica el importe (Chiclayo), el monto viene ESTIMADO por la tabla RNTV (estimado=true).
+    const scopeDetalle = (r: OperatorSourceResult | undefined, entity: string, estimado: boolean): PapeletaDetalle[] =>
+      (r?.status === 'ENCONTRADO' ? ((data(r).detalle as PapeletaDetalle[] | undefined) ?? []) : [])
+        .map((d) => ({ ...d, entity, estimado: estimado || Boolean(d.estimado) }));
+    const allDetalle: PapeletaDetalle[] = [
+      ...scopeDetalle(satP, 'SAT Lima', false),
+      ...scopeDetalle(satt, 'SATT Trujillo', false),
+      ...scopeDetalle(satp, 'SAT Piura', false),
+      ...scopeDetalle(satch, 'SAT Chiclayo', true),
+    ];
     const pay: PapeletasPayload = {
       total: items.length,
       ...(papeletaCount > 0 ? { count: papeletaCount } : {}),
       pendingAmount: Math.round((limaAmt + callaoAmt + sattAmt + satpAmt + satchAmt) * 100) / 100,
       items, checkedScopes,
-      ...(limaDetalle.length ? { detalle: limaDetalle } : {}),
+      ...(allDetalle.length ? { detalle: allDetalle } : {}),
       ...(benefitAmount > 0 ? { benefitAmount, benefitUntil } : {}),
     };
     src.push({ kind: SectionKind.PAPELETAS, source: SourceId.SAT, status: anyOk ? SectionStatus.AVAILABLE : SectionStatus.UNAVAILABLE, fetchedAt: at, payload: pay });

@@ -951,18 +951,27 @@ export async function runSatpPapeletas(
     await page.waitForLoadState('domcontentloaded').catch(() => {});
     for (let k = 0; k < 20; k++) { const b = await page.locator('body').innerText().catch(() => ''); if (/no presenta papeletas|CANTIDAD DE PAPELETAS|MONTO TOTAL/i.test(b)) break; await wait(300); }
     const body = await page.locator('body').innerText().catch(() => '');
-    // Detalle por fila (Código·Año·Papeleta·Sanción·Fecha·Estado·MTC·Monto). PII: en SATP no hay nombres.
-    const rows = await page.$$eval('table tbody tr', (trs) => trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim()))).catch(() => [] as string[][]);
+    // Detalle por fila (Código·Año·Papeleta·Sanción·Fecha·Estado·MTC·Monto) + la DESCRIPCIÓN de la falta
+    // (el `title`/tooltip de la celda Sanción). PII: en SATP no hay nombres. Sin helpers con nombre dentro
+    // del evaluate (landmine __name de esbuild).
+    const rows = await page.$$eval('table tbody tr', (trs) => trs.map((tr) => {
+      const cells = Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim());
+      const tip = tr.querySelector('[title]');
+      return { cells, desc: tip ? (tip.getAttribute('title') ?? '').replace(/\s+/g, ' ').trim() : '' };
+    })).catch(() => [] as Array<{ cells: string[]; desc: string }>);
     await page.screenshot({ path: shot, fullPage: true }).catch(() => {}); // evidencia = página del récord
     const r = parseSatpPapeletas(body);
     if (r.none) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Piura (SATP)', data: { total: 0, count: 0 }, screenshot: shot, ms: Date.now() - t0 };
     if (r.count > 0 || r.total > 0) {
       const detalle: PapeletaDetalle[] = rows
-        .filter((c) => c.length >= 7 && /\d{2}\/\d{2}\/\d{4}/.test(c.join(' ')))
-        .map((c) => {
+        .filter((row) => row.cells.length >= 7 && /\d{2}\/\d{2}\/\d{4}/.test(row.cells.join(' ')))
+        .map(({ cells: c, desc }) => {
           const fecha = c.find((x) => /^\d{2}\/\d{2}\/\d{4}$/.test(x)) ?? null;
-          const monto = c.map((x) => x).reverse().find((x) => /^\d[\d,]*\.\d{2}$/.test(x));
-          return { numero: c[2] || null, fecha, infraccion: c[3] || null, monto: monto ? Math.round(parseFloat(monto.replace(/,/g, '')) * 100) / 100 : null, estado: c.find((x) => /^(ORD|CANC|PEND|COACT)/i.test(x)) ?? null };
+          const monto = [...c].reverse().find((x) => /^\d[\d,]*\.\d{2}$/.test(x));
+          // El SATP guarda las descripciones con encoding roto en los acentos ("VEHÍCULO" → mojibake) →
+          // limpiamos todo lo que no sea ASCII imprimible o letra Latin-1 válida (queda legible).
+          const descripcion = desc.replace(/[^\x20-\x7EÀ-ÿ]/g, '').replace(/\s+/g, ' ').trim() || null;
+          return { numero: c[2] || null, fecha, infraccion: c[3] || null, descripcion, monto: monto ? Math.round(parseFloat(monto.replace(/,/g, '')) * 100) / 100 : null, estado: c.find((x) => /^(ORD|CANC|PEND|COACT)/i.test(x)) ?? null };
         });
       return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Piura (${r.count}) · S/ ${r.total.toFixed(2)}`,
         data: { total: r.total, count: r.count, detalle, texto: body.slice(0, 4000) }, screenshot: shot, ms: Date.now() - t0 };
