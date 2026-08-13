@@ -911,6 +911,151 @@ export function histDniSignal(
   return null;
 }
 
+/* ───────────────── SAT Piura (SATP) · Papeletas por placa (SIN captcha, SIN registro) ───────────────── */
+// web.satp.gob.pe/servicios/consulta-en-linea → form POST {placa} target=_blank a
+// /consultas/papeletas_publico.php. El resultado trae la TABLA (Código Propietario·Año·Papeleta·Sanción·
+// Fecha·Estado[ORD]·MTC·Monto S/) + pie "CANTIDAD DE PAPELETAS N" y "MONTO TOTAL DE LA DEUDA S/ x". Sin
+// papeletas = "El contribuyente con placa X no presenta papeletas registradas". Validado 13-ago (P2B937
+// con 6 papeletas S/9152.40; CHU444 sin). El monto viene EXPLÍCITO (no hace falta el mapa RNTV).
+const SATP_CONSULTA_URL = 'https://web.satp.gob.pe/servicios/consulta-en-linea';
+
+/** Totales del pie del récord SATP. */
+export function parseSatpPapeletas(text: string): { none: boolean; count: number; total: number } {
+  const body = text.replace(/[ \t]+/g, ' ');
+  const toNum = (s: string): number => Math.round((parseFloat(String(s).replace(/,/g, '')) || 0) * 100) / 100;
+  const none = /no presenta papeletas/i.test(body);
+  const count = Number(body.match(/CANTIDAD DE PAPELETAS\s*:?\s*(\d+)/i)?.[1] ?? 0);
+  const total = toNum(body.match(/MONTO TOTAL DE LA DEUDA\s*S\/\.?\s*([\d.,]+)/i)?.[1] ?? '0');
+  return { none, count, total };
+}
+
+export async function runSatpPapeletas(
+  page: Page,
+  plate: string,
+  _solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SATP_PAPELETAS', label: 'SAT Piura · Papeletas', category: 'PAPELETAS' };
+  const placa = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase(); // SATP no usa guion
+  try {
+    // Nos posicionamos en el origen de SATP (cookies/referer) y POSTeamos el form en la MISMA pestaña
+    // (el original es target=_blank; forzamos _self para tener el resultado y su captura aquí).
+    await page.goto(SATP_CONSULTA_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.evaluate((pl) => {
+      const f = document.createElement('form');
+      f.method = 'POST'; f.action = '/consultas/papeletas_publico.php';
+      const i = document.createElement('input'); i.type = 'hidden'; i.name = 'placa'; i.value = pl; f.appendChild(i);
+      document.body.appendChild(f); f.submit();
+    }, placa);
+    await page.waitForLoadState('domcontentloaded').catch(() => {});
+    for (let k = 0; k < 20; k++) { const b = await page.locator('body').innerText().catch(() => ''); if (/no presenta papeletas|CANTIDAD DE PAPELETAS|MONTO TOTAL/i.test(b)) break; await wait(300); }
+    const body = await page.locator('body').innerText().catch(() => '');
+    // Detalle por fila (Código·Año·Papeleta·Sanción·Fecha·Estado·MTC·Monto). PII: en SATP no hay nombres.
+    const rows = await page.$$eval('table tbody tr', (trs) => trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim()))).catch(() => [] as string[][]);
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {}); // evidencia = página del récord
+    const r = parseSatpPapeletas(body);
+    if (r.none) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Piura (SATP)', data: { total: 0, count: 0 }, screenshot: shot, ms: Date.now() - t0 };
+    if (r.count > 0 || r.total > 0) {
+      const detalle: PapeletaDetalle[] = rows
+        .filter((c) => c.length >= 7 && /\d{2}\/\d{2}\/\d{4}/.test(c.join(' ')))
+        .map((c) => {
+          const fecha = c.find((x) => /^\d{2}\/\d{2}\/\d{4}$/.test(x)) ?? null;
+          const monto = c.map((x) => x).reverse().find((x) => /^\d[\d,]*\.\d{2}$/.test(x));
+          return { numero: c[2] || null, fecha, infraccion: c[3] || null, monto: monto ? Math.round(parseFloat(monto.replace(/,/g, '')) * 100) / 100 : null, estado: c.find((x) => /^(ORD|CANC|PEND|COACT)/i.test(x)) ?? null };
+        });
+      return { ...base, status: 'ENCONTRADO', summary: `Papeletas en Piura (${r.count}) · S/ ${r.total.toFixed(2)}`,
+        data: { total: r.total, count: r.count, detalle, texto: body.slice(0, 4000) }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    return { ...base, status: 'ERROR', summary: 'Respuesta no reconocida del SATP', screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
+/* ───────────────── SAT Chiclayo (SATCH) · Récord por placa (SIN captcha) + estimación RNTV ───────────────── */
+// virtualsatch.satch.gob.pe/virtualsatch/record_infracciones/buscar_placa_ → form POST {search:placa}
+// (302 → record_placa). Tabla: PLACA·NRO_PAPELETA·FECHA_IMP·INFRACTOR·PROPIETARIO·INFRACCIÓN·ESTADO
+// (p.ej. "Canc." = cancelada). ⚠ NO trae MONTO → se ESTIMA con la tabla nacional RNTV (los códigos G/L/M
+// son nacionales; verificado que todos los de SATCH existen). "Su búsqueda no produjo resultados" = sin
+// papeletas. Validado 13-ago (M2G119: 6 papeletas todas Canc.; CHU444 sin). ⚠ PII: INFRACTOR/PROPIETARIO
+// son nombres de terceros (Ley 29733) → NO se exponen; solo se usa código+estado.
+
+/** Multa (S/) por código de infracción del Reglamento Nacional de Tránsito Vehicular (RNTV), valor PLENO
+ *  (100%) de la tabla oficial del SAT (mult_Papeletas_ti_rntv2.aspx). Usado para ESTIMAR el monto en
+ *  portales que solo publican el código (SATCH). Es referencial (el monto real depende de rebajas/UIT). */
+export const RNTV_MULTA: Record<string, number> = {
+  G01:440,G02:440,G03:440,G04:440,G05:440,G06:440,G07:440,G08:440,G09:440,G10:440,G11:440,G12:440,
+  G13:440,G14:440,G15:440,G16:440,G17:440,G19:440,G20:440,G21:440,G22:440,G23:440,G24:440,G25:440,
+  G26:440,G27:440,G28:440,G29:440,G30:440,G32:440,G33:440,G34:440,G35:440,G36:440,G37:440,G38:440,
+  G39:440,G40:440,G41:440,G42:440,G43:440,G44:440,G45:440,G46:440,G47:440,G48:440,G49:440,G50:440,
+  G51:440,G52:440,G53:440,G54:440,G55:440,G56:440,G57:440,G58:440,G59:440,G60:440,G61:440,G62:440,
+  G63:440,G64:440,G65:440,G66:440,G70:440,G71:440,G73:440,G74:440,L01:220,L02:275,L04:220,L05:220,
+  L06:220,L07:220,L08:220,M01:5500,M02:2750,M03:2750,M04:5500,M05:2750,M06:1320,M07:1320,M08:1320,M09:1320,
+  M10:660,M11:660,M12:660,M13:660,M14:660,M15:660,M16:660,M17:660,M18:660,M19:660,M21:660,M22:660,
+  M23:660,M24:660,M25:660,M26:660,M27:2750,M28:660,M29:660,M30:660,M31:660,M33:660,M34:660,M35:660,
+  M36:660,M42:275,M43:660,M44:660,M45:660,M46:660,
+};
+
+/** Normaliza un código de infracción a la forma de la tabla RNTV: "G-58"/"M.27"/"L 4" → "G58"/"M27"/"L04". */
+export function normalizeInfraccion(code: string | null | undefined): string | null {
+  const m = /^([GLM])[^0-9]?0*(\d{1,2})$/i.exec(String(code ?? '').replace(/[^A-Z0-9]/gi, ''));
+  return m ? `${m[1]!.toUpperCase()}${m[2]!.padStart(2, '0')}` : null;
+}
+
+const RX_CANCELADA = /canc|pagad|cancel|extingu/i;
+
+/** Parsea las filas (celdas) del récord SATCH. `rows[i]` = [placa,nro,fecha,infractor,propietario,infrac,estado]. */
+export function parseSatchRows(rows: string[][]): { total: number; pending: number; estimate: number; detalle: PapeletaDetalle[] } {
+  const detalle: PapeletaDetalle[] = [];
+  let pending = 0, estimate = 0;
+  for (const c of rows) {
+    if (c.length < 6) continue;
+    const nro = c[1] || null;
+    const fecha = c.find((x) => /^\d{2}\/\d{2}\/\d{4}$/.test(x)) ?? null;
+    const rawCode = c[c.length - 2] || null;      // penúltima = INFRACCIÓN
+    const estado = c[c.length - 1] || null;        // última = ESTADO
+    if (!fecha && !rawCode) continue;              // fila no-dato (cabecera/paginación)
+    const cancelada = RX_CANCELADA.test(String(estado));
+    const monto = normalizeInfraccion(rawCode) ? (RNTV_MULTA[normalizeInfraccion(rawCode)!] ?? null) : null;
+    if (!cancelada) { pending++; estimate += monto ?? 0; detalle.push({ numero: nro, fecha, infraccion: rawCode, monto, estado }); } // solo pendientes; SIN nombres (PII)
+  }
+  return { total: rows.filter((c) => c.length >= 6).length, pending, estimate: Math.round(estimate * 100) / 100, detalle };
+}
+
+export async function runSatchPapeletas(
+  page: Page,
+  plate: string,
+  _solver: CaptchaSolver,
+  shot: string,
+): Promise<OperatorSourceResult> {
+  const t0 = Date.now();
+  const base = { source: 'SATCH_PAPELETAS', label: 'SAT Chiclayo · Papeletas', category: 'PAPELETAS' };
+  const placa = plate.replace(/[^A-Z0-9]/gi, '').toUpperCase(); // SATCH no usa guion
+  try {
+    await page.goto('https://virtualsatch.satch.gob.pe/virtualsatch/record_infracciones/buscar_placa_', { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.locator('form#frm input[name="search"]').fill(placa);
+    await page.locator('form#frm button[type="submit"]').click(); // POST → 302 → record_placa (el navegador sigue el redirect)
+    for (let k = 0; k < 20; k++) { const b = await page.locator('body').innerText().catch(() => ''); if (/Record de Papeletas|no produjo resultados|NRO_PAPELETA/i.test(b)) break; await wait(300); }
+    const body = await page.locator('body').innerText().catch(() => '');
+    await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
+    if (/no produjo resultados/i.test(body)) {
+      return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Chiclayo (SATCH)', data: { total: 0, count: 0 }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    const rows = await page.$$eval('table tbody tr', (trs) => trs.map((tr) => Array.from(tr.querySelectorAll('td')).map((td) => (td.textContent ?? '').replace(/\s+/g, ' ').trim()))).catch(() => [] as string[][]);
+    const r = parseSatchRows(rows);
+    if (r.total === 0) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Chiclayo (SATCH)', data: { total: 0, count: 0 }, screenshot: shot, ms: Date.now() - t0 };
+    if (r.pending === 0) {
+      // Hay papeletas pero TODAS canceladas → sin deuda pendiente (histórico limpio).
+      return { ...base, status: 'SIN_REGISTRO', summary: `Sin papeletas pendientes en Chiclayo (${r.total} histórica(s), todas canceladas)`, data: { total: 0, count: 0, historicas: r.total }, screenshot: shot, ms: Date.now() - t0 };
+    }
+    return { ...base, status: 'ENCONTRADO', summary: `Papeletas pendientes en Chiclayo (${r.pending}) · ~S/ ${r.estimate.toFixed(2)} (estimado RNTV)`,
+      data: { total: r.estimate, count: r.pending, detalle: r.detalle, estimado: true, historicas: r.total }, screenshot: shot, ms: Date.now() - t0 };
+  } catch (e) {
+    return { ...base, status: 'ERROR', summary: (e as Error).message, ms: Date.now() - t0 };
+  }
+}
+
 /* ───────────────── ATU · Taxi/transporte (captcha imagen) ───────────────── */
 // El portal migró a soluciones.atu.gob.pe (antes sistemas.atu.gob.pe). Form: placa +
 // código de verificación (imagen) + "Buscar". Si la placa está habilitada, muestra

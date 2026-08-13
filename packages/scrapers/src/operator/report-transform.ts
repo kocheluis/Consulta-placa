@@ -58,11 +58,12 @@ const moneyOrNull = (v: unknown): number | null => {
 const SOURCE_INSTITUTION: Record<string, string> = {
   SUNARP: 'SUNARP', HISTORIAL: 'Síguelo', SIGM: 'SIGM',
   SAT_CAPTURA: 'SAT Lima', SAT_PAPELETAS: 'SAT Lima', SAT_IMPUESTO: 'SAT Lima',
-  CALLAO_PAPELETAS: 'SAT Callao', SATT_PAPELETAS: 'SATT Trujillo', MTC_CITV: 'MTC', SBS_SOAT: 'SBS', APESEG_SOAT: 'APESEG',
+  CALLAO_PAPELETAS: 'SAT Callao', SATT_PAPELETAS: 'SATT Trujillo', SATP_PAPELETAS: 'SAT Piura', SATCH_PAPELETAS: 'SAT Chiclayo',
+  MTC_CITV: 'MTC', SBS_SOAT: 'SBS', APESEG_SOAT: 'APESEG',
   ATU: 'ATU', SUPERBID: 'Superbid', FISE_GNV: 'FISE', INFOGAS_GNV: 'Infogás',
 };
 // Orden estable de exhibición (por relevancia/reconocimiento).
-const INSTITUTION_ORDER = ['SUNARP', 'Síguelo', 'SIGM', 'SAT Lima', 'SAT Callao', 'SATT Trujillo', 'MTC', 'SBS', 'APESEG', 'ATU', 'Superbid', 'FISE', 'Infogás'];
+const INSTITUTION_ORDER = ['SUNARP', 'Síguelo', 'SIGM', 'SAT Lima', 'SAT Callao', 'SATT Trujillo', 'SAT Piura', 'SAT Chiclayo', 'MTC', 'SBS', 'APESEG', 'ATU', 'Superbid', 'FISE', 'Infogás'];
 
 /** Instituciones consultadas CON resultado (ENCONTRADO/SIN_REGISTRO); las que erraron se omiten para no
  *  implicar que dieron dato. Ordenadas por INSTITUTION_ORDER. */
@@ -262,11 +263,13 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     }
   }
 
-  // ── PAPELETAS (SAT Lima + Callao + SATT Trujillo) ──
+  // ── PAPELETAS (SAT Lima + Callao + SATT Trujillo + SATP Piura + SATCH Chiclayo) ──
   const satP = by('SAT_PAPELETAS');
   const callao = by('CALLAO_PAPELETAS');
   const satt = by('SATT_PAPELETAS');
-  if (satP || callao || satt) {
+  const satp = by('SATP_PAPELETAS');
+  const satch = by('SATCH_PAPELETAS');
+  if (satP || callao || satt || satp || satch) {
     const items: PapeletaItem[] = [];
     const limaAmt = satP?.status === 'ENCONTRADO' ? num(data(satP).montoTotal) : 0;
     const limaCount = satP?.status === 'ENCONTRADO' ? num(data(satP).count) : 0;
@@ -284,18 +287,33 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
     if (satt?.status === 'ENCONTRADO') {
       items.push({ type: `Papeletas Trujillo${sattCount ? ` (${sattCount})` : ''}`, entity: 'SATT Trujillo', date: null, amount: sattAmt, status: 'PENDIENTE' });
     }
-    const anyOk = [satP, callao, satt].some((r) => r && r.status !== 'ERROR');
+    const satpAmt = satp?.status === 'ENCONTRADO' ? num(data(satp).total) : 0;
+    const satpCount = satp?.status === 'ENCONTRADO' ? num(data(satp).count) : 0;
+    if (satp?.status === 'ENCONTRADO') {
+      items.push({ type: `Papeletas Piura${satpCount ? ` (${satpCount})` : ''}`, entity: 'SAT Piura', date: null, amount: satpAmt, status: 'PENDIENTE' });
+    }
+    // SATCH (Chiclayo) NO publica el monto → se ESTIMA con la tabla RNTV (data.estimado=true). Marcamos
+    // el ítem como estimado para que la web lo muestre con el matiz "~aprox." y no como cifra exacta.
+    const satchAmt = satch?.status === 'ENCONTRADO' ? num(data(satch).total) : 0;
+    const satchCount = satch?.status === 'ENCONTRADO' ? num(data(satch).count) : 0;
+    const satchEstimado = satch?.status === 'ENCONTRADO' ? Boolean(data(satch).estimado) : false;
+    if (satch?.status === 'ENCONTRADO') {
+      items.push({ type: `Papeletas Chiclayo${satchCount ? ` (${satchCount})` : ''}${satchEstimado ? ' · monto estimado' : ''}`, entity: 'SAT Chiclayo', date: null, amount: satchAmt, status: 'PENDIENTE' });
+    }
+    const anyOk = [satP, callao, satt, satp, satch].some((r) => r && r.status !== 'ERROR');
     const checkedScopes: string[] = [];
     if (satP && satP.status !== 'ERROR') checkedScopes.push('Lima (SAT)');
     if (callao && callao.status !== 'ERROR') checkedScopes.push('Callao');
     if (satt && satt.status !== 'ERROR') checkedScopes.push('Trujillo (SATT)');
+    if (satp && satp.status !== 'ERROR') checkedScopes.push('Piura (SATP)');
+    if (satch && satch.status !== 'ERROR') checkedScopes.push('Chiclayo (SATCH)');
     const benefitAmount = callao?.status === 'ENCONTRADO' ? num(data(callao).benefit) : 0;
     const benefitUntil = callao?.status === 'ENCONTRADO' ? ((data(callao).benefitUntil as string | null | undefined) ?? null) : null;
-    const papeletaCount = limaCount + callaoCount + sattCount;
+    const papeletaCount = limaCount + callaoCount + sattCount + satpCount + satchCount;
     const pay: PapeletasPayload = {
       total: items.length,
       ...(papeletaCount > 0 ? { count: papeletaCount } : {}),
-      pendingAmount: Math.round((limaAmt + callaoAmt + sattAmt) * 100) / 100,
+      pendingAmount: Math.round((limaAmt + callaoAmt + sattAmt + satpAmt + satchAmt) * 100) / 100,
       items, checkedScopes,
       ...(limaDetalle.length ? { detalle: limaDetalle } : {}),
       ...(benefitAmount > 0 ? { benefitAmount, benefitUntil } : {}),
