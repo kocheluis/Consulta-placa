@@ -122,7 +122,7 @@ export async function freeConsultaRateOk(ip: string, limitPerHour = 12): Promise
  * hay reporte publicado o un pedido en curso para esa placa, no re-encola (se reutiliza).
  * Devuelve el estado para que la web sepa si ya puede hacer polling del reporte.
  */
-export async function enqueueFreeBasic(plateRaw: string): Promise<{ ok: boolean; status: 'queued' | 'exists' | 'invalid' }> {
+export async function enqueueFreeBasic(plateRaw: string, whatsapp?: string | null): Promise<{ ok: boolean; status: 'queued' | 'exists' | 'invalid' }> {
   const placa = (plateRaw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (placa.length < 6 || placa.length > 7) return { ok: false, status: 'invalid' };
   try {
@@ -134,7 +134,8 @@ export async function enqueueFreeBasic(plateRaw: string): Promise<{ ok: boolean;
     const { data: ped } = await sb
       .from('pedidos').select('id').eq('placa', placa).in('estado', ['pendiente', 'procesando']).limit(1);
     if (ped && ped.length) return { ok: true, status: 'exists' };
-    await sb.from('pedidos').insert({ placa, estado: 'pendiente', tier: 'BASIC' });
+    // `whatsapp` (opcional): lo pasa el bot para la entrega por WhatsApp; la web no lo pasa (null).
+    await sb.from('pedidos').insert({ placa, estado: 'pendiente', tier: 'BASIC', whatsapp: whatsapp ?? null });
     return { ok: true, status: 'queued' };
   } catch (e) {
     console.error('[pedidos] enqueue gratis falló:', (e as Error).message);

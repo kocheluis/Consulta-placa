@@ -171,6 +171,7 @@ export async function enqueueCupoConsulta(
   email: string | null,
   plateRaw: string,
   tier: CupoTier,
+  whatsapp?: string | null,
 ): Promise<'queued' | 'generating' | 'ready' | 'invalid'> {
   const placa = (plateRaw ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
   if (placa.length < 6 || placa.length > 7) return 'invalid';
@@ -181,7 +182,9 @@ export async function enqueueCupoConsulta(
     const { data: ped } = await sb
       .from('pedidos').select('id').eq('placa', placa).in('estado', ['pendiente', 'procesando']).limit(1);
     if (ped && ped.length) return 'generating';
-    await sb.from('pedidos').insert({ placa, estado: 'pendiente', tier, user_id: userId, email, origin: 'cupo' });
+    // `whatsapp` (opcional): lo pasa el bot para que la entrega (VPS → N8N_WEBHOOK_URL → WhatsApp)
+    // llegue al número que pidió. La web no lo pasa (queda null, comportamiento previo).
+    await sb.from('pedidos').insert({ placa, estado: 'pendiente', tier, user_id: userId, email, origin: 'cupo', whatsapp: whatsapp ?? null });
     return 'queued';
   } catch {
     return 'invalid';

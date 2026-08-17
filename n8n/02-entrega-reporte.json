@@ -1,0 +1,81 @@
+{
+  "name": "PlacaPe · 02 Entrega (reporte listo)",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "placape-listo",
+        "options": {}
+      },
+      "id": "webhook-listo",
+      "name": "VPS: reporte listo",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [260, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "loose" },
+          "combinator": "and",
+          "conditions": [
+            {
+              "leftValue": "={{ $json.body.whatsapp }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty", "singleValue": true }
+            }
+          ]
+        }
+      },
+      "id": "if-wa",
+      "name": "¿Tiene WhatsApp?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [480, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ $env.PLACAPE_WEB_URL }}/api/bot/reporte",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "placa", "value": "={{ $json.body.plate }}" },
+            { "name": "phone", "value": "={{ $json.body.whatsapp }}" }
+          ]
+        },
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [{ "name": "x-bot-token", "value": "={{ $env.BOT_API_TOKEN }}" }]
+        },
+        "options": {}
+      },
+      "id": "get-reporte",
+      "name": "GET /api/bot/reporte",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [700, 220]
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "={{ $env.WHATSAPP_PHONE_ID }}",
+        "recipientPhoneNumber": "={{ $('VPS: reporte listo').item.json.body.whatsapp }}",
+        "messageType": "text",
+        "textBody": "={{ $json.text || ('✅ Tu reporte de ' + $json.placa + ' está listo: ' + $json.url) }}"
+      },
+      "id": "enviar-resumen",
+      "name": "Enviar resumen",
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1,
+      "position": [920, 220]
+    }
+  ],
+  "connections": {
+    "VPS: reporte listo": { "main": [[{ "node": "¿Tiene WhatsApp?", "type": "main", "index": 0 }]] },
+    "¿Tiene WhatsApp?": { "main": [[{ "node": "GET /api/bot/reporte", "type": "main", "index": 0 }], []] },
+    "GET /api/bot/reporte": { "main": [[{ "node": "Enviar resumen", "type": "main", "index": 0 }]] }
+  },
+  "settings": {},
+  "active": false
+}
