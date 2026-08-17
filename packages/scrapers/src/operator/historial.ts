@@ -246,6 +246,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // keep-alive y el seed → un solo lugar donde mantenerlos).
     const isLogged = (): Promise<boolean> => sprlIsLogged(page);
     let blockReason = '';
+    let freshLogin = false; // true = esta corrida arrancó con login fresco (NO con la sesión caliente del keep-alive)
     const autoLogin = async (): Promise<boolean> => {
       const r = await sprlLogin(page, ctx, { user, pass, log, shotPath: `${PROFILE}/_login.png` });
       if (r.locked) blockReason = 'lockout';
@@ -268,7 +269,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await page.goto(INGRESO, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
       for (let i = 0; i < 10 && !logged; i++) { await wait(1000); logged = await isLogged(); }
     }
-    if (!logged) { log('sesión no recuperada → login automático'); logged = await autoLogin(); }
+    if (!logged) { log('sesión no recuperada → login automático'); logged = await autoLogin(); freshLogin = logged; }
     if (!logged) {
       await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
       const err = blockReason === 'lockout'
@@ -370,6 +371,21 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (!titulos.length && !partidaIncompleta) { log('reintento SPRL con oficina…'); titulos = await sprlBuscarTitulos(true); }
     }
     await ensureSede(); // Síguelo SIEMPRE necesita la sede (y el propietario actual sale de aquí)
+    // SESIÓN CALIENTE RANCIA: el keep-alive mantiene la página con pinta de logueada (isLogged=true) pero
+    // el auth de la API REST de búsqueda ya caducó → la búsqueda por placa devuelve filas=0 EN SILENCIO
+    // aunque la partida exista (le pasó a D0K057: 2 corridas con "sesión activa" inmediata → vacío; la 3ª,
+    // que tuvo que re-loguear, trajo los 3 títulos). Si NO logueamos fresco esta corrida, seguimos en vacío
+    // y SUNARP SÍ vio el vehículo (⇒ debería tener partida), forzamos UN re-login (no en bucle → no dispara
+    // el lockout por IP) y un último intento con la sesión nueva.
+    if (!titulos.length && !partidaIncompleta && !freshLogin && vehiculo) {
+      log('SPRL vacío con sesión caliente (SUNARP sí halló el vehículo) → posible sesión rancia; re-login y último intento…');
+      const relog = await autoLogin();
+      freshLogin = true; // ya intentamos el re-login: no reintentar de nuevo (bounded a 1)
+      if (blockReason === 'lockout') {
+        return { ...empty, sede: oficina, vehiculo, locked: true, error: 'Cuenta SPRL bloqueada por SUNARP desde el VPS (re-login por sesión rancia superó el límite por IP). Espera ~1-2 h y reintenta UNA sola vez.' };
+      }
+      if (relog) titulos = await sprlBuscarTitulos(true);
+    }
     // Partida marcada INCOMPLETA por SUNARP (no nuestro error, placa antigua): devolvemos el propietario
     // actual (de la Consulta Vehicular) y avisamos que el histórico no está disponible — NO un ERROR.
     if (partidaIncompleta && !titulos.length) {
