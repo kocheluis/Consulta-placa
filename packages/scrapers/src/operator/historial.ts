@@ -3,7 +3,7 @@ import { spawn } from 'node:child_process';
 import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import crypto from 'node:crypto';
-import { chromium, type Page, type Locator, type Browser, type BrowserContext } from 'playwright';
+import { chromium, type Page, type Locator, type Browser, type BrowserContext, type Response } from 'playwright';
 import { parseAsientos, parseCaracteristicas, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
 import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
@@ -73,6 +73,20 @@ function sgDecrypt(b64: string): string | null {
     while (dd.length < 48) { bb = crypto.createHash('md5').update(Buffer.concat([bb, Buffer.from(SG_PASS, 'utf8'), salt])).digest(); dd = Buffer.concat([dd, bb]); }
     const c = crypto.createDecipheriv('aes-256-cbc', dd.subarray(0, 32), dd.subarray(32, 48));
     return Buffer.concat([c.update(data.subarray(16)), c.final()]).toString('utf8');
+  } catch { return null; }
+}
+
+// El SPRL migró a una API REST que devuelve JSON EN CLARO, pero algunos campos `data` siguen cifrados
+// AES-128-CBC con esta clave ESTÁTICA del bundle público (`environment.cryptKey`; IV = primeros 16 bytes).
+// Es la misma categoría que `SG_PASS`: NO es un secreto (sale del JS servido por SUNARP), así que puede ir
+// en claro en el repo público. Se usa para leer los títulos también desde la RED (no solo del DOM del modal).
+const SPRL_KEY = 'sUIZJFw36fA7GzpS';
+function sprlDecrypt(b64: string): string | null {
+  try {
+    const blob = Buffer.from(b64.trim(), 'base64');
+    if (blob.length < 32 || blob.length % 16 !== 0) return null;
+    const d = crypto.createDecipheriv('aes-128-cbc', Buffer.from(SPRL_KEY, 'utf8'), blob.subarray(0, 16));
+    return Buffer.concat([d.update(blob.subarray(16)), d.final()]).toString('utf8');
   } catch { return null; }
 }
 
@@ -197,6 +211,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
   // block-scoped al try → no llega al catch). En el pool continuo este camino de error no guardaba
   // NI log NI captura → el historial fallaba "en silencio" (el .log terminaba en "Síguelo…").
   let errPage: Page | null = null;
+  let sprlRespOff: (() => void) | null = null; // desengancha el listener REST del SPRL en el finally (evita fuga en el pool)
   try {
     for (let i = 0; i < 20 && !browser; i++) { await wait(700); browser = await cdp().catch(() => null); }
     if (!browser) return { ...empty, sede: oficina, vehiculo, error: 'no conecté al Chrome SPRL' };
@@ -207,6 +222,24 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // Playwright; en un Chrome contendido eso encadena cuelgues. Se acota a 20s (las esperas legítimas
     // largas —goto, waitForResponse— pasan su propio timeout explícito, así que no las afecta).
     page.setDefaultTimeout(20000);
+
+    // Intercepta las respuestas REST del SPRL para leer los títulos también desde la RED, no solo del
+    // DOM del modal "Lista de Asientos" (que en VPS/red lenta a veces no alcanza a pintar antes de leer →
+    // era el `títulos: []` con partida existente). El JSON viene EN CLARO; si un campo `data` está cifrado
+    // (AES-128) se descifra. Igual que el probe validado. Se desengancha en el finally.
+    const sprlRest: string[] = [];
+    const onSprlResp = (resp: Response): void => {
+      const u = resp.url();
+      if (!/sunarp-services/i.test(u) || /captcha\/image/i.test(u)) return;
+      resp.text().then((t) => {
+        if (!t) return;
+        let out = t;
+        try { const j = JSON.parse(t) as { data?: unknown }; if (typeof j.data === 'string' && j.data.length > 40) { const dec = sprlDecrypt(j.data); if (dec) out = `${t} ${dec}`; } } catch { /* no era JSON */ }
+        sprlRest.push(out);
+      }).catch(() => {});
+    };
+    page.on('response', onSprlResp);
+    sprlRespOff = () => page.off('response', onSprlResp);
 
     // ── [2] SPRL: login (la sesión ya debería estar asentada por el spawn temprano) ──
     // Login + detección de lockout centralizados en sprl-login.ts (MISMA lógica que reusan el
@@ -269,21 +302,44 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const buscarBtns = page.locator('button:has-text("Buscar")');
       for (let i = 0; i < (await buscarBtns.count().catch(() => 0)); i++) { const b = buscarBtns.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); break; } }
       await respP;
-      // En vez de wait(2500) ciego: espera a que pinte la fila de resultados (sale al toque cuando ya
-      // está; cap 2500ms como antes, así el caso "sin resultado" no se hace más lento).
+      // Espera a que pinte la fila de resultados (la partida). Cap 4s (subido desde 2.5s: en VPS lento la
+      // fila tardaba y se saltaba el clic). Si no hay fila, el caso "sin resultado" sale igual de rápido.
       const rowBtns = page.locator('.ant-table-tbody tr button, table tbody tr button');
-      await rowBtns.first().waitFor({ state: 'visible', timeout: 2500 }).catch(() => {});
-      if ((await rowBtns.count().catch(() => 0)) >= 2) {
-        await rowBtns.nth(1).click().catch(() => {});
-        // En vez de wait(4000) ciego: sale apenas aparecen los títulos (AAAA-NNNNNN) en el body (cap ~4s).
-        const rxTit = /\b20\d{2}\s*-\s*\d{6,8}\b/;
-        for (let i = 0; i < 13; i++) { if (rxTit.test(await page.locator('body').innerText({ timeout: 3000 }).catch(() => ''))) break; await wait(300); }
+      await rowBtns.first().waitFor({ state: 'visible', timeout: 4000 }).catch(() => {});
+      const nRow = await rowBtns.count().catch(() => 0);
+      // Botones de la fila: Ver Detalle (lupa) · Ver Asientos · Boleta ($). NUNCA la boleta (cuesta S/6.60).
+      // El de asientos = 1er no-boleta desde el índice 1 (igual que el probe validado), no un `nth(1)` ciego.
+      let asientoIdx = -1;
+      for (let i = 1; i < nRow; i++) {
+        const html = await rowBtns.nth(i).evaluate((el) => el.outerHTML).catch(() => '');
+        if (/boleta|file|pdf|printer|profile/i.test(html)) continue;
+        asientoIdx = i; break;
+      }
+      if (asientoIdx === -1 && nRow >= 2) asientoIdx = 1; // respaldo: el 2º suele ser el de asientos
+      const rxTit = /\b20\d{2}\s*-\s*\d{6,8}\b/;
+      if (asientoIdx >= 0) {
+        await rowBtns.nth(asientoIdx).click().catch(() => {});
+        // El modal "Lista de Asientos" se PUEBLA con una llamada REST → esperar por SEÑAL, no ~3.9s ciegos
+        // (era la causa del `[]` con partida existente en VPS lento). Espera el modal visible + a que los
+        // títulos aparezcan en el DOM o en la red interceptada (cap ~15s; sale apenas hay títulos).
+        await page.locator('.ant-modal-content, .ant-modal, [role="dialog"], .ant-drawer-content')
+          .filter({ hasText: /asiento/i }).first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+        for (let i = 0; i < 50; i++) {
+          const dom = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
+          if (rxTit.test(dom) || sprlRest.some((s) => rxTit.test(s))) break;
+          await wait(300);
+        }
       }
       const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
       // SUNARP marca la partida como "incompleta, no visualizada por usuario externo" (error DE SUNARP,
       // reportado a su zona registral). La partida existe pero no muestra los asientos → no es error nuestro.
       if (/partida incompleta|no visualizada por usuario externo/i.test(bodyText)) partidaIncompleta = true;
-      return [...new Set((bodyText.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
+      // Títulos: DOM del modal + JSON REST interceptado (como el probe validado). La combinación solo puede
+      // AÑADIR títulos que el DOM no alcanzó a pintar; el regex `AAAA-NNNNNN` nunca produce falsos positivos.
+      const combined = `${bodyText} ${sprlRest.join(' ')}`;
+      const tits = [...new Set((combined.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
+      log(`SPRL${useOficina ? '+ofi' : ''}: filas=${nRow} · asientoBtn=${asientoIdx} · títulos=${tits.length}`);
+      return tits;
     }
     // Intento RÁPIDO: SPRL por placa SIN oficina (optimización). Si el caller ya dio la
     // sede, se usa directo. Si viene vacío, resolvemos la sede (SUNARP) y reintentamos
@@ -471,6 +527,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     if (errPage) { const ok = await errPage.screenshot({ path: errShot, fullPage: true }).then(() => true).catch(() => false); if (ok) log(`captura de error → ${errShot}`); }
     return { ...empty, sede: oficina, vehiculo, error: msg };
   } finally {
+    if (sprlRespOff) sprlRespOff(); // desengancha el listener REST (el `page` se reusa entre placas en el pool)
     // Solo cerramos lo que ESTA función LANZÓ: si reusamos un Chrome caliente (connect-first) o nos lo
     // pasó el caller (modo lote/pool), la sesión queda viva. Cerrarlo mataría el keep-alive / el pool.
     if (browser && spawned) await browser.close().catch(() => {});
