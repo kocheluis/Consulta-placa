@@ -227,7 +227,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // DOM del modal "Lista de Asientos" (que en VPS/red lenta a veces no alcanza a pintar antes de leer →
     // era el `títulos: []` con partida existente). El JSON viene EN CLARO; si un campo `data` está cifrado
     // (AES-128) se descifra. Igual que el probe validado. Se desengancha en el finally.
-    const sprlRest: string[] = [];
+    const sprlRest: Array<{ url: string; body: string }> = [];
     const onSprlResp = (resp: Response): void => {
       const u = resp.url();
       if (!/sunarp-services/i.test(u) || /captcha\/image/i.test(u)) return;
@@ -235,7 +235,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         if (!t) return;
         let out = t;
         try { const j = JSON.parse(t) as { data?: unknown }; if (typeof j.data === 'string' && j.data.length > 40) { const dec = sprlDecrypt(j.data); if (dec) out = `${t} ${dec}`; } } catch { /* no era JSON */ }
-        sprlRest.push(out);
+        sprlRest.push({ url: u, body: out });
       }).catch(() => {});
     };
     page.on('response', onSprlResp);
@@ -295,13 +295,16 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await wait(500);
       const num = page.locator('#numero');
       await num.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
-      for (let i = 0; i < 3; i++) { await num.click().catch(() => {}); await num.fill('').catch(() => {}); await num.type(plate, { delay: 60 }).catch(() => {}); await wait(400); if ((await num.inputValue({ timeout: 1000 }).catch(() => '')) === plate) break; }
+      let placaVal = '';
+      for (let i = 0; i < 3; i++) { await num.click().catch(() => {}); await num.fill('').catch(() => {}); await num.type(plate, { delay: 60 }).catch(() => {}); await wait(400); placaVal = await num.inputValue({ timeout: 1000 }).catch(() => ''); if (placaVal === plate) break; }
       // Poll del Turnstile a 400ms (antes 1000ms): mismo tope (~30s) pero sale ~600ms antes en promedio.
-      for (let i = 0; i < 75; i++) { if (await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')) break; await wait(400); }
+      let tsLen = 0;
+      for (let i = 0; i < 75; i++) { tsLen = (await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')).length; if (tsLen) break; await wait(400); }
       const respP = page.waitForResponse((r) => /mostrar-resultado-partida-veh/i.test(r.url()), { timeout: 30000 }).catch(() => null);
       const buscarBtns = page.locator('button:has-text("Buscar")');
-      for (let i = 0; i < (await buscarBtns.count().catch(() => 0)); i++) { const b = buscarBtns.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); break; } }
-      await respP;
+      let buscarClicked = false;
+      for (let i = 0; i < (await buscarBtns.count().catch(() => 0)); i++) { const b = buscarBtns.nth(i); if ((await b.isVisible().catch(() => false)) && (await b.isEnabled().catch(() => false))) { await b.click().catch(() => {}); buscarClicked = true; break; } }
+      const resp = await respP;
       // Espera a que pinte la fila de resultados (la partida). Cap 4s (subido desde 2.5s: en VPS lento la
       // fila tardaba y se saltaba el clic). Si no hay fila, el caso "sin resultado" sale igual de rápido.
       const rowBtns = page.locator('.ant-table-tbody tr button, table tbody tr button');
@@ -326,7 +329,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
           .filter({ hasText: /asiento/i }).first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
         for (let i = 0; i < 50; i++) {
           const dom = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
-          if (rxTit.test(dom) || sprlRest.some((s) => rxTit.test(s))) break;
+          if (rxTit.test(dom) || sprlRest.some((s) => rxTit.test(s.body))) break;
           await wait(300);
         }
       }
@@ -336,9 +339,24 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (/partida incompleta|no visualizada por usuario externo/i.test(bodyText)) partidaIncompleta = true;
       // Títulos: DOM del modal + JSON REST interceptado (como el probe validado). La combinación solo puede
       // AÑADIR títulos que el DOM no alcanzó a pintar; el regex `AAAA-NNNNNN` nunca produce falsos positivos.
-      const combined = `${bodyText} ${sprlRest.join(' ')}`;
+      const combined = `${bodyText} ${sprlRest.map((r) => r.body).join(' ')}`;
       const tits = [...new Set((combined.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
       log(`SPRL${useOficina ? '+ofi' : ''}: filas=${nRow} · asientoBtn=${asientoIdx} · títulos=${tits.length}`);
+      // DIAGNÓSTICO cuando la BÚSQUEDA no devolvió fila (filas=0): distingue —sin asumir— si el problema es
+      // el Turnstile (tsLen=0), el llenado de la placa (placa≠), el botón Buscar (buscarClic=false), la
+      // respuesta REST (resp=null / sin endpoint de búsqueda), o el render. Guarda una captura de la página
+      // para verla directamente. Solo corre en el camino de fallo → no ralentiza el caso normal.
+      if (nRow === 0) {
+        const areaTxt = (await page.locator('nz-select').filter({ hasText: /propiedad/i }).first().innerText({ timeout: 1500 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 40);
+        const urls = sprlRest.map((r) => r.url.replace(/^https?:\/\/[^/]+/, '').slice(-52));
+        const searchResp = sprlRest.find((r) => /mostrar-resultado-partida-veh/i.test(r.url));
+        const snippet = (await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 220);
+        const dbgShot = opts.shotPath ? opts.shotPath.replace(/[^/\\]+$/, 'sprl-busqueda.png') : `${PROFILE}/_sprl-busqueda.png`;
+        await page.screenshot({ path: dbgShot, fullPage: true }).catch(() => {});
+        log(`SPRL DIAG · placa="${placaVal}" area="${areaTxt}" turnstile=${tsLen} buscarClic=${buscarClicked} resp=${resp ? resp.status() : 'null'} REST=[${urls.join(' | ')}]`);
+        if (searchResp) log(`SPRL DIAG · búsqueda body: ${searchResp.body.replace(/\s+/g, ' ').slice(0, 320)}`);
+        log(`SPRL DIAG · captura=${dbgShot} · texto="${snippet}"`);
+      }
       return tits;
     }
     // Intento RÁPIDO: SPRL por placa SIN oficina (optimización). Si el caller ya dio la
