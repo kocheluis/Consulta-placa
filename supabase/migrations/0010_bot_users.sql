@@ -14,8 +14,9 @@ create table if not exists public.bot_users (
   user_id     uuid references auth.users (id) on delete set null,      -- cuenta vinculada (null = sin vincular)
   email       text,                                                    -- correo declarado (para OTP / entrega)
   verified    boolean     not null default false,                      -- ¿el número confirmó el OTP?
-  otp_code    text,                                                    -- OTP de vinculación (Fase 1; efímero)
+  otp_code    text,                                                    -- OTP de vinculación (hash SHA-256; efímero)
   otp_expires timestamptz,                                             -- caducidad del OTP
+  otp_attempts integer    not null default 0,                          -- intentos fallidos de OTP (anti fuerza bruta)
   state       jsonb       not null default '{}'::jsonb,                -- estado de conversación del bot (n8n)
   last_placa  text,                                                    -- última placa consultada (contexto postventa)
   created_at  timestamptz not null default now(),

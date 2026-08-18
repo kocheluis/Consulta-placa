@@ -3,9 +3,20 @@
  * reporte para WhatsApp. Separados de `lib/bot.ts` para poder testearlos aislados. `lib/bot.ts` los
  * re-exporta, así el resto del código sigue importando desde '@/lib/bot'.
  */
+import crypto from 'node:crypto';
 import { computeScore, ScoreLevel, type Report } from '@app/shared';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://placape.pe';
+
+/** Código OTP de 6 dígitos (aleatorio criptográfico) para la vinculación del número. */
+export function genOtp(): string {
+  return String(crypto.randomInt(0, 1_000_000)).padStart(6, '0');
+}
+
+/** Hash del OTP (SHA-256). Se guarda el HASH, nunca el código en claro. */
+export function hashOtp(code: string): string {
+  return crypto.createHash('sha256').update(String(code)).digest('hex');
+}
 
 /**
  * Normaliza un número de WhatsApp a solo dígitos en formato país. WhatsApp Cloud API entrega el

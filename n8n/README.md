@@ -16,11 +16,28 @@ WhatsApp  ──►  n8n (01 inbound)  ──►  POST /api/bot/consulta  ──
                      └── GET /api/bot/reporte?placa=&phone= (resumen + recorte por nivel)
 ```
 
-## Alcance de la Fase 0
+## Alcance
 
 - **Número VINCULADO** a una cuenta con cupo → consume su cupo y genera **PRO/ULTRA**.
-- **Número SIN vincular** → genera **BASIC gratis** (el cobro Yape/IziPay y el OTP de vinculación son Fase 1).
+- **Número SIN vincular** → genera **BASIC gratis** (el cobro Yape/IziPay es Fase 1/3).
+- **Vinculación por OTP** (Fase 1): el usuario manda su correo → recibe un código por email → lo confirma
+  en el chat → su número queda vinculado a su cuenta (y usa su cupo). Ya no hace falta el SQL manual.
 - Entrega automática por WhatsApp al quedar el reporte listo (el VPS ya postea a `N8N_WEBHOOK_URL`).
+
+## Enrutado por intención (workflow 01)
+
+El Code node `Extraer datos` clasifica cada mensaje en `intent` y expone `phone/placa/email/code`:
+
+| `intent` | Cuándo | Endpoint a llamar |
+|---|---|---|
+| `consulta` | trae una placa (6–7 alfanum con letra y dígito) | `POST /api/bot/consulta` |
+| `vincular` | trae un correo | `POST /api/bot/link/start` |
+| `codigo` | son exactamente 6 dígitos | `POST /api/bot/link/verify` |
+| `otro` | nada de lo anterior | responder ayuda |
+
+> El workflow 01 que se incluye enruta **consulta** (rama lista). Para activar la vinculación agrega un
+> nodo **Switch** por `{{ $json.intent }}` con las ramas `vincular` y `codigo` apuntando a los endpoints
+> de la tabla (mismo header `x-bot-token`). El Code node ya entrega `email` y `code` listos.
 
 ## Variables de entorno
 
@@ -46,6 +63,21 @@ Respuesta:
 // status: queued | generating | ready | exists | cupo_exceeded | invalid
 // cupo_exceeded añade: "window": "hora|día|semana", "resetInMin": 37
 ```
+
+### `POST /api/bot/link/start`  (vincular — Fase 1)
+Header `x-bot-token` · Body `{ "phone": "51987654321", "email": "usuario@ejemplo.com" }`
+```jsonc
+{ "ok": true, "status": "otp_sent" }   // otp_sent | no_account | invalid | error
+```
+Si existe una cuenta con ese correo, envía un OTP de 6 dígitos por email (Resend). No vincula aún.
+
+### `POST /api/bot/link/verify`  (confirmar código — Fase 1)
+Header `x-bot-token` · Body `{ "phone": "51987654321", "code": "123456" }`
+```jsonc
+{ "ok": true, "status": "linked", "tier": "PRO" }
+// status: linked | expired | invalid_code (+remaining) | too_many | no_pending | error
+```
+Al quedar `linked`, ese número usa el cupo de la cuenta. El OTP vence en 10 min y se bloquea tras 5 intentos.
 
 ### `GET /api/bot/reporte?placa=ABC123&phone=51987654321`
 Header `x-bot-token: <BOT_API_TOKEN>` · `phone` es opcional (recorta el reporte al nivel que ese número
@@ -89,6 +121,7 @@ Manda `text` tal cual por WhatsApp (ya viene con *negritas* de WA y con los terc
   on conflict (phone) do update set user_id = excluded.user_id, verified = true, updated_at = now();
   ```
   Escribe al bot `consulta ABC123` → responde "generando" → al terminar te llega el resumen PRO/ULTRA.
+  (O sin SQL: manda tu **correo** al bot → te llega un **código** → confírmalo → quedas vinculado.)
 - **Sin vincular**: desde otro número, `consulta ABC123` → genera BASIC gratis y te llega el resumen BASIC.
 
 ## Nota

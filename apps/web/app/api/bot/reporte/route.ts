@@ -31,7 +31,7 @@ export async function GET(req: Request) {
   if (rep?.report) {
     // Recorte por nivel del número (Ley 29733 + paywall): BASIC si no está vinculado con cupo.
     const bu = phone ? await getBotUser(phone) : null;
-    const tier = await entitledBotTier(bu?.userId ?? null);
+    const tier = await entitledBotTier(bu?.userId ?? null, placa);
     const report = stripByTier(rep.report as Report, tier);
     const summary = reportSummary(report);
     const status = summary.plateNotFound ? 'not_registered' : 'ready';

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { normPhone, normPlaca, reportSummary } from './bot-format';
+import { normPhone, normPlaca, reportSummary, genOtp, hashOtp } from './bot-format';
 import {
   ReportStatus, SectionKind, SectionStatus, ScoreLevel, DISCLAIMER_TEXT, type Report,
 } from '@app/shared';
@@ -29,6 +29,21 @@ describe('normPlaca', () => {
   it('acepta 6 y 7', () => {
     expect(normPlaca('D0K057')).toBe('D0K057');
     expect(normPlaca('AC23990')).toBe('AC23990');
+  });
+});
+
+describe('OTP', () => {
+  it('genOtp → 6 dígitos exactos', () => {
+    for (let i = 0; i < 50; i++) {
+      const c = genOtp();
+      expect(c).toMatch(/^\d{6}$/);
+    }
+  });
+  it('hashOtp es determinístico y distingue por código', () => {
+    expect(hashOtp('123456')).toBe(hashOtp('123456'));
+    expect(hashOtp('123456')).not.toBe(hashOtp('654321'));
+    expect(hashOtp('000123')).toHaveLength(64); // sha256 hex
+    expect(hashOtp('000123')).not.toContain('000123'); // no guarda el código en claro
   });
 });
 

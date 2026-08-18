@@ -278,6 +278,23 @@ export async function markPurchaseFailed(orderId: string): Promise<void> {
   await sb.from('purchases').update({ status: 'failed' }).eq('id', orderId).eq('status', 'pending');
 }
 
+/**
+ * Nivel pagado por un usuario para una placa, POR user_id (cliente admin, sin sesión). La usa el bot
+ * de WhatsApp — que identifica al usuario por su número, no por cookie — para reflejar sus compras.
+ */
+export async function getPaidTierByUserId(userId: string, plate: string): Promise<'BASIC' | PaidTier> {
+  const sb = createAdminClient();
+  const { data } = await sb
+    .from('purchases')
+    .select('tier')
+    .eq('user_id', userId)
+    .eq('plate', plate.toUpperCase())
+    .eq('status', 'paid');
+  const rows = (data ?? []) as { tier: string }[];
+  if (rows.length === 0) return 'BASIC';
+  return rows.some((r) => r.tier === 'ULTRA') ? 'ULTRA' : 'PRO';
+}
+
 /** Nivel desbloqueado por el usuario para una placa (BASIC si no compró). */
 export async function getPaidTier(plate: string): Promise<'BASIC' | PaidTier> {
   const sb = await createClient();
