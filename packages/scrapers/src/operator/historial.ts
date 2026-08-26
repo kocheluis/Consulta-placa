@@ -130,13 +130,35 @@ async function renderAsientoShot(ctx: BrowserContext, bytes: number[], pngPath: 
   } finally { await pg.close().catch(() => {}); }
 }
 
-async function pickNzSelect(sel: Locator, page: Page, optionText: RegExp): Promise<void> {
-  await sel.locator('.ant-select-selector').first().click({ timeout: 5000 }).catch(() => {});
-  await wait(500);
-  const opt = page.locator('.ant-select-item-option-content', { hasText: optionText }).first();
-  await opt.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-  await opt.click().catch(() => {});
-  await wait(800);
+/**
+ * Selecciona el ÁREA "Propiedad Vehicular" de forma ROBUSTA, sin depender del placeholder del select
+ * (SUNARP lo cambió → el finder viejo `hasText:/propiedad/` no enganchaba → el área quedaba SIN
+ * seleccionar → búsqueda incompleta → filas=0). Estrategia: abre cada `nz-select` y elige la 1ª que
+ * ofrezca una opción que empareje `optionRx`; VERIFICA que el select quede con ese valor. Si no lo
+ * logra, devuelve en `diag` las opciones que vio en cada select (para cazar un nuevo nombre si cambió).
+ */
+async function pickAreaOption(page: Page, optionRx: RegExp): Promise<{ ok: boolean; diag: string }> {
+  const selects = page.locator('nz-select');
+  const n = await selects.count().catch(() => 0);
+  const seen: string[] = [];
+  for (let i = 0; i < n; i++) {
+    const sel = selects.nth(i);
+    await sel.locator('.ant-select-selector').first().click({ timeout: 4000 }).catch(() => {});
+    await wait(500);
+    const opts = page.locator('.ant-select-item-option-content');
+    const texts = (await opts.allInnerTexts().catch(() => [])).map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    if (texts.length) seen.push(`sel${i}:[${texts.slice(0, 6).join(' | ')}]`);
+    const idx = texts.findIndex((t) => optionRx.test(t));
+    if (idx >= 0) {
+      await opts.nth(idx).click().catch(() => {});
+      await wait(700);
+      const chosen = (await sel.innerText({ timeout: 1500 }).catch(() => '')).replace(/\s+/g, ' ').trim();
+      if (optionRx.test(chosen)) return { ok: true, diag: `sel${i}` };
+    }
+    await page.keyboard.press('Escape').catch(() => {}); // cierra el dropdown antes del siguiente
+    await wait(200);
+  }
+  return { ok: false, diag: `NO seleccionada · selects=${n} · ${seen.join('  ') || 'sin opciones visibles'}` };
 }
 async function pickSearchable(sel: Locator, page: Page, value: string): Promise<void> {
   await sel.locator('.ant-select-selector').first().click({ timeout: 5000 }).catch(() => {});
@@ -285,8 +307,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await page.goto(PARTIDA, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
       await page.locator('nz-select').first().waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
       await wait(1500);
-      await pickNzSelect(page.locator('nz-select').filter({ hasText: /propiedad/i }).first(), page, /propiedad vehicular/i);
-      await wait(800);
+      // Área "Propiedad Vehicular" — selección ROBUSTA (no depende del placeholder; ver pickAreaOption).
+      // Un reintento por si el 1er open no alcanzó a pintar las opciones (VPS lento).
+      let areaPick = await pickAreaOption(page, /propiedad\s+vehicular/i);
+      if (!areaPick.ok) { await wait(800); areaPick = await pickAreaOption(page, /propiedad\s+vehicular/i); }
+      await wait(600);
       // Oficina: opcional. El SPRL busca por placa sin sede; solo se llena en el fallback.
       if (useOficina && oficina) {
         await pickSearchable(page.locator('nz-select').filter({ hasText: /seleccione/i }).first(), page, oficina);
@@ -354,7 +379,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         const snippet = (await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 220);
         const dbgShot = opts.shotPath ? opts.shotPath.replace(/[^/\\]+$/, 'sprl-busqueda.png') : `${PROFILE}/_sprl-busqueda.png`;
         await page.screenshot({ path: dbgShot, fullPage: true }).catch(() => {});
-        log(`SPRL DIAG · placa="${placaVal}" area="${areaTxt}" turnstile=${tsLen} buscarClic=${buscarClicked} resp=${resp ? resp.status() : 'null'} REST=[${urls.join(' | ')}]`);
+        log(`SPRL DIAG · placa="${placaVal}" area="${areaTxt}" areaPick=${areaPick.ok ? 'ok/' + areaPick.diag : areaPick.diag} turnstile=${tsLen} buscarClic=${buscarClicked} resp=${resp ? resp.status() : 'null'} REST=[${urls.join(' | ')}]`);
         if (searchResp) log(`SPRL DIAG · búsqueda body: ${searchResp.body.replace(/\s+/g, ' ').slice(0, 320)}`);
         log(`SPRL DIAG · captura=${dbgShot} · texto="${snippet}"`);
       }
