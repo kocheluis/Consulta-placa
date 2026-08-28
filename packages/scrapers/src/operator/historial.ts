@@ -130,12 +130,18 @@ async function renderAsientoShot(ctx: BrowserContext, bytes: number[], pngPath: 
   } finally { await pg.close().catch(() => {}); }
 }
 
+/** Dropdown ABIERTO de nz-select. Los dropdowns cerrados PERSISTEN ocultos en el DOM (cdk-overlay);
+ *  un locator GLOBAL de `.ant-select-item-option-content` mezcla las opciones de OTROS selects — bug
+ *  del 27-ago: al abrir el select del ÁREA se "veían" las OFICINAS del dropdown anterior y nunca se
+ *  hallaba "Propiedad Vehicular" (probado en vivo con probe-sprl-form). SIEMPRE scoped al abierto. */
+const openDropdown = (page: Page): Locator => page.locator('.ant-select-dropdown:not(.ant-select-dropdown-hidden)');
+
 /**
- * Selecciona el ÁREA "Propiedad Vehicular" de forma ROBUSTA, sin depender del placeholder del select
- * (SUNARP lo cambió → el finder viejo `hasText:/propiedad/` no enganchaba → el área quedaba SIN
- * seleccionar → búsqueda incompleta → filas=0). Estrategia: abre cada `nz-select` y elige la 1ª que
- * ofrezca una opción que empareje `optionRx`; VERIFICA que el select quede con ese valor. Si no lo
- * logra, devuelve en `diag` las opciones que vio en cada select (para cazar un nuevo nombre si cambió).
+ * Selecciona el ÁREA "Propiedad Vehicular" en el form REDISEÑADO del SPRL (ago-2026, validado en vivo):
+ * sel0=Oficina Registral (opcional para vehicular), sel1=Área registral (default "Propiedad Inmueble
+ * Predial"), sel2=Registro/Libro (según área). No asume el orden: recorre los `nz-select` visibles y
+ * elige el que ofrezca la opción buscada — leyendo y clicando SOLO dentro del dropdown ABIERTO — y
+ * VERIFICA que el select quede con ese valor. Si no lo logra, `diag` trae las opciones vistas por select.
  */
 async function pickAreaOption(page: Page, optionRx: RegExp): Promise<{ ok: boolean; diag: string }> {
   const selects = page.locator('nz-select');
@@ -143,20 +149,25 @@ async function pickAreaOption(page: Page, optionRx: RegExp): Promise<{ ok: boole
   const seen: string[] = [];
   for (let i = 0; i < n; i++) {
     const sel = selects.nth(i);
+    if (!(await sel.isVisible().catch(() => false))) continue;
+    // ¿Ya está seleccionada? (reintento / segunda pasada) → no reabrir el dropdown.
+    const cur = (await sel.innerText({ timeout: 1000 }).catch(() => '')).replace(/\s+/g, ' ').trim();
+    if (optionRx.test(cur)) return { ok: true, diag: `sel${i}(ya)` };
     await sel.locator('.ant-select-selector').first().click({ timeout: 4000 }).catch(() => {});
-    await wait(500);
-    const opts = page.locator('.ant-select-item-option-content');
-    const texts = (await opts.allInnerTexts().catch(() => [])).map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
+    await wait(600);
+    const drop = openDropdown(page);
+    const texts = (await drop.locator('.ant-select-item-option-content').allInnerTexts().catch(() => []))
+      .map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
     if (texts.length) seen.push(`sel${i}:[${texts.slice(0, 6).join(' | ')}]`);
-    const idx = texts.findIndex((t) => optionRx.test(t));
-    if (idx >= 0) {
-      await opts.nth(idx).click().catch(() => {});
+    const target = drop.locator('.ant-select-item-option-content', { hasText: optionRx }).first();
+    if (await target.isVisible().catch(() => false)) {
+      await target.click().catch(() => {});
       await wait(700);
       const chosen = (await sel.innerText({ timeout: 1500 }).catch(() => '')).replace(/\s+/g, ' ').trim();
       if (optionRx.test(chosen)) return { ok: true, diag: `sel${i}` };
     }
     await page.keyboard.press('Escape').catch(() => {}); // cierra el dropdown antes del siguiente
-    await wait(200);
+    await wait(250);
   }
   return { ok: false, diag: `NO seleccionada · selects=${n} · ${seen.join('  ') || 'sin opciones visibles'}` };
 }
@@ -165,7 +176,8 @@ async function pickSearchable(sel: Locator, page: Page, value: string): Promise<
   await wait(400);
   await page.locator('.ant-select-selection-search-input:visible').first().fill(value).catch(() => {});
   await wait(900);
-  const opt = page.locator('.ant-select-item-option-content', { hasText: new RegExp(`^\\s*${value}\\s*$`, 'i') }).first();
+  // Scoped al dropdown ABIERTO (mismo motivo que pickAreaOption: los cerrados persisten en el DOM).
+  const opt = openDropdown(page).locator('.ant-select-item-option-content', { hasText: new RegExp(`^\\s*${value}\\s*$`, 'i') }).first();
   await opt.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
   await opt.click().catch(() => {});
   await wait(800);
