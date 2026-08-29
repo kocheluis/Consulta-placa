@@ -120,6 +120,14 @@ export default function ReportePage() {
   }, []);
   const state = useConsulta(placa, refreshToken, PRO_ENABLED, preview);
   const actualizar = () => setRefreshToken((n) => n + 1);
+  // Reintento SOLO-ERRORES: encola en el backend la re-corrida de las fuentes que fallaron (el motor
+  // reusa las buenas y repara las malas). Distinto de `actualizar`, que solo RE-LEE el reporte cacheado.
+  const retryErrors = async () => {
+    try {
+      await fetch(`/api/reporte/${encodeURIComponent(placa)}/reintentar`, { method: 'POST' });
+    } catch { /* sin red → el refetch de abajo igual actualiza el estado */ }
+    actualizar(); // el pedido nuevo pone `generating:true` → la vista sondea hasta el reporte reparado
+  };
 
   // Pantalla intermedia (lead gate): null mientras leemos localStorage, luego true si
   // este navegador ya dejó su contacto (o si es preview de operador).
@@ -235,6 +243,7 @@ export default function ReportePage() {
       report={state.report}
       cached={state.cached}
       onRetry={actualizar}
+      onRetryErrors={retryErrors}
       preview={preview}
       serverTier={state.tier}
       serverCupo={state.cupo}
@@ -343,10 +352,15 @@ function FreeConsultaGate({ placa, onStarted, cupo }: { placa: string; onStarted
 }
 
 /* ── Vista del reporte ────────────────────────────────────────────── */
+/** Nivel mínimo por tipo de sección (del catálogo) para contar solo las fallidas VISIBLES al usuario. */
+const KIND_TIER = new Map<string, ReportTier>();
+for (const e of SECTION_CATALOG) if (e.dataKind) KIND_TIER.set(e.dataKind, e.tier);
+
 function ReportView({
-  report, cached, onRetry, preview, serverTier, serverCupo, generating,
+  report, cached, onRetry, onRetryErrors, preview, serverTier, serverCupo, generating,
 }: {
-  report: Report; cached: boolean; onRetry: () => void; preview?: string; serverTier?: Tier; serverCupo?: CupoInfo; generating?: boolean;
+  report: Report; cached: boolean; onRetry: () => void; onRetryErrors?: () => void | Promise<void>;
+  preview?: string; serverTier?: Tier; serverCupo?: CupoInfo; generating?: boolean;
 }) {
   const router = useRouter();
   const v = report.vehicle;
@@ -453,6 +467,32 @@ function ReportView({
     return () => clearInterval(iv);
   }, [awaitingPaid, awaitingTier, report.placa]);
 
+  // Fuentes con ERROR visibles en el nivel actual (las de niveles superiores no se cuentan: el
+  // usuario ni las ve). Alimenta el banner "Reintentar fuentes con error".
+  const rankForFails = preview ? TIER_RANK[ReportTier.ULTRA] : rankNow;
+  const failedVisible = report.sections.filter((s) => {
+    if (s.status !== SectionStatus.UNAVAILABLE) return false;
+    const t = KIND_TIER.get(s.kind);
+    return !t || (TIER_RANK[t] ?? 1) <= rankForFails;
+  }).length;
+
+  // Reintento solo-errores: dispara el endpoint y deja el banner en "reintentando" hasta que el
+  // backend confirme la generación (`generating`) o pasen ~10 s (si el POST no encoló nada).
+  const [retrying, setRetrying] = useState(false);
+  const retrySections = async () => {
+    if (retrying || !onRetryErrors) { onRetry(); return; }
+    setRetrying(true);
+    try { await onRetryErrors(); } finally { setTimeout(() => setRetrying(false), 10000); }
+  };
+
+  // Sondeo mientras HAY una generación en curso (p. ej. un reintento de fuentes): el efecto de
+  // arriba solo cubre `awaitingPaid`; sin este, el reporte reparado no llegaba hasta recargar.
+  useEffect(() => {
+    if (!generating || awaitingPaid) return;
+    const iv = setInterval(() => onRetryRef.current(), 4000);
+    return () => clearInterval(iv);
+  }, [generating, awaitingPaid]);
+
   // El reporte de pago aún no está listo → el resto del reporte (gratis) sigue visible; solo el
   // panel PRO/ULTRA muestra la carga (ver <PaidPanelLoading/> en el <main> de abajo).
 
@@ -501,6 +541,27 @@ function ReportView({
           </div>
         </div>
       </div>
+
+      {/* Fuentes con error: el usuario puede reprocesar SOLO esas (el motor reusa las que sí salieron). */}
+      {failedVisible > 0 && (
+        <div className="mx-auto max-w-[1240px] px-4 pt-4 sm:px-7">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/40 bg-warning-bg px-4 py-3">
+            <Icon name="warning" className="text-[20px] text-warning-fg" />
+            <p className="flex-1 font-body text-sm text-warning-fg">
+              {generating || retrying
+                ? `Reintentando ${failedVisible === 1 ? 'la fuente que no respondió' : `las ${failedVisible} fuentes que no respondieron`}… puede tardar unos minutos.`
+                : `${failedVisible === 1 ? '1 fuente no respondió' : `${failedVisible} fuentes no respondieron`} en esta consulta. Puedes reintentar solo esas — lo demás se conserva.`}
+            </p>
+            {generating || retrying ? (
+              <span className="h-4 w-4 flex-none animate-spin rounded-full border-2 border-warning/40 border-t-warning-fg" aria-hidden />
+            ) : (
+              <Button variant="secondary" size="sm" icon="refresh" onClick={retrySections}>
+                Reintentar fuentes con error
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
 
       <div className="mx-auto grid max-w-[1240px] items-start gap-6 px-4 py-7 sm:px-7 lg:grid-cols-[300px_1fr]">
         {/* Sidebar */}
@@ -568,11 +629,13 @@ function ReportView({
 
         {/* BASIC (gratis) arriba; PRO+ULTRA en UN solo panel abajo (oculto → desbloquear → elegir nivel). */}
         <main className="flex flex-col gap-6">
-          <TierPanel tierKey={ReportTier.BASIC} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} />
+          {/* El "Reintentar" de cada sección fallida dispara el reintento REAL (backend re-corre las
+              fuentes con error), no solo el refetch del reporte cacheado. */}
+          <TierPanel tierKey={ReportTier.BASIC} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={retrySections} />
           {awaitingPaid || paidFinishing ? (
             <PaidPanelLoading tier={awaitingPaid ? awaitingTier : lastPaidTier.current} finishing={paidFinishing} />
           ) : (
-            <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={onRetry} cupo={serverCupo} generating={generatingNow} />
+            <PaidPanel report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={retrySections} onRefetch={onRetry} cupo={serverCupo} generating={generatingNow} />
           )}
         </main>
       </div>
@@ -743,14 +806,17 @@ function SectionBlock({
 
 /* ── Panel combinado PRO + ULTRA (un solo panel) ──────────────────── */
 function PaidPanel({
-  report, vehicle, currentTier, onActivate, buying, onRetry, cupo, generating,
+  report, vehicle, currentTier, onActivate, buying, onRetry, onRefetch, cupo, generating,
 }: {
   report: Report;
   vehicle: Report['vehicle'];
   currentTier: Tier;
   onActivate: (tier: 'PRO' | 'ULTRA') => void;
   buying: 'PRO' | 'ULTRA' | null;
+  /** Reintento de las secciones con error (dispara el reproceso en el backend). */
   onRetry: () => void;
+  /** Solo RE-LEE el reporte (sin reprocesar) — para el CTA de cupo (onStarted). */
+  onRefetch?: () => void;
   cupo?: CupoInfo;
   generating?: boolean;
 }) {
@@ -783,7 +849,7 @@ function PaidPanel({
         </div>
         <div className="p-5">
           <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6">
-            <CupoConsultCTA placa={report.placa} tier={cupo.tier} onStarted={onRetry} />
+            <CupoConsultCTA placa={report.placa} tier={cupo.tier} onStarted={onRefetch ?? onRetry} />
           </div>
         </div>
       </section>

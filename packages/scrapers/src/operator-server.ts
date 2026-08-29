@@ -7,6 +7,7 @@ import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import { runSingleSource, OPERATOR_SOURCES, buildBatchLanes, buildContinuousLanes, type OperatorSourceResult } from './operator/index.js';
 import { orchestrateBatch, type OrchJob } from './operator/batch.js';
+import { computeErrorRetryPlan } from './operator/retry-plan.js';
 import { Pipeline, type PipelineJob } from './operator/pipeline.js';
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
@@ -365,6 +366,19 @@ async function planMemoryReuse(placa: string, sources: string[]): Promise<{ reru
 }
 
 /**
+ * REINTENTO del usuario (pedido `origin='reintento'`, desde el botón de la web): re-corre SOLO las
+ * fuentes con ERROR del reporte guardado, sin gate de TTL (reparar ≠ refrescar). Excluye las no-rerun
+ * (relay GNV) y las fuentes fuera del catálogo actual. null = sin reporte guardado → corrida completa.
+ */
+async function planErrorRetry(placa: string): Promise<{ rerun: string[]; reuse: OperatorSourceResult[] } | null> {
+  let raw: { results?: OperatorSourceResult[] };
+  try { raw = JSON.parse(await readFile(join(plateDir(placa), 'reporte.json'), 'utf8')) as typeof raw; } catch { return null; }
+  if (!raw.results?.length) return null;
+  return computeErrorRetryPlan(raw.results, OPERATOR_SOURCES.map((s) => s.id), MEMORY_NO_RERUN);
+}
+const esReintento = (p: Pedido): boolean => String(p.origin ?? '').toLowerCase() === 'reintento';
+
+/**
  * Delay mínimo antes de ENTREGAR un reporte reusado por memoria. 0 = sin espera (entrega directa):
  *  - pedido del OPERADOR (consola): el operador quiere velocidad, no perceived-work;
  *  - la placa YA está en el historial de consultas del MISMO usuario → es su propio reporte → instantáneo;
@@ -399,13 +413,23 @@ async function notifyReady(p: Pedido, tier: string): Promise<void> {
 
 /** Atiende un pedido de la cola: corre el reporte completo y actualiza su estado. */
 async function processPedido(p: Pedido): Promise<void> {
-  const sources = p.tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
+  let sources = p.tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
+  let reuse: OperatorSourceResult[] = [];
   const tier = (p.tier as string) ?? 'PRO';
   const force = forceReprocess.delete(String(p.id));
   console.log(`[motor-auto] atendiendo pedido ${p.id} · ${p.placa} · tier=${tier}${force ? ' · FORCE' : ''} · ${sources.length} fuentes`);
   await queue.setProcessing(p.id);
-  // Reúso: si ya hay un reporte reciente del mismo dueño, no re-corremos todas las fuentes.
-  if (!force) {
+  if (esReintento(p)) {
+    // REINTENTO del usuario: SOLO los errores del reporte guardado (salta el dedup por dueño, que
+    // devolvería el reporte cacheado con los mismos errores). Sin reporte previo → corrida completa.
+    const plan = await planErrorRetry(p.placa).catch(() => null);
+    if (plan && !plan.rerun.length) {
+      console.log(`[reintento] ${p.placa}: sin fuentes reparables → entrega tal cual`);
+      await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); return;
+    }
+    if (plan) { sources = plan.rerun; reuse = plan.reuse; console.log(`[reintento] ${p.placa}: re-corro SOLO errores [${sources.join(',')}] · reuso ${reuse.length}`); }
+  } else if (!force) {
+    // Reúso: si ya hay un reporte reciente del mismo dueño, no re-corremos todas las fuentes.
     try {
       if (await tryReuseReport(p, tier)) {
         console.log(`[motor-auto] pedido ${p.id} LISTO (reutilizado, sin re-correr fuentes)`);
@@ -421,6 +445,12 @@ async function processPedido(p: Pedido): Promise<void> {
   currentAutoJobId = job.id;
   try {
     await runJob(job);
+    // REINTENTO: fusiona las fuentes REUSADAS (las buenas del reporte previo) con las re-corridas,
+    // para que el reporte publicado quede completo aunque el job solo corriera las fallidas.
+    if (reuse.length) {
+      const have = new Set(job.results.map((r) => normSrc(r.source)));
+      for (const r of reuse) if (!have.has(normSrc(r.source))) job.results.push(r);
+    }
     const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
     // Degradación elegante: solo es ERROR si NINGUNA fuente respondió. Si el job se pasó de
     // tiempo (job.error) pero algunas fuentes SÍ respondieron, publicamos el reporte PARCIAL
@@ -526,12 +556,24 @@ async function processBatch(pedidos: Pedido[]): Promise<void> {
     const tier = (p.tier as string) ?? 'PRO';
     pedidoById.set(String(p.id), p);
     const force = forceReprocess.delete(String(p.id));
-    if (!force) {
+    let sources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
+    if (esReintento(p)) {
+      // REINTENTO del usuario: SOLO los errores del reporte guardado (salta el dedup por dueño).
+      const plan = await planErrorRetry(p.placa).catch(() => null);
+      if (plan && !plan.rerun.length) {
+        console.log(`[reintento] ${p.placa}: sin fuentes reparables → entrega tal cual`);
+        await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue;
+      }
+      if (plan) {
+        sources = plan.rerun;
+        reuseResults.set(String(p.id), plan.reuse); // finalizeJob fusiona reusadas + re-corridas
+        console.log(`[reintento] ${p.placa}: re-corro SOLO errores [${sources.join(',')}] · reuso ${plan.reuse.length}`);
+      }
+    } else if (!force) {
       try {
         if (await tryReuseReport(p, tier)) { console.log(`[motor-lote] ${p.placa} reutilizado (sin re-correr)`); await notifyReady(p, tier); continue; }
       } catch (e) { console.warn('[dedup] verificación falló, regenero:', (e as Error).message); }
     }
-    const sources = tier === 'BASIC' ? BASIC_SOURCES : activeAuto();
     orchJobs.push({ id: String(p.id), plate: p.placa, tier, sources: [...sources], outDir: plateDir(p.placa), results: [], percent: 0, done: false });
   }
   if (!orchJobs.length) return; // todos reutilizados
@@ -628,7 +670,17 @@ function startContinuousRunner(): void {
         let jobSources: string[] = [...fullSources];
         let reuse: OperatorSourceResult[] = [];
         let reuseJobDelay = 0; // padding a respetar en finalizeJob si el reúso parcial termina en <1 min
-        if (memoryEnabled && !force) {
+        if (esReintento(p)) {
+          // REINTENTO del usuario: SOLO los errores del reporte guardado. Salta memoria y dedup por
+          // dueño (ambos devolverían el reporte cacheado con los MISMOS errores — justo lo reportado).
+          const plan = await planErrorRetry(p.placa).catch(() => null);
+          if (plan && !plan.rerun.length) {
+            console.log(`[reintento] ${p.placa}: sin fuentes reparables (errores solo del relay GNV o ninguno) → entrega tal cual`);
+            await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue;
+          }
+          if (plan) { jobSources = plan.rerun; reuse = plan.reuse; console.log(`[reintento] ${p.placa}: re-corro SOLO errores [${jobSources.join(',')}] · reuso ${reuse.length}`); }
+          else console.log(`[reintento] ${p.placa}: sin reporte previo → corrida completa`);
+        } else if (memoryEnabled && !force) {
           // MEMORIA ON y NO es "Re-generar": reúso parcial por fuente (solo re-corre las fallidas/faltantes).
           // force ⇒ el operador pidió datos FRESCOS explícitamente → salta también la memoria (antes la
           // rama de memoria ignoraba force y "Re-generar" devolvía fuentes cacheadas dentro del TTL).
