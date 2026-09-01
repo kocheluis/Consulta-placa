@@ -90,6 +90,30 @@ function sprlDecrypt(b64: string): string | null {
   } catch { return null; }
 }
 
+/**
+ * Títulos desde los CAMPOS ESTRUCTURADOS del JSON interceptado del SPRL: la API del modal "Lista de
+ * Asientos" entrega `{anioTitulo:"2025", numTitulo:"03475989", ...}` por asiento (mapper del bundle) —
+ * el regex textual `20\d{2} - \d{6,8}` NO matchea ese formato, solo el render del DOM. Si el modal no
+ * alcanza a pintar (VPS lento) pero la respuesta SÍ llegó, esto rescata los títulos igual. Camina el
+ * JSON con profundidad acotada; ignora bodies no-JSON.
+ */
+function titulosFromRest(bodies: string[]): string[] {
+  const out = new Set<string>();
+  const visit = (v: unknown, depth: number): void => {
+    if (!v || depth > 7) return;
+    if (Array.isArray(v)) { for (const x of v) visit(x, depth + 1); return; }
+    if (typeof v === 'object') {
+      const o = v as Record<string, unknown>;
+      const anio = String(o.anioTitulo ?? '').trim();
+      const num = String(o.numTitulo ?? '').trim();
+      if (/^20\d{2}$/.test(anio) && /^\d{1,10}$/.test(num)) out.add(`${anio}-${num}`);
+      for (const k of Object.keys(o)) visit(o[k], depth + 1);
+    }
+  };
+  for (const b of bodies) { try { visit(JSON.parse(b), 0); } catch { /* no-JSON (css/html/etc.) */ } }
+  return [...out];
+}
+
 // pdf.js (CDN) para rasterizar el PDF del asiento a PNG. Se usa el VISOR-NO: render directo a un
 // <canvas> con JS → funciona igual en headless o headed y NO depende del visor de PDF de Chrome (que
 // en el VPS —headless / `--disable-extensions`— salía en blanco). Versión fija (estable).
@@ -269,15 +293,19 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // DOM del modal "Lista de Asientos" (que en VPS/red lenta a veces no alcanza a pintar antes de leer →
     // era el `títulos: []` con partida existente). El JSON viene EN CLARO; si un campo `data` está cifrado
     // (AES-128) se descifra. Igual que el probe validado. Se desengancha en el finally.
-    const sprlRest: Array<{ url: string; body: string }> = [];
+    const sprlRest: Array<{ url: string; status: number; body: string }> = [];
     const onSprlResp = (resp: Response): void => {
       const u = resp.url();
-      if (!/sunarp-services/i.test(u) || /captcha\/image/i.test(u)) return;
+      if (!/sunarp-services/i.test(u) || /captcha\/image/i.test(u) || /\.(css|woff2?|png|svg|js)(\?|$)/i.test(u)) return;
       resp.text().then((t) => {
         if (!t) return;
-        let out = t;
-        try { const j = JSON.parse(t) as { data?: unknown }; if (typeof j.data === 'string' && j.data.length > 40) { const dec = sprlDecrypt(j.data); if (dec) out = `${t} ${dec}`; } } catch { /* no era JSON */ }
-        sprlRest.push({ url: u, body: out });
+        sprlRest.push({ url: u, status: resp.status(), body: t });
+        // Campo `data` cifrado (AES-128, clave pública del bundle) → entrada APARTE con el descifrado,
+        // así cada body queda parseable como JSON por sí solo (para la extracción estructurada).
+        try {
+          const j = JSON.parse(t) as { data?: unknown };
+          if (typeof j.data === 'string' && j.data.length > 40) { const dec = sprlDecrypt(j.data); if (dec) sprlRest.push({ url: `${u}#dec`, status: resp.status(), body: dec }); }
+        } catch { /* no era JSON */ }
       }).catch(() => {});
     };
     page.on('response', onSprlResp);
@@ -384,36 +412,58 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       }
       if (asientoIdx === -1 && nRow >= 2) asientoIdx = 1; // respaldo: el 2º suele ser el de asientos
       const rxTit = /\b20\d{2}\s*-\s*\d{6,8}\b/;
+      const restBefore = sprlRest.length;
       if (asientoIdx >= 0) {
         await rowBtns.nth(asientoIdx).click().catch(() => {});
         // El modal "Lista de Asientos" se PUEBLA con una llamada REST → esperar por SEÑAL, no ~3.9s ciegos
         // (era la causa del `[]` con partida existente en VPS lento). Espera el modal visible + a que los
-        // títulos aparezcan en el DOM o en la red interceptada (cap ~15s; sale apenas hay títulos).
+        // títulos aparezcan en el DOM, en la red (regex textual) o en los CAMPOS estructurados del JSON
+        // (anioTitulo/numTitulo — el texto crudo de la API no trae "AAAA - NNNNNN"). Cap ~18s.
         await page.locator('.ant-modal-content, .ant-modal, [role="dialog"], .ant-drawer-content')
           .filter({ hasText: /asiento/i }).first().waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
-        for (let i = 0; i < 50; i++) {
+        let reclicked = false;
+        let lastLen = -1; let structHit = false;
+        for (let i = 0; i < 60; i++) {
           const dom = await page.locator('body').innerText({ timeout: 3000 }).catch(() => '');
-          if (rxTit.test(dom) || sprlRest.some((s) => rxTit.test(s.body))) break;
+          if (sprlRest.length !== lastLen) { lastLen = sprlRest.length; structHit = titulosFromRest(sprlRest.map((r) => r.body)).length > 0; }
+          if (rxTit.test(dom) || structHit || sprlRest.some((s) => rxTit.test(s.body))) break;
+          // ~6s sin modal NI tráfico nuevo → el clic pudo no aterrizar (fila re-render) → UN re-clic.
+          if (!reclicked && i === 20 && sprlRest.length === restBefore) {
+            const modalOpen = await page.locator('.ant-modal-content, [role="dialog"]').first().isVisible().catch(() => false);
+            if (!modalOpen) { log('modal de asientos no abrió → re-clic en Ver Asientos'); await rowBtns.nth(asientoIdx).click().catch(() => {}); }
+            reclicked = true;
+          }
           await wait(300);
         }
       }
       const bodyText = await page.locator('body').innerText({ timeout: 5000 }).catch(() => '');
-      // SUNARP marca la partida como "incompleta, no visualizada por usuario externo" (error DE SUNARP,
-      // reportado a su zona registral). La partida existe pero no muestra los asientos → no es error nuestro.
-      if (/partida incompleta|no visualizada por usuario externo/i.test(bodyText)) partidaIncompleta = true;
-      // Títulos: DOM del modal + JSON REST interceptado (como el probe validado). La combinación solo puede
-      // AÑADIR títulos que el DOM no alcanzó a pintar; el regex `AAAA-NNNNNN` nunca produce falsos positivos.
+      // Errores DE SUNARP sobre la partida (no nuestros): (1) "partida incompleta / no visualizada por
+      // usuario externo" (placas antiguas) y (2) el modal "Lo sentimos, en este momento no podemos
+      // mostrarle la partida solicitada… intente más tarde" (visto 1-sep con CDX108: la búsqueda la
+      // ENCUENTRA —filas=3— pero Ver Asientos falla IGUAL desde IP residencial y VPS; otras placas
+      // funcionan al mismo tiempo ⇒ es de ESA partida). Ambos → degradación elegante (solo propietario
+      // actual, sin histórico), sin reintentos inútiles ni ERROR.
+      if (/partida incompleta|no visualizada por usuario externo|no podemos mostrarle la partida/i.test(bodyText)) partidaIncompleta = true;
+      // Títulos: DOM del modal + regex textual sobre la red + CAMPOS estructurados del JSON (anioTitulo/
+      // numTitulo). La combinación solo puede AÑADIR títulos; ninguna vía produce falsos positivos.
       const combined = `${bodyText} ${sprlRest.map((r) => r.body).join(' ')}`;
-      const tits = [...new Set((combined.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')))];
+      const tits = [...new Set([
+        ...(combined.match(/\b20\d{2}\s*-\s*\d{6,8}\b/g) ?? []).map((s) => s.replace(/\s+/g, '')),
+        ...titulosFromRest(sprlRest.map((r) => r.body)),
+      ])];
       log(`SPRL${useOficina ? '+ofi' : ''}: filas=${nRow} · asientoBtn=${asientoIdx} · títulos=${tits.length}`);
-      // DIAGNÓSTICO cuando la BÚSQUEDA no devolvió fila (filas=0): distingue —sin asumir— si el problema es
-      // el Turnstile (tsLen=0), el llenado de la placa (placa≠), el botón Buscar (buscarClic=false), la
-      // respuesta REST (resp=null / sin endpoint de búsqueda), o el render. Guarda una captura de la página
-      // para verla directamente. Solo corre en el camino de fallo → no ralentiza el caso normal.
-      if (nRow === 0) {
+      // DIAGNÓSTICO cuando la búsqueda no devolvió fila (filas=0) O cuando el modal no entregó títulos
+      // (filas>0 · títulos=0, el caso CDX108): distingue —sin asumir— Turnstile (tsLen=0), llenado de
+      // placa, botón Buscar, respuesta REST (resp/status), modal sin abrir o su llamada fallando (p. ej.
+      // challenge de Cloudflare SOLO en la IP del VPS). Captura de pantalla incluida. Solo en fallo.
+      if ((nRow === 0 || tits.length === 0) && !partidaIncompleta) {
         const areaTxt = (await page.locator('nz-select').filter({ hasText: /propiedad/i }).first().innerText({ timeout: 1500 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 40);
-        const urls = sprlRest.map((r) => r.url.replace(/^https?:\/\/[^/]+/, '').slice(-52));
+        const urls = sprlRest.map((r) => `${r.status} ${r.url.replace(/^https?:\/\/[^/]+/, '').slice(-46)}`);
         const searchResp = sprlRest.find((r) => /mostrar-resultado-partida-veh/i.test(r.url));
+        // Estado del MODAL de asientos + respuestas que llegaron DESPUÉS del clic en "Ver Asientos"
+        // (si su llamada devolvió 403/challenge o nunca ocurrió, aquí se ve).
+        const modalTxt = (await page.locator('.ant-modal-content, [role="dialog"]').first().innerText({ timeout: 1500 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 160);
+        const postClick = sprlRest.slice(restBefore).map((r) => `${r.status} ${r.url.replace(/^https?:\/\/[^/]+/, '').slice(-46)}`);
         const snippet = (await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 220);
         const dbgShot = opts.shotPath ? opts.shotPath.replace(/[^/\\]+$/, 'sprl-busqueda.png') : `${PROFILE}/_sprl-busqueda.png`;
         await page.screenshot({ path: dbgShot, fullPage: true }).catch(() => {});
@@ -429,8 +479,8 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
             return `HTTP ${r.status}`; // cualquier status = host ALCANZABLE (aunque rechace el body)
           } catch (e) { return `FETCH-FAIL ${String(e).slice(0, 70)}`; }
         }).catch(() => 'eval-fail');
-        log(`SPRL DIAG · placa="${placaVal}" area="${areaTxt}" areaPick=${areaPick.ok ? 'ok/' + areaPick.diag : areaPick.diag} turnstile=${tsLen} buscarClic=${buscarClicked} resp=${resp ? resp.status() : 'null'} REST=[${urls.join(' | ')}]`);
-        log(`SPRL DIAG · bundle=${bundle} · apiPaas=${apiProbe}`);
+        log(`SPRL DIAG · placa="${placaVal}" area="${areaTxt}" areaPick=${areaPick.ok ? 'ok/' + areaPick.diag : areaPick.diag} turnstile=${tsLen} buscarClic=${buscarClicked} resp=${resp ? resp.status() : 'null'} REST=[${urls.slice(-8).join(' | ')}]`);
+        log(`SPRL DIAG · bundle=${bundle} · apiPaas=${apiProbe} · modal="${modalTxt}" · postClick=[${postClick.join(' | ')}]`);
         if (searchResp) log(`SPRL DIAG · búsqueda body: ${searchResp.body.replace(/\s+/g, ' ').slice(0, 320)}`);
         log(`SPRL DIAG · captura=${dbgShot} · texto="${snippet}"`);
       }
@@ -465,7 +515,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // Partida marcada INCOMPLETA por SUNARP (no nuestro error, placa antigua): devolvemos el propietario
     // actual (de la Consulta Vehicular) y avisamos que el histórico no está disponible — NO un ERROR.
     if (partidaIncompleta && !titulos.length) {
-      log('SUNARP: partida incompleta (no visualizable por usuario externo) → solo propietario actual, sin histórico');
+      log('SUNARP no muestra los asientos de esta partida (incompleta o "no podemos mostrarle… intente más tarde") → solo propietario actual, sin histórico');
       return { ...empty, partidaIncompleta: true, sede: oficina, vehiculo };
     }
     log(`títulos: ${JSON.stringify(titulos)}`);
