@@ -149,27 +149,35 @@ async function pickAreaOption(page: Page, optionRx: RegExp): Promise<{ ok: boole
   const seen: string[] = [];
   for (let i = 0; i < n; i++) {
     const sel = selects.nth(i);
-    if (!(await sel.isVisible().catch(() => false))) continue;
+    if (!(await sel.isVisible().catch(() => false))) { seen.push(`sel${i}:oculto`); continue; }
     // ¿Ya está seleccionada? (reintento / segunda pasada) → no reabrir el dropdown.
     const cur = (await sel.innerText({ timeout: 1000 }).catch(() => '')).replace(/\s+/g, ' ').trim();
     if (optionRx.test(cur)) return { ok: true, diag: `sel${i}(ya)` };
-    await sel.locator('.ant-select-selector').first().click({ timeout: 4000 }).catch(() => {});
+    const selector = sel.locator('.ant-select-selector').first();
+    await selector.click({ timeout: 4000 }).catch(() => {});
     await wait(600);
     const drop = openDropdown(page);
     const texts = (await drop.locator('.ant-select-item-option-content').allInnerTexts().catch(() => []))
       .map((t) => t.replace(/\s+/g, ' ').trim()).filter(Boolean);
-    if (texts.length) seen.push(`sel${i}:[${texts.slice(0, 6).join(' | ')}]`);
+    // Diag SIEMPRE (aun con 0 opciones): un select con texto vacío Y 0 opciones = su catálogo NO cargó
+    // (la pista clave del 30-ago: el select de ÁREA venía vacío en el VPS → nada que elegir).
+    seen.push(`sel${i}("${cur.slice(0, 24)}"):${texts.length}[${texts.slice(0, 5).join('|')}]`);
     const target = drop.locator('.ant-select-item-option-content', { hasText: optionRx }).first();
     if (await target.isVisible().catch(() => false)) {
-      await target.click().catch(() => {});
+      await target.click().catch(() => {}); // el clic en la opción CIERRA el dropdown
       await wait(700);
       const chosen = (await sel.innerText({ timeout: 1500 }).catch(() => '')).replace(/\s+/g, ' ').trim();
       if (optionRx.test(chosen)) return { ok: true, diag: `sel${i}` };
     }
-    await page.keyboard.press('Escape').catch(() => {}); // cierra el dropdown antes del siguiente
-    await wait(250);
+    // Cierre DETERMINISTA: re-clic en el MISMO selector (toggle). El Escape a veces no llega (foco
+    // fuera) y un dropdown abierto TAPA los selects de abajo → el siguiente click se intercepta y
+    // "lee" las opciones del dropdown viejo (bug visto en el VPS: sel1 mostraba las OFICINAS de sel0).
+    // El panel del dropdown se pinta DEBAJO del select, nunca sobre su propio selector → este clic
+    // siempre aterriza.
+    await selector.click({ timeout: 2000 }).catch(() => {});
+    for (let w = 0; w < 8; w++) { if ((await openDropdown(page).count().catch(() => 0)) === 0) break; await wait(150); }
   }
-  return { ok: false, diag: `NO seleccionada · selects=${n} · ${seen.join('  ') || 'sin opciones visibles'}` };
+  return { ok: false, diag: `NO seleccionada · selects=${n} · ${seen.join('  ') || 'sin selects'}` };
 }
 async function pickSearchable(sel: Locator, page: Page, value: string): Promise<void> {
   await sel.locator('.ant-select-selector').first().click({ timeout: 5000 }).catch(() => {});
@@ -313,6 +321,22 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     }
     log('sesión SPRL activa');
 
+    // BUNDLE RANCIO: el Chrome persistente (keep-alive/pool) puede servir un bundle Angular CACHEADO
+    // de ANTES del rediseño del SPRL (~23-ago) → sus catálogos apuntan a hosts migrados/muertos → el
+    // desplegable de ÁREA queda VACÍO y la búsqueda es imposible (visto en el VPS: area="" con select
+    // sin opciones). Limpia el cache HTTP + desregistra service workers UNA vez por corrida — NO toca
+    // cookies (la sesión sobrevive); el goto de abajo re-baja la SPA fresca.
+    try {
+      const cdp = await ctx.newCDPSession(page);
+      await cdp.send('Network.clearBrowserCache');
+      await cdp.detach().catch(() => {});
+      log('cache SPRL limpiado (bundle fresco)');
+    } catch (e) { log(`cache SPRL: no se pudo limpiar (${(e as Error).message.slice(0, 60)}) → sigo con el cacheado`); }
+    await page.evaluate(async () => {
+      const regs = await navigator.serviceWorker?.getRegistrations?.().catch(() => []);
+      for (const r of regs ?? []) await r.unregister().catch(() => {});
+    }).catch(() => { /* sin SW o página sin cargar → nada */ });
+
     // Búsqueda SPRL (con espera del form post-login + reintento si no hay títulos).
     let partidaIncompleta = false;
     async function sprlBuscarTitulos(useOficina: boolean): Promise<string[]> {
@@ -335,9 +359,11 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await num.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
       let placaVal = '';
       for (let i = 0; i < 3; i++) { await num.click().catch(() => {}); await num.fill('').catch(() => {}); await num.type(plate, { delay: 60 }).catch(() => {}); await wait(400); placaVal = await num.inputValue({ timeout: 1000 }).catch(() => ''); if (placaVal === plate) break; }
-      // Poll del Turnstile a 400ms (antes 1000ms): mismo tope (~30s) pero sale ~600ms antes en promedio.
+      // Poll del Turnstile a 400ms. Tope ~44s (antes ~30s): tras limpiar el cache, la SPA recarga
+      // completa y el Turnstile tarda más en pasar — con 30s el 1er intento salía sin token (visto
+      // en vivo: turnstile=0 · buscarClic=false) y se quemaba una búsqueda entera.
       let tsLen = 0;
-      for (let i = 0; i < 75; i++) { tsLen = (await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')).length; if (tsLen) break; await wait(400); }
+      for (let i = 0; i < 110; i++) { tsLen = (await page.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')).length; if (tsLen) break; await wait(400); }
       const respP = page.waitForResponse((r) => /mostrar-resultado-partida-veh/i.test(r.url()), { timeout: 30000 }).catch(() => null);
       const buscarBtns = page.locator('button:has-text("Buscar")');
       let buscarClicked = false;
@@ -391,7 +417,20 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
         const snippet = (await page.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 220);
         const dbgShot = opts.shotPath ? opts.shotPath.replace(/[^/\\]+$/, 'sprl-busqueda.png') : `${PROFILE}/_sprl-busqueda.png`;
         await page.screenshot({ path: dbgShot, fullPage: true }).catch(() => {});
+        // Discriminadores de causa raíz (30-ago): (A) ¿qué BUNDLE Angular sirvió la página? (uno viejo
+        // cacheado apunta a catálogos muertos → área vacía); (B) ¿el VPS ALCANZA el host nuevo de la API
+        // (apps.paas)? (FETCH-FAIL = bloqueo a nivel de red desde el VPS, como FISE/MINEM → nada que
+        // hacer del lado del form; haría falta egress residencial).
+        const bundle = await page.evaluate(() =>
+          (document.querySelector('script[src*="main."]') as HTMLScriptElement | null)?.src?.split('/').pop() ?? 'sin-main').catch(() => 'eval-fail');
+        const apiProbe = await page.evaluate(async () => {
+          try {
+            const r = await fetch('https://api06-catalogo-sprl-production.apps.paas.sunarp.gob.pe/v1/sunarp-services/catalogo/public/obtener-parametro-x-id-string', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+            return `HTTP ${r.status}`; // cualquier status = host ALCANZABLE (aunque rechace el body)
+          } catch (e) { return `FETCH-FAIL ${String(e).slice(0, 70)}`; }
+        }).catch(() => 'eval-fail');
         log(`SPRL DIAG · placa="${placaVal}" area="${areaTxt}" areaPick=${areaPick.ok ? 'ok/' + areaPick.diag : areaPick.diag} turnstile=${tsLen} buscarClic=${buscarClicked} resp=${resp ? resp.status() : 'null'} REST=[${urls.join(' | ')}]`);
+        log(`SPRL DIAG · bundle=${bundle} · apiPaas=${apiProbe}`);
         if (searchResp) log(`SPRL DIAG · búsqueda body: ${searchResp.body.replace(/\s+/g, ' ').slice(0, 320)}`);
         log(`SPRL DIAG · captura=${dbgShot} · texto="${snippet}"`);
       }
