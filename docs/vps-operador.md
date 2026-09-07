@@ -4,6 +4,9 @@ Procedimiento para **desplegar cambios y reiniciar el motor** que corre los scra
 y publica los reportes a Supabase. Este motor vive en el **VPS** (IP residencial/Perú),
 no en Vercel ni en la PC de desarrollo.
 
+> ¿El VPS **ya no existe** (crédito vencido, proveedor caído)? → reconstrucción desde
+> cero en [vps-rebuild.md](vps-rebuild.md) (incluye la plantilla de `placape.env`).
+
 > Cuando Claude diga "haz el deploy / reinicia el operador en el VPS", sigue la
 > sección **"Deploy + reinicio"**.
 
