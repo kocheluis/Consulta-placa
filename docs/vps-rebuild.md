@@ -32,7 +32,7 @@ Si la instancia ya no existe, sigue.
 ```bash
 # Como root, primera conexión:
 apt update && apt upgrade -y
-apt install -y git curl wget unzip xvfb fonts-liberation
+apt install -y git curl wget unzip xvfb fonts-liberation ufw nano
 # Node 22 (NodeSource):
 curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && apt install -y nodejs
 npm i -g pm2 tsx
