@@ -54,8 +54,14 @@ git clone https://github.com/kocheluis/Consulta-placa.git app
 cd app
 npm install
 npm run build -w @app/shared     # CRÍTICO: el motor importa @app/shared desde dist/
+npx playwright install --with-deps chromium   # CRÍTICO: navegador de las fuentes ligeras (ver nota)
 mkdir -p /root/out /root/data
 ```
+
+> **Chromium de Playwright ≠ Google Chrome.** SUNARP/historial/ATU/SIGM usan el Google Chrome del
+> paso 1, pero SAT, Callao, MTC, SBS, APESEG y las SAT provinciales abren el Chromium **propio de
+> Playwright**. Sin este paso esas fuentes fallan todas en **0.0s** (pasó en la reconstrucción de
+> oct-2026). La pestaña **Salud de fuentes** de la consola lo detecta.
 
 ## 3 · Secretos: `/root/placape.env`
 
@@ -71,7 +77,8 @@ Checklist de dónde recuperar cada secreto:
 
 | Variable | De dónde sale |
 |---|---|
-| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API (el service_role, NO el anon) |
+| `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API Keys: la **service_role** (`eyJ…`, en "Legacy API keys") o una **Secret key** (`sb_secret_…`). **NUNCA la anon/publishable**: con ella RLS bloquea la cola en silencio (historial vacío en la consola + `42501 new row violates row-level security`) |
+| `RESEND_API_KEY` + `HEALTH_ALERT_EMAIL` | la API key de Resend (la misma que usa la web en Vercel) + el correo que recibe el aviso diario de salud |
 | `CAPTCHA_API_KEY` | panel de CapSolver |
 | `SPRL_USER/PASS` (y `_2`, `_3`) | tus cuentas SPRL (saintagain1, laurabravo, 3ª) |
 | `OPERATOR_PREVIEW_TOKEN` | **cópialo de Vercel** (Settings → Env Vars) — debe COINCIDIR con la web; no lo regeneres |
@@ -105,6 +112,9 @@ pm2 logs operador --lines 30   # debe decir "Cola: supabase · motor automático
    login SPRL frío (1 por cuenta — NO reintentes seguido si falla: lockout POR IP) y siembra
    los perfiles de Chrome. Las siguientes reusarán sesión caliente.
 4. Verifica en `pm2 logs operador`: `[historial-cont] heartbeat slot1 sesión=VIVA` (modo continuo).
+5. **Salud de fuentes** (pestaña de la consola): pon 2–3 placas testigo conocidas, la hora diaria y
+   pulsa **Correr chequeo ahora**. Revisa infraestructura (motor, llave Supabase, Chromium, saldo
+   CapSolver, relay FISE) y el veredicto por fuente. Desde ahí corre solo cada día y avisa por correo.
 
 ## 6 · Re-apuntar el relay FISE (celular Termux)
 

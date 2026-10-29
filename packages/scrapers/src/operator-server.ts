@@ -2,7 +2,8 @@
 import { createServer } from 'node:http';
 import { execSync } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { chromium } from 'playwright';
 import { createHmac } from 'node:crypto';
 import { join } from 'node:path';
 import { runSingleSource, OPERATOR_SOURCES, buildBatchLanes, buildContinuousLanes, type OperatorSourceResult } from './operator/index.js';
@@ -17,6 +18,10 @@ import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.js';
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
+import {
+  evaluateSources, overallOf, headlineOf, supabaseKeyKind, shouldRunDaily, limaDateKey, renderHealthEmail,
+  type HealthRun, type InfraCheck,
+} from './operator/health.js';
 import { SectionKind, SectionStatus, type Report } from '@app/shared';
 
 // Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, CapSolver…), sin hornearlos
@@ -511,7 +516,13 @@ async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
     reuseResults.delete(job.id);
   }
   const ok = job.results.filter((r) => r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO').length;
-  if (ok === 0) { await queue.setError(p.id, 'ninguna fuente respondió'); console.log(`[motor-lote] ${p.placa} ERROR (ninguna fuente respondió)`); return; }
+  if (ok === 0) {
+    // Sin publicar (no hay nada bueno), pero sí el snapshot de esta generación: sin él, la consola y el
+    // chequeo de salud no sabrían POR QUÉ cayó cada fuente.
+    const snap = String(job.id).replace(/[^a-zA-Z0-9_-]/g, '');
+    if (snap) await writeFile(join(plateDir(p.placa), `reporte-${snap}.json`), JSON.stringify({ plate: p.placa, generatedAt: new Date().toISOString(), results: job.results }, null, 2), 'utf8').catch(() => {});
+    await queue.setError(p.id, 'ninguna fuente respondió'); console.log(`[motor-lote] ${p.placa} ERROR (ninguna fuente respondió)`); return;
+  }
   try {
     let report = toWebReport(p.placa, job.results, new Date().toISOString(), job.id);
     if (job.tier === 'ULTRA') {
@@ -718,6 +729,165 @@ function startContinuousRunner(): void {
   }, 2000);
 }
 
+// ── SALUD DIARIA DE FUENTES ─────────────────────────────────────────────────────────────────────
+// Cada día (desde la hora configurada, hora de Lima) encola las placas TESTIGO como pedidos PRO por la
+// ruta real del motor (sin memoria ni dedup), espera a que terminen y evalúa cada fuente + la
+// infraestructura (motor, llave Supabase, Chromium de Playwright, saldo CapSolver, relay FISE).
+// Guarda el resultado para la consola y avisa por correo (Resend) y/o webhook.
+interface HealthCfg { enabled: boolean; hour: number; plates: string[] }
+const normPlates = (v: unknown): string[] => [...new Set((Array.isArray(v) ? v : String(v ?? '').split(','))
+  .map((s) => String(s).toUpperCase().replace(/[^A-Z0-9]/g, '')).filter((s) => s.length >= 5 && s.length <= 8))].slice(0, 5);
+let healthCfg: HealthCfg = metaGet<HealthCfg>('health_cfg') ?? {
+  enabled: true, hour: Math.min(23, Math.max(0, Number(process.env.HEALTH_HOUR ?? 6))), plates: normPlates(process.env.HEALTH_PLATES ?? ''),
+};
+let healthCurrent: HealthRun | null = null;
+const HEALTH_WAIT_MS = Math.max(10 * 60_000, Number(process.env.HEALTH_TIMEOUT_MS ?? 60 * 60_000));
+const HEALTH_MIN_BALANCE = Number(process.env.HEALTH_MIN_BALANCE ?? 3);
+
+async function infraChecks(): Promise<InfraCheck[]> {
+  const out: InfraCheck[] = [];
+  out.push(autoEngine
+    ? { id: 'motor', label: 'Motor automático', severity: 'ok', detail: 'encendido' }
+    : { id: 'motor', label: 'Motor automático', severity: 'fail', detail: 'APAGADO: los pedidos de clientes no se atienden (consola → encender motor)' });
+  const kind = supabaseKeyKind(process.env.SUPABASE_SERVICE_ROLE_KEY ?? '');
+  if (queue.kind !== 'supabase') {
+    out.push({ id: 'cola', label: 'Cola Supabase', severity: 'fail', detail: 'el motor usa la cola LOCAL (sqlite): faltan SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY en placape.env → no ve los pedidos de la web' });
+  } else if (kind === 'publica') {
+    out.push({ id: 'cola', label: 'Cola Supabase', severity: 'fail', detail: 'la llave es la anon/publishable: RLS bloquea la cola (historial vacío, inserts 42501). Usa la service_role o sb_secret_' });
+  } else {
+    try {
+      await queue.history(1);
+      out.push({ id: 'cola', label: 'Cola Supabase', severity: kind === 'service' ? 'ok' : 'warn', detail: kind === 'service' ? 'conectada (service_role)' : 'conectada, pero no reconozco el tipo de llave' });
+    } catch (e) { out.push({ id: 'cola', label: 'Cola Supabase', severity: 'fail', detail: `no responde: ${(e as Error).message.slice(0, 160)}` }); }
+  }
+  try {
+    out.push(existsSync(chromium.executablePath())
+      ? { id: 'chromium', label: 'Chromium de Playwright', severity: 'ok', detail: 'instalado' }
+      : { id: 'chromium', label: 'Chromium de Playwright', severity: 'fail', detail: 'NO instalado → SAT/Callao/MTC/SBS/APESEG caen al instante. Arreglo: cd /root/app && npx playwright install --with-deps chromium' });
+  } catch (e) { out.push({ id: 'chromium', label: 'Chromium de Playwright', severity: 'fail', detail: (e as Error).message.slice(0, 160) }); }
+  if (PROVIDER === 'capsolver') {
+    try {
+      const r = await fetch('https://api.capsolver.com/getBalance', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ clientKey: KEY }), signal: AbortSignal.timeout(15_000) });
+      const j = await r.json() as { errorId?: number; balance?: number; errorDescription?: string };
+      if (j.errorId) out.push({ id: 'captcha', label: 'Saldo CapSolver', severity: 'fail', detail: `la API rechaza la llave: ${j.errorDescription ?? j.errorId}` });
+      else {
+        const b = Number(j.balance ?? 0);
+        out.push({ id: 'captcha', label: 'Saldo CapSolver', severity: b < HEALTH_MIN_BALANCE ? 'warn' : 'ok',
+          detail: `US$ ${b.toFixed(2)}${b < HEALTH_MIN_BALANCE ? ` (bajo el mínimo de US$ ${HEALTH_MIN_BALANCE}: recarga)` : ''}` });
+      }
+    } catch (e) { out.push({ id: 'captcha', label: 'Saldo CapSolver', severity: 'warn', detail: `no pude consultar: ${(e as Error).message.slice(0, 120)}` }); }
+  }
+  const relay = fiseRelayStatus() as { enabled?: boolean; alive?: boolean; lastSeenAgoS?: number | null };
+  out.push(relay.alive
+    ? { id: 'relay', label: 'Relay FISE (celular)', severity: 'ok', detail: 'latiendo' }
+    : { id: 'relay', label: 'Relay FISE (celular)', severity: 'warn', detail: relay.enabled
+      ? `sin señal${relay.lastSeenAgoS != null ? ` hace ${Math.round(relay.lastSeenAgoS / 60)} min` : ' (nunca conectó)'} → FISE fallará (docs/fise-relay-celular.md)`
+      : 'FISE_RELAY_TOKEN sin configurar → FISE fallará' });
+  return out;
+}
+
+async function lastLines(plate: string, src: string, n: number): Promise<string[]> {
+  try { return (await readFile(join(plateDir(plate), `${src}.log`), 'utf8')).trim().split('\n').slice(-n).map((l) => l.slice(0, 200)); }
+  catch { return []; }
+}
+
+/** Resultados de la generación de ESE pedido: su snapshot, o el reporte vivo si es posterior al arranque. */
+async function resultsOfPedido(placa: string, id: string, since: number): Promise<OperatorSourceResult[] | null> {
+  const snap = id.replace(/[^a-zA-Z0-9_-]/g, '');
+  for (const f of [`reporte-${snap}.json`, 'reporte.json']) {
+    try {
+      const j = JSON.parse(await readFile(join(plateDir(placa), f), 'utf8')) as { generatedAt?: string; results?: OperatorSourceResult[] };
+      if (f === 'reporte.json' && !(Date.parse(j.generatedAt ?? '') >= since)) continue;
+      return j.results ?? null;
+    } catch { /* siguiente */ }
+  }
+  return null;
+}
+
+async function sendHealthAlert(run: HealthRun): Promise<void> {
+  const mail = renderHealthEmail(run);
+  const to = (process.env.HEALTH_ALERT_EMAIL ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+  const onlyIssues = process.env.HEALTH_EMAIL_ONLY_ON_ISSUES === '1';
+  if (process.env.RESEND_API_KEY && to.length && !(onlyIssues && run.overall === 'ok')) {
+    try {
+      const r = await fetch('https://api.resend.com/emails', { method: 'POST',
+        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ from: process.env.HEALTH_ALERT_FROM ?? 'PlacaPe Salud <no-reply@placape.pe>', to, subject: mail.subject, text: mail.text, html: mail.html }) });
+      console.log(`[salud] correo → HTTP ${r.status}`);
+    } catch (e) { console.warn('[salud] correo falló:', (e as Error).message); }
+  }
+  if (process.env.HEALTH_WEBHOOK_URL) {
+    try {
+      await fetch(process.env.HEALTH_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ...run, subject: mail.subject, text: mail.text }) });
+    } catch (e) { console.warn('[salud] webhook falló:', (e as Error).message); }
+  }
+}
+
+async function runHealthCheck(trigger: HealthRun['trigger']): Promise<HealthRun> {
+  const since = Date.now();
+  const run: HealthRun = { trigger, startedAt: new Date(since).toISOString(), plates: [...healthCfg.plates], pedidos: [], infra: [], sources: [], overall: 'ok', headline: 'en curso…' };
+  healthCurrent = run;
+  try {
+    run.infra = await infraChecks();
+    const queueOk = !run.infra.some((c) => c.id === 'cola' && c.severity === 'fail');
+    if (!run.plates.length) run.note = 'Sin placas testigo: solo se chequeó la infraestructura (configúralas en la consola → Salud de fuentes).';
+    else if (!autoEngine) run.note = 'Motor apagado: no se corrieron las placas testigo (no se atenderían).';
+    else if (!queueOk) run.note = 'La cola Supabase no funciona: no se pudieron encolar las placas testigo.';
+    else {
+      for (const placa of run.plates) {
+        try {
+          const p = await queue.enqueue({ placa, tier: 'PRO', origin: 'operador' });
+          forceReprocess.add(String(p.id)); // datos frescos: con memoria/dedup el chequeo no probaría nada
+          run.pedidos.push({ placa, id: String(p.id), estado: 'pendiente' });
+        } catch (e) { run.infra.push({ id: `encolar-${placa}`, label: `Encolar ${placa}`, severity: 'fail', detail: (e as Error).message.slice(0, 160) }); }
+      }
+      console.log(`[salud] ${trigger}: ${run.pedidos.length} placa(s) testigo encoladas (${run.pedidos.map((x) => x.placa).join(',')})`);
+      const final = new Set(['listo', 'entregado', 'error']);
+      while (run.pedidos.some((x) => !final.has(x.estado)) && Date.now() - since < HEALTH_WAIT_MS) {
+        await sleep(30_000);
+        try {
+          const hist = await queue.history(300);
+          for (const x of run.pedidos) { const h = hist.find((q) => String(q.id) === x.id); if (h) x.estado = h.estado; }
+        } catch { /* reintenta en la próxima vuelta */ }
+      }
+      const pend = run.pedidos.filter((x) => !final.has(x.estado));
+      if (pend.length) run.note = `Sin terminar tras ${Math.round(HEALTH_WAIT_MS / 60_000)} min: ${pend.map((x) => `${x.placa} (${x.estado})`).join(', ')}`;
+      const byPlate = await Promise.all(run.pedidos.map(async (x) => ({ placa: x.placa, results: await resultsOfPedido(x.placa, x.id, since) })));
+      run.sources = evaluateSources(byPlate, activeAuto());
+      for (const s of run.sources) {
+        const first = s.errors[0];
+        if (first && s.verdict !== 'ok') s.logTail = await lastLines(first.placa, s.source, 4);
+      }
+    }
+  } catch (e) {
+    run.note = `el chequeo se interrumpió: ${(e as Error).message}`;
+  }
+  run.finishedAt = new Date().toISOString();
+  run.overall = overallOf(run.infra, run.sources);
+  run.headline = headlineOf(run.overall, run.infra, run.sources);
+  console.log(`[salud] ${run.overall.toUpperCase()} · ${run.headline}`);
+  try {
+    metaSet('health_last', run);
+    const hist = metaGet<Array<Record<string, unknown>>>('health_history') ?? [];
+    hist.unshift({ at: run.startedAt, overall: run.overall, headline: run.headline, v: Object.fromEntries(run.sources.map((s) => [s.source, s.verdict])) });
+    metaSet('health_history', hist.slice(0, 30));
+  } finally { healthCurrent = null; }
+  await sendHealthAlert(run);
+  return run;
+}
+
+function startHealthScheduler(): void {
+  setInterval(() => {
+    if (!healthCfg.enabled || healthCurrent) return;
+    const now = Date.now();
+    if (!shouldRunDaily(now, healthCfg.hour, metaGet<string>('health_last_day'))) return;
+    metaSet('health_last_day', limaDateKey(now)); // se marca ANTES de correr: un reinicio a medias no lo duplica
+    void runHealthCheck('diario').catch((e) => { healthCurrent = null; console.warn('[salud] falló:', (e as Error).message); });
+  }, 60_000);
+}
+
 function readBody(req: import('node:http').IncomingMessage): Promise<Record<string, unknown>> {
   return new Promise((resolve) => {
     let b = '';
@@ -806,6 +976,30 @@ const server = createServer(async (req, res) => {
       if (body.ttlHours != null) { memoryTtlH = Math.max(1, Number(body.ttlHours) || 24); metaSet('memory_ttl_hours', memoryTtlH); }
       console.log(`[memoria] ${memoryEnabled ? 'ON' : 'OFF'} · TTL ${memoryTtlH}h`);
       return sendJson(res, 200, { enabled: memoryEnabled, ttlHours: memoryTtlH });
+    }
+
+    // Salud diaria de fuentes: estado/último resultado, configuración (placas testigo + hora) y corrida manual.
+    if (path === '/api/health' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        cfg: healthCfg, running: healthCurrent, last: metaGet('health_last'), history: metaGet('health_history') ?? [],
+        alerts: { email: !!(process.env.RESEND_API_KEY && process.env.HEALTH_ALERT_EMAIL), webhook: !!process.env.HEALTH_WEBHOOK_URL },
+      });
+    }
+    if (path === '/api/health/config' && req.method === 'POST') {
+      const body = await readBody(req);
+      healthCfg = {
+        enabled: typeof body.enabled === 'boolean' ? body.enabled : healthCfg.enabled,
+        hour: body.hour != null ? Math.min(23, Math.max(0, Math.floor(Number(body.hour) || 0))) : healthCfg.hour,
+        plates: body.plates != null ? normPlates(body.plates) : healthCfg.plates,
+      };
+      metaSet('health_cfg', healthCfg);
+      console.log(`[salud] config → ${healthCfg.enabled ? `diario ${healthCfg.hour}:00 Lima` : 'desactivado'} · placas ${healthCfg.plates.join(',') || '(ninguna)'}`);
+      return sendJson(res, 200, { cfg: healthCfg });
+    }
+    if (path === '/api/health/run' && req.method === 'POST') {
+      if (healthCurrent) return sendJson(res, 409, { error: 'ya hay un chequeo de salud en curso' });
+      void runHealthCheck('manual').catch((e) => { healthCurrent = null; console.warn('[salud] falló:', (e as Error).message); });
+      return sendJson(res, 200, { ok: true });
     }
 
     // Motor automático: estado + encender/apagar (persistido en meta).
@@ -1113,6 +1307,8 @@ const onListen = (): void => {
   console.log(`   CapSolver: ${PROVIDER} · entrega n8n: ${N8N_WEBHOOK ? 'configurada' : 'sin webhook (modo local)'}`);
   console.log(`   Cola: ${queue.kind} · motor automático: ${autoEngine ? 'ENCENDIDO' : 'APAGADO'} · modo: ${ENGINE_CONTINUOUS ? `CONTINUO (maxInflight=${ENGINE_MAX_INFLIGHT})` : 'LOTES'} · fuentes auto: ${AUTO_SOURCES.join(',')}\n`);
   if (ENGINE_CONTINUOUS) startContinuousRunner(); else startRunner();
+  startHealthScheduler();
+  console.log(`   Salud de fuentes: ${healthCfg.enabled ? `diario desde las ${healthCfg.hour}:00 (Lima)` : 'desactivada'} · placas testigo: ${healthCfg.plates.join(',') || '(ninguna — configúralas en la consola)'}`);
 };
 // Auto-arreglo del EADDRINUSE: si el puerto quedó tomado por un huérfano (reinicio a mitad de pedido),
 // lo libera y reintenta hasta 3 veces en vez de crash-loopear indefinidamente.
@@ -1318,6 +1514,9 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   .kpi.err .kv{color:var(--err)} .kpi.err .sq{background:var(--err)} .kpi.top .kv{color:var(--warn);font-size:17px} .kpi.top .sq{background:var(--warn)}
   .kpi.lat .kv{color:var(--teal)} .kpi.lat .sq{background:var(--teal)} .kpi.cost .kv{color:var(--violet)} .kpi.cost .sq{background:var(--violet)} .kpi.pay .kv{color:var(--azul)} .kpi.pay .sq{background:var(--azul)}
   .mcard{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:13px 15px;margin-bottom:14px}
+  .hrow{padding:4px 0;font-size:13px;display:flex;gap:8px;align-items:baseline;flex-wrap:wrap}
+  .hlog{margin:4px 0 0;font:11px/1.4 ui-monospace,monospace;white-space:pre-wrap;color:#475569;background:var(--card2);border:1px solid var(--bd);border-radius:6px;padding:5px 7px;max-width:640px}
+  .hmat{border-collapse:collapse} .hmat td{padding:2px 3px;font-size:12px;white-space:nowrap} .hsq{display:inline-block;width:14px;height:14px;border-radius:3px}
   .mcard h3{margin:0 0 3px;font-size:14px;display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap} .mcard .msub{font-size:11.5px;color:var(--mut);margin-bottom:12px}
   .mgrid{display:grid;grid-template-columns:1fr 1fr;gap:14px} @media(max-width:820px){.mgrid{grid-template-columns:1fr}} .mgrid .mcard{margin:0}
   .peakpill{font:700 10.5px ui-monospace,monospace;background:rgba(12,111,100,.12);color:var(--teal);padding:2px 8px;border-radius:999px}
@@ -1394,8 +1593,24 @@ const HTML = `<!doctype html><html lang="es"><head><meta charset="utf-8"><meta n
   <div class="tabs">
     <button class="tab active" id="tab-b-hist" onclick="showTab('hist')">Historial de pedidos</button>
     <button class="tab" id="tab-b-metrics" onclick="showTab('metrics')">Métricas &amp; KPIs</button>
+    <button class="tab" id="tab-b-health" onclick="showTab('health')">Salud de fuentes</button>
     <button class="tab" id="tab-b-manual" onclick="showTab('manual')">Manual / QA</button>
   </div>
+
+  <section id="tab-health" style="display:none">
+    <div class="mcard">
+      <div class="row" style="gap:10px;align-items:flex-end;flex-wrap:wrap">
+        <div class="ffld"><label>Placas testigo (máx. 5, separadas por coma)</label><input id="h-plates" style="width:260px" placeholder="ABC123, DEF456"></div>
+        <div class="ffld"><label>Hora diaria (Lima)</label><select id="h-hour"></select></div>
+        <label class="memlbl"><input type="checkbox" id="h-on"> Chequeo diario activo</label>
+        <button class="sec" onclick="hsave()">Guardar</button>
+        <span style="flex:1 1 auto"></span>
+        <button class="ok" id="h-run" onclick="hrun()">Correr chequeo ahora</button>
+      </div>
+      <div class="msub" id="h-cfgnote" style="margin-top:8px"></div>
+    </div>
+    <div id="h-body"></div>
+  </section>
 
   <section id="tab-hist">
     <div class="sumchips" id="sumchips"></div>
@@ -1610,12 +1825,41 @@ function cancelAuto(jid){if(!confirm('¿Cancelar el pedido en proceso? Quedará 
 function fmtTime(iso){if(!iso)return'—';try{var d=new Date(iso);return d.toLocaleDateString()+' '+d.toTimeString().slice(0,5);}catch(e){return esc(iso);}}
 function fmtDur(a,b){if(!a||!b)return'—';try{var ms=new Date(b)-new Date(a);if(ms<0)return'—';var s=Math.round(ms/1000);return s<60?s+'s':(Math.floor(s/60)+'m '+(s%60)+'s');}catch(e){return'—';}}
 function showTab(t){
-  ['hist','manual','metrics'].forEach(function(x){
+  ['hist','manual','metrics','health'].forEach(function(x){
     var s=document.getElementById('tab-'+x); if(s)s.style.display=(x===t)?'block':'none';
     var b=document.getElementById('tab-b-'+x); if(b)b.className='tab'+(x===t?' active':'');
   });
   if(t==='metrics')loadMetrics();
+  if(t==='health')loadHealth();
 }
+// ── Salud de fuentes ──
+var HV={ok:['OK','#15803D','#DCFCE7'],intermitente:['Intermitente','#B45309','#FEF3C7'],falla:['CAÍDA','#B91C1C','#FEE2E2'],dependencia:['Dependencia caída','#6D28D9','#EDE9FE'],'sin-dato':['Sin dato','#B91C1C','#FEE2E2']};
+var HSEV={ok:['✓','var(--ok)'],warn:['⚠','var(--warn)'],fail:['✕','var(--err)']};
+var HOV={ok:['Todo en orden','p-listo'],alerta:['Alerta','p-procesando'],critico:['Crítico','p-error']};
+var HCFG_LOADED=false,HTIMER=null;
+function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).then(function(d){
+  if(!HCFG_LOADED){HCFG_LOADED=true;var hs=document.getElementById('h-hour'),o='';for(var i=0;i<24;i++)o+='<option value="'+i+'">'+(i<10?'0':'')+i+':00</option>';hs.innerHTML=o;hs.value=String(d.cfg.hour);
+    document.getElementById('h-plates').value=(d.cfg.plates||[]).join(', ');document.getElementById('h-on').checked=!!d.cfg.enabled;}
+  document.getElementById('h-cfgnote').innerHTML=(d.alerts.email?'📧 Aviso por correo activo':'📧 Sin correo de aviso (falta RESEND_API_KEY / HEALTH_ALERT_EMAIL en placape.env)')+(d.alerts.webhook?' · webhook activo':'')+' · Cada placa testigo corre un reporte PRO completo por la ruta real del motor.';
+  document.getElementById('h-run').disabled=!!d.running;
+  if(HTIMER){clearTimeout(HTIMER);HTIMER=null;}
+  if(d.running)HTIMER=setTimeout(function(){if(document.getElementById('tab-health').style.display!=='none')loadHealth();},15000);
+  var run=d.running||d.last,h='';
+  if(d.running)h+='<div class="webnote" style="margin-bottom:10px">⟳ Chequeo en curso desde '+esc(fmtTime(d.running.startedAt))+' — '+esc((d.running.pedidos||[]).map(function(x){return x.placa+': '+x.estado}).join(' · ')||'revisando infraestructura…')+'</div>';
+  if(!run){h+='<div class="mcard"><div class="msub">Aún no hay chequeos. Configura las placas testigo y pulsa "Correr chequeo ahora".</div></div>';document.getElementById('h-body').innerHTML=h;return;}
+  if(!d.running){var ov=HOV[run.overall]||HOV.alerta;h+='<div class="mcard"><h3><span class="pill '+ov[1]+'">'+ov[0]+'</span> '+esc(run.headline)+'</h3><div class="msub">'+(run.trigger==='manual'?'Manual':'Diario')+' · '+esc(fmtTime(run.startedAt))+(run.finishedAt?' → '+esc(fmtTime(run.finishedAt)):'')+' · placas: '+esc((run.plates||[]).join(', ')||'—')+'</div>'+(run.note?'<div class="webnote" style="margin-top:8px">'+esc(run.note)+'</div>':'')+'</div>';}
+  h+='<div class="mcard"><h3>Infraestructura</h3>'+(run.infra||[]).map(function(c){var s=HSEV[c.severity]||HSEV.warn;return '<div class="hrow"><b style="color:'+s[1]+'">'+s[0]+'</b> <b>'+esc(c.label)+'</b> <span class="meta">'+esc(c.detail)+'</span></div>';}).join('')+'</div>';
+  if((run.sources||[]).length){h+='<div class="mcard" style="padding:0"><div class="hleft-hd"><span class="hl-ttl">Fuentes</span><span class="meta">lo roto primero</span></div><div class="tbl-scroll"><table class="ped" style="border:0"><thead><tr><th>Fuente</th><th>Estado</th><th>OK / error</th><th>Detalle</th></tr></thead><tbody>'+run.sources.map(function(s){var v=HV[s.verdict]||HV['sin-dato'];
+    return '<tr><td><b>'+esc(s.source)+'</b></td><td><span class="pill" style="background:'+v[2]+';color:'+v[1]+'">'+v[0]+'</span></td><td class="meta">'+s.ok+' / '+s.err+'</td><td style="font-size:12px;white-space:normal">'+(s.errors||[]).slice(0,2).map(function(e){return '<div><b>'+esc(e.placa)+':</b> '+esc(e.summary)+'</div>'}).join('')+((s.logTail||[]).length?'<pre class="hlog">'+esc(s.logTail.join('\\n'))+'</pre>':'')+'</td></tr>';}).join('')+'</tbody></table></div></div>';}
+  var hist=d.history||[];
+  if(hist.length){var srcs=[];hist.forEach(function(x){Object.keys(x.v||{}).forEach(function(k){if(srcs.indexOf(k)<0)srcs.push(k)})});
+    var cols=hist.slice(0,14).reverse();
+    h+='<div class="mcard"><h3>Últimos '+cols.length+' chequeos</h3><div class="msub">Una columna por chequeo (el más reciente a la derecha).</div><div style="overflow-x:auto"><table class="hmat"><tbody>'+srcs.map(function(k){return '<tr><td class="meta">'+esc(k)+'</td>'+cols.map(function(x){var vv=(x.v||{})[k],v=HV[vv];return '<td><span class="hsq" title="'+esc(fmtTime(x.at)+' · '+(vv||'no corrió'))+'" style="background:'+(v?v[1]:'#E2E8F0')+'"></span></td>'}).join('')+'</tr>'}).join('')+'</tbody></table></div></div>';}
+  document.getElementById('h-body').innerHTML=h;
+}).catch(function(e){document.getElementById('h-body').innerHTML='<div class="mcard">✖ '+esc(String(e))+'</div>'});}
+function hsave(){fetch('/api/health/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('h-on').checked,hour:Number(document.getElementById('h-hour').value),plates:document.getElementById('h-plates').value})})
+  .then(function(r){return r.json()}).then(function(x){document.getElementById('h-plates').value=(x.cfg.plates||[]).join(', ');log('✓ salud: '+(x.cfg.enabled?'diario desde las '+x.cfg.hour+':00':'desactivado')+' · placas '+((x.cfg.plates||[]).join(',')||'—'));loadHealth();}).catch(function(e){log('✖ '+e)});}
+function hrun(){fetch('/api/health/run',{method:'POST'}).then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('⟳ chequeo de salud iniciado');setTimeout(function(){loadHealth();loadHistory();},1500);}).catch(function(e){log('✖ '+e)});}
 var SELECTED=null, SELECTED_ID=null, DTAB='fuentes', HISTSEEN=false;
 var HISTLIST=[], HISTPAGE=0, HISTPER=50;
 // ── Filtros del historial (client-side sobre HISTLIST; el server manda hasta 2000) ──
