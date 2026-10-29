@@ -1098,11 +1098,12 @@ export async function runSatCajamarca(
     await page.goto('https://www.satcajamarca.gob.pe/consultas', { waitUntil: 'domcontentloaded', timeout: 60000 });
     // La API es del MISMO origen → fetch in-page (conserva cookies). `/record_vehiculo?placa=` (el 301
     // solo quita la barra final). Sin funciones-helper con nombre dentro del evaluate (landmine __name).
-    const json = await page.evaluate(async (pl) => {
+    const { http, json } = await page.evaluate(async (pl) => {
       const res = await fetch('/record_vehiculo?placa=' + encodeURIComponent(pl), { headers: { 'X-Requested-With': 'XMLHttpRequest' } });
-      try { return await res.json(); } catch { return null; }
+      try { return { http: res.status, json: await res.json() }; } catch { return { http: res.status, json: null }; }
     }, placa);
-    if (!Array.isArray(json)) return { ...base, status: 'ERROR', summary: 'Respuesta no reconocida del SAT Cajamarca', ms: Date.now() - t0 };
+    if (http >= 500) return { ...base, status: 'ERROR', summary: `Portal del SAT Cajamarca caído (HTTP ${http} en su propia API) — reintentar más tarde`, ms: Date.now() - t0 };
+    if (!Array.isArray(json)) return { ...base, status: 'ERROR', summary: `Respuesta no reconocida del SAT Cajamarca (HTTP ${http})`, ms: Date.now() - t0 };
     const r = parseCajamarcaRecord(json as Array<Record<string, unknown>>);
     // Evidencia: la API no da página → se pinta una tabla mínima (SIN el conductor, PII) y se captura.
     await page.evaluate((d: { placa: string; rows: PapeletaDetalle[]; total: number }) => {
