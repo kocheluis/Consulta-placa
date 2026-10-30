@@ -125,7 +125,11 @@ EOF
     ;;
   deploy)
     cd "$APP"
-    [[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "hay cambios locales sin commit en $APP; no despliego (revísalos a mano)"
+    # package-lock.json lo reescribe `npm install` en Linux (deps opcionales por plataforma): no es un
+    # cambio de nadie → se descarta. Cualquier OTRO archivo modificado frena el deploy.
+    dirty="$(git status --porcelain --untracked-files=no | grep -v ' package-lock.json$' || true)"
+    [[ -z "$dirty" ]] || die "hay cambios locales sin commit en $APP; no despliego (revísalos a mano): $dirty"
+    git checkout -q -- package-lock.json 2>/dev/null || true
     mkdir -p "$(dirname "$PREV_REV")"; git rev-parse HEAD > "$PREV_REV"
     git fetch -q origin main && git merge -q --ff-only origin/main
     echo "== $(git log -1 --format='%h %s')"
@@ -133,6 +137,13 @@ EOF
     npm run -s build -w @app/shared
     npx playwright install chromium >/dev/null 2>&1 || echo "aviso: playwright install falló"
     pm2 restart operador sprl-keepalive --update-env >/dev/null; sleep 10; pm2_summary
+    # Esta misma herramienta se actualiza desde el repo (mismo nivel de confianza que el código del motor,
+    # que ya corre como root desde git). Solo si el archivo nuevo pasa `bash -n`.
+    for f in placape-ops placape-ops-ssh; do
+      if bash -n "$APP/ops/vps/$f" 2>/dev/null && ! cmp -s "$APP/ops/vps/$f" "/usr/local/sbin/$f"; then
+        install -o root -g root -m 0755 "$APP/ops/vps/$f" "/usr/local/sbin/$f.new" && mv -f "/usr/local/sbin/$f.new" "/usr/local/sbin/$f" && echo "actualizado: $f"
+      fi
+    done
     echo "rollback disponible a $(cut -c1-7 "$PREV_REV")"
     ;;
   rollback)

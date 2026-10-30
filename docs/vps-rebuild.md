@@ -95,7 +95,9 @@ Checklist de dónde recuperar cada secreto:
 ```bash
 pm2 start "Xvfb :99 -screen 0 1366x900x24 -ac" --name xvfb
 pm2 start "npx tsx packages/scrapers/src/operator-server.ts" --name operador --cwd /root/app --time
-pm2 start "npx tsx packages/scrapers/src/sprl-keepalive.ts" --name sprl-keepalive --cwd /root/app --time
+# keep-alive = script de UNA pasada (termina con exit 0): va con cron y SIN autorestart, si no pm2 lo
+# relanza cada ~5 s (oct-2026: 52 000 reinicios en 3 días quemando CPU con npx tsx).
+pm2 start "npx tsx packages/scrapers/src/sprl-keepalive.ts" --name sprl-keepalive --cwd /root/app --time --cron-restart "*/8 * * * *" --no-autorestart
 pm2 save
 pm2 startup   # pega el comando que imprime (arranque tras reboot)
 pm2 logs operador --lines 30   # debe decir "Cola: supabase · motor automático: APAGADO"
