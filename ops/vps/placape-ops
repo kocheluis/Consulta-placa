@@ -1,0 +1,162 @@
+#!/usr/bin/env bash
+# placape-ops — ÚNICA puerta de entrada de Claude (usuario claude-ops) al VPS.
+# Lo instala ops/vps/instalar-acceso-claude.sh en /usr/local/sbin (root:root 0755) y sudoers solo
+# permite ESTE binario. Cada llamada queda registrada en /var/log/placape-ops.log y en syslog.
+# Diseño: lista blanca de subcomandos, argumentos validados por regex, nunca se ejecuta texto libre,
+# nunca se imprimen secretos (env-keys muestra nombres, no valores).
+set -euo pipefail
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+APP=/root/app
+ENV_FILE=/root/placape.env
+LOG=/var/log/placape-ops.log
+CONSOLE=http://127.0.0.1:${OPERATOR_PORT:-3010}
+PROCS='^(operador|sprl-keepalive|xvfb)$'
+PREV_REV=/root/data/deploy-prev-rev
+
+who="${SUDO_USER:-$(id -un)}"
+{ printf '%s user=%s args=%s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$who" "$*" >> "$LOG"; } 2>/dev/null || true
+logger -t placape-ops "user=$who args=$*" 2>/dev/null || true
+
+die() { echo "placape-ops: $*" >&2; exit 2; }
+need() { [[ "$2" =~ $3 ]] || die "argumento inválido para $1: '$2'"; }
+outbase() { local v; v=$(grep -E '^OPERATOR_OUT_BASE=' "$ENV_FILE" 2>/dev/null | tail -1 | cut -d= -f2-); echo "${v:-/root/out}"; }
+pm2_summary() {
+  pm2 jlist 2>/dev/null | node -e '
+    let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{for(const p of JSON.parse(s||"[]")){const e=p.pm2_env||{};
+    const up=e.pm_uptime?Math.round((Date.now()-e.pm_uptime)/60000)+"min":"-";
+    console.log(`${p.name.padEnd(16)} ${String(e.status).padEnd(9)} reinicios=${String(e.restart_time).padEnd(4)} uptime=${up.padEnd(8)} mem=${Math.round((p.monit||{}).memory/1048576)}MB`)}})'
+}
+
+cmd="${1:-help}"; shift || true
+case "$cmd" in
+  help)
+    cat <<'EOF'
+placape-ops — comandos permitidos (todo queda auditado):
+  status                         motor, pm2, disco, memoria, versión desplegada
+  logs <proc> [n]                últimas n líneas (≤3000) de operador|sprl-keepalive|xvfb
+  grep <proc> <regex> [n]        filtra los logs (n líneas leídas, ≤20000)
+  src-log <PLACA> <fuente> [n]   log de una fuente de una placa (/root/out/PLACA/fuente.log)
+  report <PLACA>                 estado por fuente del último reporte de la placa
+  health | health-run            ver / lanzar el chequeo diario (fuentes + infra + seguridad)
+  alerts                         reportes con error entregados a clientes (recientes)
+  enqueue <PLACA> [BASIC|PRO|ULTRA]   encola un pedido de prueba (origen operador)
+  probe <https-url>              ¿el portal responde a la IP del VPS? (código, tiempo)
+  env-keys                       nombres de variables de placape.env (SIN valores)
+  env-set <KEY> <valor>          solo perillas NO secretas (motor/salud/alarmas); luego restart
+  restart <proc>                 pm2 restart (operador|sprl-keepalive|xvfb)
+  deploy                         git pull --ff-only main + install + build + restart (guarda rollback)
+  rollback                       vuelve a la versión anterior al último deploy
+  audit                          auditoría de seguridad en crudo (ssh, ufw, puertos, llaves)
+  ops-log [n]                    últimos comandos ejecutados por este canal
+EOF
+    ;;
+  status)
+    echo "== $(hostname) · $(date -u +%FT%TZ) · up $(uptime -p)"
+    echo "== versión: $(git -C "$APP" log -1 --format='%h %s (%cr)' 2>/dev/null)"
+    git -C "$APP" status --short 2>/dev/null | head -10 | sed 's/^/   local: /'
+    echo "== pm2"; pm2_summary
+    echo "== disco"; df -h / | tail -1
+    echo "== memoria"; free -m | head -2
+    echo "== motor"; curl -s -m 5 "$CONSOLE/api/engine" | head -c 600; echo
+    ;;
+  logs)
+    p="${1:-operador}"; n="${2:-200}"; need proc "$p" "$PROCS"; need n "$n" '^[0-9]{1,4}$'; ((n<=3000)) || n=3000
+    pm2 logs "$p" --lines "$n" --nostream --raw 2>&1 | tail -n "$n"
+    ;;
+  grep)
+    p="${1:-}"; re="${2:-}"; n="${3:-5000}"; need proc "$p" "$PROCS"; need n "$n" '^[0-9]{1,5}$'; ((n<=20000)) || n=20000
+    [[ -n "$re" && ${#re} -le 200 ]] || die "regex vacía o muy larga"
+    pm2 logs "$p" --lines "$n" --nostream --raw 2>&1 | grep -E -i -- "$re" | tail -n 300 || true
+    ;;
+  src-log)
+    pl="${1:-}"; src="${2:-}"; n="${3:-120}"
+    need placa "$pl" '^[A-Z0-9]{5,8}$'; need fuente "$src" '^[a-z0-9-]{2,40}$'; need n "$n" '^[0-9]{1,4}$'
+    f="$(outbase)/$pl/$src.log"; [[ -f "$f" ]] || die "no existe $f"
+    tail -n "$n" "$f"
+    ;;
+  report)
+    pl="${1:-}"; need placa "$pl" '^[A-Z0-9]{5,8}$'
+    f="$(outbase)/$pl/reporte.json"; [[ -f "$f" ]] || die "sin reporte para $pl"
+    node -e '
+      const j=JSON.parse(require("fs").readFileSync(process.argv[1],"utf8"));console.log("generado:",j.generatedAt);
+      for(const r of j.results||[])console.log(`${String(r.label||r.source).padEnd(18)} ${String(r.status).padEnd(13)} ${((r.ms||0)/1000).toFixed(1).padStart(6)}s  ${String(r.summary||"").slice(0,160)}`)' "$f"
+    ;;
+  health)
+    curl -s -m 10 "$CONSOLE/api/health" | node -e '
+      let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const d=JSON.parse(s);const r=d.running||d.last;
+      if(d.running)console.log("EN CURSO desde",d.running.startedAt);if(!r)return console.log("sin chequeos aún");
+      console.log(`[${r.overall}] ${r.headline}  (${r.startedAt})`);if(r.note)console.log("nota:",r.note);
+      for(const c of [...(r.infra||[]),...(r.security||[])])console.log(`  ${c.severity.padEnd(4)} ${c.label}: ${c.detail}`);
+      for(const x of r.sources||[]){console.log(`  ${x.verdict.padEnd(12)} ${x.source} ok=${x.ok} err=${x.err}`);for(const e of x.errors.slice(0,2))console.log(`      ${e.placa}: ${e.summary}`)}
+      const c=d.clients24h;if(c)console.log(`clientes 24h: ${c.total} · con error ${c.conError} · sin reporte ${c.sinReporte} · top ${c.top.map(t=>t.source+"x"+t.count).join(",")}`)})'
+    ;;
+  health-run)
+    curl -s -m 10 -X POST "$CONSOLE/api/health/run"; echo
+    ;;
+  alerts)
+    curl -s -m 10 "$CONSOLE/api/alerts" | node -e '
+      let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const d=JSON.parse(s);console.log("en ventana:",d.pending.length);
+      for(const o of d.recent.slice(0,40))console.log(`${o.at} ${o.placa} ${o.tier} ${o.origin} ${o.fatal?"SIN REPORTE "+(o.fatalMsg||""):o.failed.map(f=>f.source).join(",")}`)})'
+    ;;
+  enqueue)
+    pl="${1:-}"; t="${2:-PRO}"; need placa "$pl" '^[A-Z0-9]{5,8}$'; need tier "$t" '^(BASIC|PRO|ULTRA)$'
+    curl -s -m 10 -X POST -H 'Content-Type: application/json' -d "{\"placa\":\"$pl\",\"tier\":\"$t\"}" "$CONSOLE/api/pedido"; echo
+    ;;
+  probe)
+    u="${1:-}"; need url "$u" '^https://[A-Za-z0-9.-]+(:[0-9]{2,5})?(/[A-Za-z0-9._~%/?=&:+-]*)?$'
+    curl -sS -o /dev/null -m 30 -A 'Mozilla/5.0 (X11; Linux x86_64) Chrome/124 Safari/537.36' \
+      -w 'http=%{http_code} tiempo=%{time_total}s ip=%{remote_ip}\n' "$u" || echo "sin respuesta (¿bloqueo de IP / timeout?)"
+    ;;
+  env-keys)
+    grep -E '^[A-Z0-9_]+=' "$ENV_FILE" | while IFS='=' read -r k v; do
+      if [[ -z "$v" ]]; then echo "$k = (vacía)"; else echo "$k = (definida, ${#v} caracteres)"; fi
+    done
+    ;;
+  env-set)
+    k="${1:-}"; v="${2:-}"
+    need clave "$k" '^(ENGINE_[A-Z_]+|HISTORIAL_CONCURRENCY|KEEP_SUNARP_WARM|KEEP_SPRL_WARM|BASIC_CONCURRENCY|CAPTCHA_IMAGE_CONCURRENCY|MEMORY_[A-Z_]+|HEALTH_(HOUR|PLATES|MIN_BALANCE|TIMEOUT_MS|EMAIL_ONLY_ON_ISSUES)|ALERT_(WINDOW_MIN|MAX_PER_HOUR)|CLIENT_ALERTS|SAT_DEBUG|FISE_RELAY_TIMEOUT_MS|SEC_ALLOWED_PORTS)$'
+    need valor "$v" '^[A-Za-z0-9_.,:-]{0,120}$'
+    cp -p "$ENV_FILE" "$ENV_FILE.bak-$(date +%Y%m%d%H%M%S)"
+    if grep -qE "^$k=" "$ENV_FILE"; then sed -i "s|^$k=.*|$k=$v|" "$ENV_FILE"; else printf '%s=%s\n' "$k" "$v" >> "$ENV_FILE"; fi
+    chmod 600 "$ENV_FILE"; echo "ok: $k=$v (respaldo creado). Aplica con: restart operador"
+    ;;
+  restart)
+    p="${1:-}"; need proc "$p" "$PROCS"; pm2 restart "$p" --update-env >/dev/null && sleep 6 && pm2_summary
+    ;;
+  deploy)
+    cd "$APP"
+    [[ -z "$(git status --porcelain --untracked-files=no)" ]] || die "hay cambios locales sin commit en $APP; no despliego (revísalos a mano)"
+    mkdir -p "$(dirname "$PREV_REV")"; git rev-parse HEAD > "$PREV_REV"
+    git fetch -q origin main && git merge -q --ff-only origin/main
+    echo "== $(git log -1 --format='%h %s')"
+    npm install --no-audit --no-fund --loglevel=error
+    npm run -s build -w @app/shared
+    npx playwright install chromium >/dev/null 2>&1 || echo "aviso: playwright install falló"
+    pm2 restart operador sprl-keepalive --update-env >/dev/null; sleep 10; pm2_summary
+    echo "rollback disponible a $(cut -c1-7 "$PREV_REV")"
+    ;;
+  rollback)
+    [[ -s "$PREV_REV" ]] || die "no hay versión previa registrada"
+    cd "$APP"; rev="$(cat "$PREV_REV")"; need rev "$rev" '^[0-9a-f]{40}$'
+    git reset -q --hard "$rev"; npm install --no-audit --no-fund --loglevel=error; npm run -s build -w @app/shared
+    pm2 restart operador sprl-keepalive --update-env >/dev/null; sleep 10; pm2_summary
+    echo "volví a $(git log -1 --format='%h %s'). OJO: main local quedó atrás de origin; el próximo deploy lo adelanta."
+    ;;
+  audit)
+    echo "== sshd efectivo"; sshd -T 2>/dev/null | grep -Ei '^(port|passwordauthentication|permitrootlogin|pubkeyauthentication|allowusers|maxauthtries) ' || true
+    echo "== firewall"; ufw status verbose 2>/dev/null | head -20 || true
+    echo "== fail2ban"; systemctl is-active fail2ban 2>/dev/null || true; fail2ban-client status sshd 2>/dev/null | tail -4 || true
+    echo "== puertos escuchando"; ss -tlnp 2>/dev/null | awk 'NR>1{print $4, $6}' || true
+    echo "== llaves autorizadas"; for f in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do [[ -f "$f" ]] && { echo "-- $f"; ssh-keygen -lf "$f" 2>/dev/null; }; done
+    echo "== logins exitosos 24h"; journalctl -u ssh -u sshd --since '24 hours ago' --no-pager -q 2>/dev/null | grep -E 'Accepted ' | awk '{print $1,$2,$3,$9,$11,$7}' | tail -20 || true
+    echo "== intentos fallidos 24h: $(journalctl -u ssh -u sshd --since '24 hours ago' --no-pager -q 2>/dev/null | grep -cE 'Failed password|Invalid user' || true)"
+    echo "== parches de seguridad pendientes: $(apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst .*-security' || true)"
+    echo "== placape.env: $(stat -c '%a %U' "$ENV_FILE" 2>/dev/null)"
+    ;;
+  ops-log)
+    n="${1:-50}"; need n "$n" '^[0-9]{1,4}$'; tail -n "$n" "$LOG"
+    ;;
+  *)
+    die "comando no permitido: $cmd (usa: help)"
+    ;;
+esac

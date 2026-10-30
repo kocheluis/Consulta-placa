@@ -15,6 +15,14 @@ export const IZIPAY_CONFIGURED = Boolean(
  *  personal). Se activa al definir NEXT_PUBLIC_YAPE_NUMBER y sin IziPay. */
 export const YAPE_MANUAL_ENABLED = Boolean(process.env.NEXT_PUBLIC_YAPE_NUMBER) && !IZIPAY_CONFIGURED;
 
+/**
+ * SEGURIDAD: el mock aprueba la compra sin cobrar. En el deploy de PRODUCCIÓN (Vercel) sin IziPay ni
+ * Yape configurados eso regalaba PRO/ULTRA a cualquier cuenta → falla cerrado. Marcha blanca
+ * deliberada en producción: `ALLOW_MOCK_PAYMENTS=1` explícito.
+ */
+export const MOCK_PAYMENTS_ALLOWED =
+  process.env.VERCEL_ENV !== 'production' || process.env.ALLOW_MOCK_PAYMENTS === '1';
+
 /** Proveedor de pago efectivo según la configuración (para etiquetar la compra). */
 export function paymentProvider(): 'izipay' | 'yape' | 'mock' {
   if (IZIPAY_CONFIGURED) return 'izipay';

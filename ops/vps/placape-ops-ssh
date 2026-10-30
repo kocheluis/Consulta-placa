@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+# Comando FORZADO de la llave de Claude (authorized_keys de claude-ops: restrict,command="…").
+# La sesión SSH no tiene shell: lo que Claude pida (`ssh placape-vps status`) llega aquí en
+# SSH_ORIGINAL_COMMAND, se parte en palabras SIN interpretarlo (sin globbing, sin $(), sin ;) y se
+# pasa a placape-ops vía sudo, que valida cada argumento.
+set -euo pipefail
+raw="${SSH_ORIGINAL_COMMAND:-help}"
+(( ${#raw} <= 600 )) || { echo "comando demasiado largo" >&2; exit 2; }
+read -r -a args <<< "$raw"
+exec sudo -n /usr/local/sbin/placape-ops "${args[@]}"

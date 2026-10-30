@@ -13,7 +13,9 @@
  *  - sin-dato     → no hubo resultado (pedido no atendido, timeout o placa sin reporte).
  */
 
-export type SourceVerdict = 'ok' | 'intermitente' | 'falla' | 'dependencia' | 'sin-dato';
+import type { ClientsSummary } from './alerts.js';
+
+export type SourceVerdict ='ok' | 'intermitente' | 'falla' | 'dependencia' | 'sin-dato';
 
 export interface HealthInputResult { source: string; status: string; summary?: string }
 
@@ -44,6 +46,10 @@ export interface HealthRun {
   overall: Overall;
   headline: string;
   note?: string;
+  /** Entregas a clientes de las últimas 24 h (reportes con error / sin reporte). */
+  clients?: ClientsSummary;
+  /** Auditoría de seguridad del VPS (solo Linux). */
+  security?: InfraCheck[];
 }
 
 const norm = (s: string): string => s.toLowerCase().replace(/_/g, '-');
@@ -84,6 +90,16 @@ export function overallOf(infra: InfraCheck[], sources: HealthSourceRow[]): Over
   if (sources.length && broken >= Math.ceil(sources.length / 2)) return 'critico';
   if (broken || sources.some((s) => s.verdict !== 'ok') || infra.some((c) => c.severity === 'warn')) return 'alerta';
   return 'ok';
+}
+
+/** Estado del reporte diario: fuentes + infra + seguridad + lo que les pasó a los clientes. */
+export function overallDaily(run: Pick<HealthRun, 'infra' | 'sources' | 'security' | 'clients'>): Overall {
+  const base = overallOf([...run.infra, ...(run.security ?? [])], run.sources);
+  if (base === 'critico') return 'critico';
+  const c = run.clients;
+  if (c && (c.pagadosConProblema > 0 && c.sinReporte > 0)) return 'critico';
+  if (c && (c.conError || c.sinReporte)) return 'alerta';
+  return base;
 }
 
 export function headlineOf(overall: Overall, infra: InfraCheck[], sources: HealthSourceRow[]): string {
@@ -133,13 +149,36 @@ const VERDICT_LABEL: Record<SourceVerdict, string> = {
 const SEV_ICON: Record<InfraSeverity, string> = { ok: '✓', warn: '⚠', fail: '✕' };
 const esc = (s: string): string => s.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]!));
 
+/** Titular del día: suma lo que el cliente vivió (entregas con error) a la salud técnica. */
+export function dailyHeadline(run: HealthRun): string {
+  const c = run.clients;
+  const secFail = (run.security ?? []).filter((s) => s.severity === 'fail').map((s) => s.label);
+  const parts: string[] = [];
+  if (c && (c.conError || c.sinReporte)) parts.push(`clientes: ${c.sinReporte ? `${c.sinReporte} SIN reporte, ` : ''}${c.conError} con error de ${c.total}`);
+  if (secFail.length) parts.push(`seguridad: ${secFail.join(', ')}`);
+  parts.push(run.headline);
+  return parts.join(' · ');
+}
+
 export function renderHealthEmail(run: HealthRun): { subject: string; text: string; html: string } {
   const icon = run.overall === 'ok' ? '✅' : run.overall === 'alerta' ? '⚠️' : '🚨';
-  const subject = `${icon} PlacaPe · salud de fuentes · ${run.headline}`;
-  const lines: string[] = [`${run.headline}`, `Placas testigo: ${run.plates.join(', ') || '(ninguna)'} · ${run.startedAt}`, ''];
+  const head = dailyHeadline(run);
+  const subject = `${icon} PlacaPe · reporte diario · ${head}`;
+  const lines: string[] = [head, `Placas testigo: ${run.plates.join(', ') || '(ninguna)'} · ${run.startedAt}`, ''];
   if (run.note) lines.push(run.note, '');
+  const c = run.clients;
+  if (c) {
+    lines.push('CLIENTES (24 h)', `  ${c.total} entrega(s) · ${c.ok} completas · ${c.conError} con error · ${c.sinReporte} sin reporte · pagadas ${c.pagados} (${c.pagadosConProblema} con problema)`);
+    if (c.top.length) lines.push(`  Fuentes que más fallaron a clientes: ${c.top.map((t) => `${t.source} ×${t.count}`).join(', ')}`);
+    for (const o of c.problemas.slice(0, 10)) lines.push(`  - ${o.placa} ${o.tier} ${o.origin} ${o.contact}: ${o.fatal ? 'SIN REPORTE' : o.failed.map((f) => f.source).join(', ')}`);
+    lines.push('');
+  }
   lines.push('INFRAESTRUCTURA');
-  for (const c of run.infra) lines.push(`  ${SEV_ICON[c.severity]} ${c.label}: ${c.detail}`);
+  for (const c2 of run.infra) lines.push(`  ${SEV_ICON[c2.severity]} ${c2.label}: ${c2.detail}`);
+  if (run.security?.length) {
+    lines.push('', 'SEGURIDAD DEL VPS');
+    for (const s of run.security) lines.push(`  ${SEV_ICON[s.severity]} ${s.label}: ${s.detail}`);
+  }
   lines.push('', 'FUENTES');
   for (const s of run.sources) {
     lines.push(`  [${VERDICT_LABEL[s.verdict]}] ${s.source} (ok ${s.ok} · error ${s.err})`);
@@ -149,11 +188,17 @@ export function renderHealthEmail(run: HealthRun): { subject: string; text: stri
   const color: Record<SourceVerdict, string> = { ok: '#15803D', intermitente: '#B45309', falla: '#B91C1C', dependencia: '#6D28D9', 'sin-dato': '#B91C1C' };
   const sevColor: Record<InfraSeverity, string> = { ok: '#15803D', warn: '#B45309', fail: '#B91C1C' };
   const html = `<div style="font:14px/1.5 system-ui,sans-serif;color:#1F2733;max-width:720px">
-<h2 style="margin:0 0 4px">${icon} ${esc(run.headline)}</h2>
+<h2 style="margin:0 0 4px">${icon} ${esc(head)}</h2>
 <div style="color:#5D6B7E;font-size:12px">Placas testigo: ${esc(run.plates.join(', ') || '(ninguna)')} · ${esc(run.startedAt)}</div>
 ${run.note ? `<p style="background:#FEF3C7;padding:8px 10px;border-radius:8px">${esc(run.note)}</p>` : ''}
+${c ? `<h3 style="margin:16px 0 6px">Clientes (últimas 24 h)</h3>
+<div style="font-size:13px"><b>${c.total}</b> entregas · <span style="color:#15803D">${c.ok} completas</span> · <span style="color:#B45309">${c.conError} con error</span> · <span style="color:#B91C1C">${c.sinReporte} sin reporte</span> · pagadas ${c.pagados} (${c.pagadosConProblema} con problema)</div>
+${c.top.length ? `<div style="font-size:13px;color:#5D6B7E">Fuentes que más fallaron a clientes: ${esc(c.top.map((t) => `${t.source} ×${t.count}`).join(', '))}</div>` : ''}
+${c.problemas.length ? `<ul style="font-size:13px;padding-left:18px;margin:6px 0">${c.problemas.slice(0, 10).map((o) => `<li><b>${esc(o.placa)}</b> ${esc(o.tier)} · ${esc(o.origin)} · ${esc(o.contact)}: <span style="color:${o.fatal ? '#B91C1C' : '#B45309'}">${o.fatal ? 'SIN REPORTE' : esc(o.failed.map((f) => f.source).join(', '))}</span></li>`).join('')}</ul>` : ''}` : ''}
 <h3 style="margin:16px 0 6px">Infraestructura</h3>
-<table style="border-collapse:collapse;font-size:13px">${run.infra.map((c) => `<tr><td style="padding:2px 8px;color:${sevColor[c.severity]};font-weight:700">${SEV_ICON[c.severity]}</td><td style="padding:2px 8px"><b>${esc(c.label)}</b></td><td style="padding:2px 8px;color:#5D6B7E">${esc(c.detail)}</td></tr>`).join('')}</table>
+<table style="border-collapse:collapse;font-size:13px">${run.infra.map((x) => `<tr><td style="padding:2px 8px;color:${sevColor[x.severity]};font-weight:700">${SEV_ICON[x.severity]}</td><td style="padding:2px 8px"><b>${esc(x.label)}</b></td><td style="padding:2px 8px;color:#5D6B7E">${esc(x.detail)}</td></tr>`).join('')}</table>
+${run.security?.length ? `<h3 style="margin:16px 0 6px">Seguridad del VPS</h3>
+<table style="border-collapse:collapse;font-size:13px">${run.security.map((x) => `<tr><td style="padding:2px 8px;color:${sevColor[x.severity]};font-weight:700">${SEV_ICON[x.severity]}</td><td style="padding:2px 8px"><b>${esc(x.label)}</b></td><td style="padding:2px 8px;color:#5D6B7E">${esc(x.detail)}</td></tr>`).join('')}</table>` : ''}
 <h3 style="margin:16px 0 6px">Fuentes</h3>
 <table style="border-collapse:collapse;font-size:13px;width:100%">${run.sources.map((s) => `<tr style="border-top:1px solid #DCE2EC"><td style="padding:5px 8px;white-space:nowrap"><b>${esc(s.source)}</b></td><td style="padding:5px 8px;color:${color[s.verdict]};font-weight:700;white-space:nowrap">${VERDICT_LABEL[s.verdict]}</td><td style="padding:5px 8px;color:#5D6B7E;font-size:12px">${s.errors.slice(0, 2).map((e) => `${esc(e.placa)}: ${esc(e.summary)}`).join('<br>')}${(s.logTail ?? []).length ? `<pre style="margin:4px 0 0;font-size:11px;white-space:pre-wrap;color:#475569">${esc((s.logTail ?? []).slice(-3).join('\n'))}</pre>` : ''}</td></tr>`).join('')}</table>
 <p style="color:#5D6B7E;font-size:12px;margin-top:16px">Detalle, capturas y logs: consola del operador → pestaña "Salud de fuentes".</p></div>`;

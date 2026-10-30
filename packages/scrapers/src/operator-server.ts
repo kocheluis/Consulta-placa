@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { createServer } from 'node:http';
-import { execSync } from 'node:child_process';
+import { execSync, execFile } from 'node:child_process';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { readFileSync, existsSync } from 'node:fs';
 import { chromium } from 'playwright';
@@ -19,9 +19,11 @@ import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.j
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
 import {
-  evaluateSources, overallOf, headlineOf, supabaseKeyKind, shouldRunDaily, limaDateKey, renderHealthEmail,
+  evaluateSources, overallDaily, headlineOf, supabaseKeyKind, shouldRunDaily, limaDateKey, renderHealthEmail,
   type HealthRun, type InfraCheck,
 } from './operator/health.js';
+import { outcomeOf, levelOf, isClientOrigin, renderClientAlertEmail, summarizeClients, shouldFlush, type ClientOutcome } from './operator/alerts.js';
+import { evaluateSecurity, parseAccepted, type SecurityRaw } from './operator/vps-audit.js';
 import { SectionKind, SectionStatus, type Report } from '@app/shared';
 
 // Carga secretos del VPS desde un archivo KEY=VALUE (Supabase, CapSolver…), sin hornearlos
@@ -463,6 +465,7 @@ async function processPedido(p: Pedido): Promise<void> {
     if (ok === 0) {
       await queue.setError(p.id, job.error ?? 'ninguna fuente respondió');
       console.log(`[motor-auto] pedido ${p.id} ERROR${job.error ? ` (${job.error})` : ''}`);
+      recordClientOutcome(p, job.results, job.error ?? 'ninguna fuente respondió');
     } else {
       // Publica el reporte en Supabase ANTES de marcar el pedido 'listo'. Si se hiciera al revés,
       // habría una carrera: `generating` pasa a false (pedido listo) pero el reporte aún no está
@@ -486,6 +489,7 @@ async function processPedido(p: Pedido): Promise<void> {
       } catch (e) { console.warn('[reportes] transform/publish falló:', (e as Error).message); }
       await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
       console.log(`[motor-auto] pedido ${p.id} LISTO${job.error ? ` (PARCIAL: ${job.error})` : ''} (${ok}/${job.results.length} fuentes)`);
+      recordClientOutcome(p, job.results);
       // Entrega al cliente: correo + WhatsApp con el enlace del reporte listo.
       await notifyReady(p, tier);
       if (N8N_WEBHOOK) {
@@ -499,6 +503,7 @@ async function processPedido(p: Pedido): Promise<void> {
     }
   } catch (e) {
     await queue.setError(p.id, (e as Error).message);
+    recordClientOutcome(p, job.results, (e as Error).message);
   } finally {
     currentAutoJobId = null;
     setTimeout(() => jobs.delete(job.id), 60000);
@@ -521,7 +526,9 @@ async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
     // chequeo de salud no sabrían POR QUÉ cayó cada fuente.
     const snap = String(job.id).replace(/[^a-zA-Z0-9_-]/g, '');
     if (snap) await writeFile(join(plateDir(p.placa), `reporte-${snap}.json`), JSON.stringify({ plate: p.placa, generatedAt: new Date().toISOString(), results: job.results }, null, 2), 'utf8').catch(() => {});
-    await queue.setError(p.id, 'ninguna fuente respondió'); console.log(`[motor-lote] ${p.placa} ERROR (ninguna fuente respondió)`); return;
+    await queue.setError(p.id, 'ninguna fuente respondió'); console.log(`[motor-lote] ${p.placa} ERROR (ninguna fuente respondió)`);
+    recordClientOutcome(p, job.results, 'ninguna fuente respondió');
+    return;
   }
   try {
     let report = toWebReport(p.placa, job.results, new Date().toISOString(), job.id);
@@ -551,6 +558,7 @@ async function finalizeJob(p: Pedido, job: OrchJob): Promise<void> {
   }
   await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json'));
   await notifyReady(p, job.tier);
+  recordClientOutcome(p, job.results);
 }
 
 /**
@@ -805,24 +813,136 @@ async function resultsOfPedido(placa: string, id: string, since: number): Promis
   return null;
 }
 
+/** Correo al operador por Resend. `to` vacío o sin RESEND_API_KEY → no-op. */
+async function sendOpsMail(tag: string, to: string[], mail: { subject: string; text: string; html: string }): Promise<boolean> {
+  if (!process.env.RESEND_API_KEY || !to.length) return false;
+  try {
+    const r = await fetch('https://api.resend.com/emails', { method: 'POST',
+      headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from: process.env.HEALTH_ALERT_FROM ?? 'PlacaPe Salud <no-reply@placape.pe>', to, subject: mail.subject, text: mail.text, html: mail.html }),
+      signal: AbortSignal.timeout(20_000) });
+    console.log(`[${tag}] correo → HTTP ${r.status}`);
+    return r.ok;
+  } catch (e) { console.warn(`[${tag}] correo falló:`, (e as Error).message); return false; }
+}
+const emailList = (v: string | undefined): string[] => (v ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+
 async function sendHealthAlert(run: HealthRun): Promise<void> {
   const mail = renderHealthEmail(run);
-  const to = (process.env.HEALTH_ALERT_EMAIL ?? '').split(',').map((s) => s.trim()).filter(Boolean);
   const onlyIssues = process.env.HEALTH_EMAIL_ONLY_ON_ISSUES === '1';
-  if (process.env.RESEND_API_KEY && to.length && !(onlyIssues && run.overall === 'ok')) {
-    try {
-      const r = await fetch('https://api.resend.com/emails', { method: 'POST',
-        headers: { Authorization: `Bearer ${process.env.RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({ from: process.env.HEALTH_ALERT_FROM ?? 'PlacaPe Salud <no-reply@placape.pe>', to, subject: mail.subject, text: mail.text, html: mail.html }) });
-      console.log(`[salud] correo → HTTP ${r.status}`);
-    } catch (e) { console.warn('[salud] correo falló:', (e as Error).message); }
-  }
+  if (!(onlyIssues && run.overall === 'ok')) await sendOpsMail('salud', emailList(process.env.HEALTH_ALERT_EMAIL), mail);
   if (process.env.HEALTH_WEBHOOK_URL) {
     try {
       await fetch(process.env.HEALTH_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...run, subject: mail.subject, text: mail.text }) });
+        body: JSON.stringify({ kind: 'daily', ...run, subject: mail.subject, text: mail.text }) });
     } catch (e) { console.warn('[salud] webhook falló:', (e as Error).message); }
   }
+}
+
+// ── ALARMAS DE CLIENTE ──────────────────────────────────────────────────────────────────────────
+// Cada pedido de un cliente (todo lo que no sea 'operador') deja su resultado de entrega. Si el cliente
+// recibió un reporte con fuentes en ERROR —o ninguno— se avisa al operador: lo fatal al instante, el
+// resto agrupado en una ventana (una caída de portal no dispara 20 correos). Se guardan para el diario.
+const ALERT_WINDOW_MS = Math.max(60_000, Number(process.env.ALERT_WINDOW_MIN ?? 5) * 60_000);
+const ALERT_MAX_PER_HOUR = Math.max(1, Number(process.env.ALERT_MAX_PER_HOUR ?? 6));
+const ALERTS_ON = process.env.CLIENT_ALERTS !== '0';
+const CONSOLE_URL = process.env.CONSOLE_URL ?? '';
+const alertBuffer: ClientOutcome[] = [];
+const alertSentAt: number[] = [];
+
+function recordClientOutcome(p: Pedido, results: OperatorSourceResult[], fatalMsg?: string): void {
+  if (!isClientOrigin(p.origin)) return;
+  try {
+    const o = outcomeOf(p, results, new Date().toISOString(), fatalMsg);
+    const hist = metaGet<ClientOutcome[]>('client_outcomes') ?? [];
+    hist.unshift(o);
+    const cutoff = Date.now() - 8 * 86_400_000;
+    metaSet('client_outcomes', hist.filter((x) => Date.parse(x.at) >= cutoff).slice(0, 600));
+    const lvl = levelOf(o);
+    if (lvl !== 'ok') {
+      console.log(`[alarma] ${o.placa} ${o.tier} ${o.origin}: ${lvl === 'critico' ? 'SIN REPORTE' : `${o.failed.length}/${o.total} con error (${o.failed.map((f) => f.source).join(',')})`}`);
+      if (ALERTS_ON) alertBuffer.push(o);
+    }
+  } catch (e) { console.warn('[alarma] no pude registrar la entrega:', (e as Error).message); }
+}
+
+async function flushClientAlerts(): Promise<void> {
+  const now = Date.now();
+  while (alertSentAt.length && now - alertSentAt[0]! > 3_600_000) alertSentAt.shift();
+  if (!shouldFlush(alertBuffer, now, ALERT_WINDOW_MS, alertSentAt.length, ALERT_MAX_PER_HOUR)) return;
+  const batch = alertBuffer.splice(0, alertBuffer.length);
+  const mail = renderClientAlertEmail(batch, CONSOLE_URL || undefined);
+  alertSentAt.push(now);
+  const to = emailList(process.env.ALERT_EMAIL ?? process.env.HEALTH_ALERT_EMAIL);
+  const sent = await sendOpsMail('alarma', to, mail);
+  const hook = process.env.ALERT_WEBHOOK_URL ?? process.env.HEALTH_WEBHOOK_URL;
+  if (hook) {
+    try {
+      await fetch(hook, { method: 'POST', headers: { 'Content-Type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ kind: 'client-alert', subject: mail.subject, text: mail.text, outcomes: batch }) });
+    } catch (e) { console.warn('[alarma] webhook falló:', (e as Error).message); }
+  }
+  if (!sent && !hook) console.warn(`[alarma] ${batch.length} alarma(s) sin canal: configura RESEND_API_KEY + ALERT_EMAIL/HEALTH_ALERT_EMAIL`);
+}
+setInterval(() => { void flushClientAlerts().catch((e) => console.warn('[alarma] flush:', (e as Error).message)); }, 30_000);
+
+// ── AUDITORÍA DE SEGURIDAD DEL VPS (para el reporte diario; solo Linux) ───────────────────────────
+// Comandos FIJOS (sin entrada externa). `|| true` en cada uno: un comando ausente no rompe el resto.
+const SEC_ALLOWED_PORTS = (process.env.SEC_ALLOWED_PORTS ?? `22,${process.env.FISE_RELAY_PORT ?? 3011}`).split(',').map(Number).filter(Boolean);
+const OPS_LOG = '/var/log/placape-ops.log';
+function sh(cmd: string, timeoutMs = 20_000): Promise<string> {
+  return new Promise((resolve) => {
+    execFile('bash', ['-c', cmd], { timeout: timeoutMs, maxBuffer: 4 * 1024 * 1024 }, (_e, stdout) => resolve(String(stdout ?? '')));
+  });
+}
+async function collectSecurityRaw(): Promise<SecurityRaw> {
+  const envFile = process.env.OPERATOR_ENV_FILE ?? '/root/placape.env';
+  const journal = "journalctl -u ssh -u sshd --since '24 hours ago' --no-pager -q 2>/dev/null";
+  const [sshdT, ufw, f2b, failed, accepted, ss, keys, disk, upd, unatt, envMode, pm2] = await Promise.all([
+    sh("sshd -T 2>/dev/null | grep -Ei '^(passwordauthentication|permitrootlogin) ' || true"),
+    sh('ufw status 2>/dev/null | head -1 || true'),
+    sh('systemctl is-active fail2ban 2>/dev/null || true'),
+    sh(`${journal} | grep -cE 'Failed password|Invalid user' || true`),
+    sh(`${journal} | grep -E 'Accepted ' | tail -100 || true`),
+    sh('ss -tlnH 2>/dev/null || true'),
+    sh(`for f in /root/.ssh/authorized_keys /home/*/.ssh/authorized_keys; do [ -f "$f" ] || continue; u=$(stat -c %U "$f"); ssh-keygen -lf "$f" 2>/dev/null | awk -v u="$u" '{c=""; for(i=3;i<NF;i++) c=c" "$i; print u":"$2 c}'; done || true`),
+    sh("df -P / | awk 'NR==2{gsub(\"%\",\"\",$5); print $5}' || true"),
+    sh("apt-get -s -o Debug::NoLocking=1 upgrade 2>/dev/null | grep -c '^Inst .*-security' || true", 60_000),
+    sh('systemctl is-enabled unattended-upgrades 2>/dev/null || true'),
+    sh(`stat -c %a ${JSON.stringify(envFile)} 2>/dev/null || true`),
+    sh('pm2 jlist 2>/dev/null || true'),
+  ]);
+  const raw: SecurityRaw = {
+    sshdT, ufw, fail2ban: f2b, failedSsh24h: Number(failed.trim()) || 0, acceptedLogins: parseAccepted(accepted),
+    listening: ss, allowedPublicPorts: SEC_ALLOWED_PORTS,
+    keysNow: keys.split('\n').map((s) => s.trim()).filter(Boolean),
+    keysBaseline: metaGet<string[]>('ssh_keys_baseline'),
+    diskPct: Number(disk.trim()) || undefined, securityUpdates: Number(upd.trim()) || 0, unattended: unatt.trim(),
+    rebootRequired: existsSync('/var/run/reboot-required'), envMode: envMode.trim() || undefined,
+  };
+  if (!raw.keysBaseline && raw.keysNow?.length) metaSet('ssh_keys_baseline', raw.keysNow);
+  try {
+    const procs = JSON.parse(pm2 || '[]') as Array<{ name: string; pm2_env?: { status?: string; restart_time?: number } }>;
+    const prev = metaGet<Record<string, number>>('pm2_restarts') ?? {};
+    const nowR: Record<string, number> = {};
+    raw.pm2RestartsDelta = {};
+    for (const p of procs) {
+      nowR[p.name] = p.pm2_env?.restart_time ?? 0;
+      raw.pm2RestartsDelta[p.name] = Math.max(0, nowR[p.name]! - (prev[p.name] ?? nowR[p.name]!));
+    }
+    raw.pm2Down = procs.filter((p) => p.pm2_env?.status !== 'online').map((p) => `${p.name} (${p.pm2_env?.status ?? '?'})`);
+    metaSet('pm2_restarts', nowR);
+  } catch { /* sin pm2 */ }
+  try {
+    const since = Date.now() - 86_400_000;
+    raw.opsCalls24h = (await readFile(OPS_LOG, 'utf8')).split('\n').filter((l) => Date.parse(l.slice(0, 25)) >= since).length;
+  } catch { /* sin acceso de Claude instalado */ }
+  return raw;
+}
+async function securityChecks(): Promise<InfraCheck[]> {
+  if (process.platform !== 'linux') return [];
+  try { return evaluateSecurity(await collectSecurityRaw()); }
+  catch (e) { return [{ id: 'sec-err', label: 'Auditoría de seguridad', severity: 'warn', detail: `no corrió: ${(e as Error).message.slice(0, 160)}` }]; }
 }
 
 async function runHealthCheck(trigger: HealthRun['trigger']): Promise<HealthRun> {
@@ -865,8 +985,10 @@ async function runHealthCheck(trigger: HealthRun['trigger']): Promise<HealthRun>
     run.note = `el chequeo se interrumpió: ${(e as Error).message}`;
   }
   run.finishedAt = new Date().toISOString();
-  run.overall = overallOf(run.infra, run.sources);
-  run.headline = headlineOf(run.overall, run.infra, run.sources);
+  run.security = await securityChecks();
+  run.clients = summarizeClients(metaGet<ClientOutcome[]>('client_outcomes') ?? [], Date.now() - 86_400_000);
+  run.headline = headlineOf(overallDaily({ infra: run.infra, sources: run.sources }), run.infra, run.sources);
+  run.overall = overallDaily(run);
   console.log(`[salud] ${run.overall.toUpperCase()} · ${run.headline}`);
   try {
     metaSet('health_last', run);
@@ -982,8 +1104,23 @@ const server = createServer(async (req, res) => {
     if (path === '/api/health' && req.method === 'GET') {
       return sendJson(res, 200, {
         cfg: healthCfg, running: healthCurrent, last: metaGet('health_last'), history: metaGet('health_history') ?? [],
-        alerts: { email: !!(process.env.RESEND_API_KEY && process.env.HEALTH_ALERT_EMAIL), webhook: !!process.env.HEALTH_WEBHOOK_URL },
+        alerts: { email: !!(process.env.RESEND_API_KEY && process.env.HEALTH_ALERT_EMAIL), webhook: !!process.env.HEALTH_WEBHOOK_URL,
+          client: ALERTS_ON && !!(process.env.RESEND_API_KEY && (process.env.ALERT_EMAIL || process.env.HEALTH_ALERT_EMAIL)) },
+        clients24h: summarizeClients(metaGet<ClientOutcome[]>('client_outcomes') ?? [], Date.now() - 86_400_000),
       });
+    }
+    // Entregas a clientes recientes (las con problema primero) + alarmas aún en la ventana de agrupado.
+    if (path === '/api/alerts' && req.method === 'GET') {
+      const all = metaGet<ClientOutcome[]>('client_outcomes') ?? [];
+      return sendJson(res, 200, { pending: alertBuffer, recent: all.filter((o) => levelOf(o) !== 'ok').slice(0, 100) });
+    }
+    // El dueño confirma que las llaves SSH actuales son legítimas (nueva línea base de la auditoría).
+    if (path === '/api/health/accept-keys' && req.method === 'POST') {
+      if (process.platform !== 'linux') return sendJson(res, 400, { error: 'solo en el VPS' });
+      const raw = await collectSecurityRaw();
+      metaSet('ssh_keys_baseline', raw.keysNow ?? []);
+      console.log(`[seguridad] línea base de llaves SSH aceptada: ${(raw.keysNow ?? []).length} llave(s)`);
+      return sendJson(res, 200, { ok: true, keys: raw.keysNow ?? [] });
     }
     if (path === '/api/health/config' && req.method === 'POST') {
       const body = await readBody(req);
@@ -1848,7 +1985,15 @@ function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).th
   if(d.running)h+='<div class="webnote" style="margin-bottom:10px">⟳ Chequeo en curso desde '+esc(fmtTime(d.running.startedAt))+' — '+esc((d.running.pedidos||[]).map(function(x){return x.placa+': '+x.estado}).join(' · ')||'revisando infraestructura…')+'</div>';
   if(!run){h+='<div class="mcard"><div class="msub">Aún no hay chequeos. Configura las placas testigo y pulsa "Correr chequeo ahora".</div></div>';document.getElementById('h-body').innerHTML=h;return;}
   if(!d.running){var ov=HOV[run.overall]||HOV.alerta;h+='<div class="mcard"><h3><span class="pill '+ov[1]+'">'+ov[0]+'</span> '+esc(run.headline)+'</h3><div class="msub">'+(run.trigger==='manual'?'Manual':'Diario')+' · '+esc(fmtTime(run.startedAt))+(run.finishedAt?' → '+esc(fmtTime(run.finishedAt)):'')+' · placas: '+esc((run.plates||[]).join(', ')||'—')+'</div>'+(run.note?'<div class="webnote" style="margin-top:8px">'+esc(run.note)+'</div>':'')+'</div>';}
+  var cl=d.clients24h;
+  if(cl){h+='<div class="mcard"><h3>Clientes · últimas 24 h</h3><div class="msub">'+(d.alerts.client?'🚨 Alarma por correo activa: cada reporte con error a un cliente avisa al instante (agrupado cada pocos minutos).':'🚨 Alarma a clientes SIN correo (falta RESEND_API_KEY / ALERT_EMAIL en placape.env) — solo queda en el log.')+'</div>'+
+    '<div class="hrow"><b>'+cl.total+'</b> entregas · <b style="color:#15803D">'+cl.ok+'</b> completas · <b style="color:#B45309">'+cl.conError+'</b> con error · <b style="color:#B91C1C">'+cl.sinReporte+'</b> sin reporte · pagadas '+cl.pagados+' ('+cl.pagadosConProblema+' con problema)</div>'+
+    ((cl.top||[]).length?'<div class="hrow meta">Fuentes que más fallaron a clientes: '+esc(cl.top.map(function(t){return t.source+' ×'+t.count}).join(', '))+'</div>':'')+
+    (cl.problemas||[]).slice(0,10).map(function(o){return '<div class="hrow"><b>'+esc(o.placa)+'</b> <span class="meta">'+esc(o.tier+' · '+o.origin+' · '+o.contact+' · '+fmtTime(o.at))+'</span> — <span style="color:'+(o.fatal?'#B91C1C':'#B45309')+'">'+(o.fatal?'SIN REPORTE: '+esc(o.fatalMsg||''):esc(o.failed.map(function(f){return f.source}).join(', ')))+'</span></div>'}).join('')+'</div>';}
   h+='<div class="mcard"><h3>Infraestructura</h3>'+(run.infra||[]).map(function(c){var s=HSEV[c.severity]||HSEV.warn;return '<div class="hrow"><b style="color:'+s[1]+'">'+s[0]+'</b> <b>'+esc(c.label)+'</b> <span class="meta">'+esc(c.detail)+'</span></div>';}).join('')+'</div>';
+  if((run.security||[]).length){var kf=run.security.some(function(c){return c.id==='sec-keys'&&c.severity==='fail'});
+    h+='<div class="mcard"><h3>Seguridad del VPS</h3>'+run.security.map(function(c){var s=HSEV[c.severity]||HSEV.warn;return '<div class="hrow"><b style="color:'+s[1]+'">'+s[0]+'</b> <b>'+esc(c.label)+'</b> <span class="meta">'+esc(c.detail)+'</span></div>';}).join('')+
+    (kf?'<div style="margin-top:8px"><button class="sec" onclick="haccept()">Aceptar llaves actuales (las agregué yo)</button></div>':'')+'</div>';}
   if((run.sources||[]).length){h+='<div class="mcard" style="padding:0"><div class="hleft-hd"><span class="hl-ttl">Fuentes</span><span class="meta">lo roto primero</span></div><div class="tbl-scroll"><table class="ped" style="border:0"><thead><tr><th>Fuente</th><th>Estado</th><th>OK / error</th><th>Detalle</th></tr></thead><tbody>'+run.sources.map(function(s){var v=HV[s.verdict]||HV['sin-dato'];
     return '<tr><td><b>'+esc(s.source)+'</b></td><td><span class="pill" style="background:'+v[2]+';color:'+v[1]+'">'+v[0]+'</span></td><td class="meta">'+s.ok+' / '+s.err+'</td><td style="font-size:12px;white-space:normal">'+(s.errors||[]).slice(0,2).map(function(e){return '<div><b>'+esc(e.placa)+':</b> '+esc(e.summary)+'</div>'}).join('')+((s.logTail||[]).length?'<pre class="hlog">'+esc(s.logTail.join('\\n'))+'</pre>':'')+'</td></tr>';}).join('')+'</tbody></table></div></div>';}
   var hist=d.history||[];
@@ -1859,6 +2004,7 @@ function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).th
 }).catch(function(e){document.getElementById('h-body').innerHTML='<div class="mcard">✖ '+esc(String(e))+'</div>'});}
 function hsave(){fetch('/api/health/config',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({enabled:document.getElementById('h-on').checked,hour:Number(document.getElementById('h-hour').value),plates:document.getElementById('h-plates').value})})
   .then(function(r){return r.json()}).then(function(x){document.getElementById('h-plates').value=(x.cfg.plates||[]).join(', ');log('✓ salud: '+(x.cfg.enabled?'diario desde las '+x.cfg.hour+':00':'desactivado')+' · placas '+((x.cfg.plates||[]).join(',')||'—'));loadHealth();}).catch(function(e){log('✖ '+e)});}
+function haccept(){if(!confirm('¿Confirmas que TODAS las llaves SSH listadas son tuyas o autorizadas por ti?'))return;fetch('/api/health/accept-keys',{method:'POST'}).then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('✓ línea base de llaves SSH: '+(x.keys||[]).length+' llave(s). Se reflejará en el próximo chequeo.');}).catch(function(e){log('✖ '+e)});}
 function hrun(){fetch('/api/health/run',{method:'POST'}).then(function(r){return r.json()}).then(function(x){if(x.error){log('✖ '+x.error);return;}log('⟳ chequeo de salud iniciado');setTimeout(function(){loadHealth();loadHistory();},1500);}).catch(function(e){log('✖ '+e)});}
 var SELECTED=null, SELECTED_ID=null, DTAB='fuentes', HISTSEEN=false;
 var HISTLIST=[], HISTPAGE=0, HISTPER=50;

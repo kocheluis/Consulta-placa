@@ -114,7 +114,12 @@ pm2 logs operador --lines 30   # debe decir "Cola: supabase · motor automático
 4. Verifica en `pm2 logs operador`: `[historial-cont] heartbeat slot1 sesión=VIVA` (modo continuo).
 5. **Salud de fuentes** (pestaña de la consola): pon 2–3 placas testigo conocidas, la hora diaria y
    pulsa **Correr chequeo ahora**. Revisa infraestructura (motor, llave Supabase, Chromium, saldo
-   CapSolver, relay FISE) y el veredicto por fuente. Desde ahí corre solo cada día y avisa por correo.
+   CapSolver, relay FISE) y el veredicto por fuente. Desde ahí corre solo cada día y avisa por correo
+   (incluye auditoría de seguridad del VPS y el resumen de entregas a clientes; cada reporte con error
+   a un cliente además dispara una alarma inmediata).
+6. **Acceso controlado de Claude** (opcional, revocable): `bash ops/vps/instalar-acceso-claude.sh
+   instalar '<llave pública>'` → usuario `claude-ops` que solo ejecuta `placape-ops` (lista blanca,
+   auditada en `/var/log/placape-ops.log`). También instala fail2ban y parches automáticos.
 
 ## 6 · Re-apuntar el relay FISE (celular Termux)
 

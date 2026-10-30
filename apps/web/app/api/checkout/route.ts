@@ -3,7 +3,7 @@ import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { createClient } from '@/lib/supabase/server';
 import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
 import { TIER_PRICE, createPendingPurchase, enqueueReportForPurchase, markPurchasePaid, type PaidTier } from '@/lib/payments';
-import { createPaymentSession, paymentProvider } from '@/lib/izipay';
+import { MOCK_PAYMENTS_ALLOWED, createPaymentSession, paymentProvider } from '@/lib/izipay';
 import { notifyPurchasePaid, notifyYapeReceived } from '@/lib/notifications';
 
 export const runtime = 'nodejs';
@@ -46,6 +46,11 @@ export async function POST(request: Request) {
         return NextResponse.json({ error: 'Esta placa no está registrada en SUNARP; no se puede generar un reporte de pago.', plateNotFound: true }, { status: 400 });
       }
     } catch { /* fail-open: si la verificación falla, no bloquea el flujo normal */ }
+  }
+
+  if (paymentProvider() === 'mock' && !MOCK_PAYMENTS_ALLOWED) {
+    console.error('[checkout] producción sin pasarela configurada (IziPay/Yape): compra rechazada');
+    return NextResponse.json({ error: 'El pago en línea no está disponible en este momento. Escríbenos para completar tu compra.' }, { status: 503 });
   }
 
   const amount = TIER_PRICE[tier];
