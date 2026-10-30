@@ -550,8 +550,23 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // ficha moderna (VIN/versión — p. ej. EGU257, 1998), igual se captura el asiento más reciente y NO
     // se cae al fallback de la captura de SUNARP. Se renderiza UNA sola vez, al final del Síguelo.
     let shotCandidate: { bytes: number[]; quality: number; recency: number } | null = null;
+    // DIAGNÓSTICO de un intento fallido de Síguelo: en qué paso quedó + captura. Antes cada `return null`
+    // era silencioso → "sin asiento" sin pista (CCI581/CHU444 en el VPS nuevo, oct-2026).
+    async function sigueloDiag(pg: Page, tit: string, t0: number, step: string): Promise<void> {
+      const opts2 = await pg.locator('#cboOficina option').count().catch(() => -1);
+      const ofi = await pg.locator('#cboOficina').evaluate((el) => (el as HTMLSelectElement).selectedOptions[0]?.textContent ?? '').catch(() => '?');
+      const ts = (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 800 }).catch(() => '')).length;
+      const btn = await pg.locator('button:has-text("BUSCAR")').first().isEnabled().catch(() => false);
+      const txt = (await pg.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+      const shot = opts.shotPath ? opts.shotPath.replace(/[^/\\]+$/, `siguelo-${tit}.png`) : `${PROFILE}/_siguelo-${tit}.png`;
+      await pg.screenshot({ path: shot, fullPage: true }).catch(() => {});
+      log(`  Síguelo DIAG ${tit} · paso=${step} · ${Math.round((Date.now() - t0) / 1000)}s · url=${pg.url().slice(0, 70)} · oficinas=${opts2} sel="${ofi.trim()}" · turnstile=${ts} · buscar=${btn ? 'on' : 'off'} · texto="${txt}" · captura=${shot}`);
+    }
     async function searchSiguelo(pg: Page, anioT: string, numeroT: string): Promise<string | null> {
-      await pg.goto(SIGUELO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
+      const t0 = Date.now();
+      const tit = `${anioT}-${numeroT}`;
+      const gotoOk = await pg.goto(SIGUELO, { waitUntil: 'domcontentloaded', timeout: 60000 }).then(() => true).catch(() => false);
+      if (!gotoOk) log(`  Síguelo ${tit}: la página no cargó en 60s`);
       // En vez de wait(1800) ciego: espera a que el formulario esté en el DOM (señal de que el JS
       // de la página ya cargó). 'attached' (no 'visible') porque el modal de T&C puede taparlo.
       await pg.locator('#cboOficina').waitFor({ state: 'attached', timeout: 6000 }).catch(() => {});
@@ -568,7 +583,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       for (let i = 0; i < 50; i++) { if (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')) break; await wait(400); }
       const buscar = pg.locator('button:has-text("BUSCAR")').first();
       if (!(await buscar.isEnabled().catch(() => false))) { await aceptarTC(pg); await wait(500); }
-      if (!(await buscar.isEnabled().catch(() => false))) return null;
+      if (!(await buscar.isEnabled().catch(() => false))) { await sigueloDiag(pg, tit, t0, 'buscar-deshabilitado'); return null; }
       const respP = pg.waitForResponse((r) => /listarAsientos/i.test(r.url()), { timeout: 70000 }).catch(() => null);
       await buscar.click().catch(() => {});
       // En vez de wait(4000) ciego: espera a que aparezca la pestaña/botón del asiento (el resultado
@@ -585,9 +600,10 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await ojo.waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
       if (await ojo.isVisible().catch(() => false)) { await ojo.click().catch(() => {}); }
       const resp = await respP; // la respuesta listarAsientos ES la señal real de "listo"
-      if (!resp) return null;
+      if (!resp) { await sigueloDiag(pg, tit, t0, 'sin-respuesta-listarAsientos'); return null; }
       const body = (await resp.json().catch(() => null)) as { cmVzcG9uc2U?: string } | null;
       const dec = body?.cmVzcG9uc2U ? sgDecrypt(body.cmVzcG9uc2U) : null;
+      if (!dec) { log(`  Síguelo ${tit}: listarAsientos HTTP ${resp.status()} sin cuerpo descifrable`); await sigueloDiag(pg, tit, t0, 'respuesta-ilegible'); }
       // Depuración: vuelca el JSON descifrado de listarAsientos SIN los bytes del PDF, para ver
       // si trae los actos ya estructurados (código+descripción+participantes) → fuente limpia
       // para el parser multi-acto en vez de raspar el texto del PDF.

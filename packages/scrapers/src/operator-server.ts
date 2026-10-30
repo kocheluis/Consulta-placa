@@ -405,6 +405,9 @@ async function reuseDelayFor(p: Pedido): Promise<number> {
  */
 async function notifyReady(p: Pedido, tier: string): Promise<void> {
   if (!WEB_REPORT_URL || !OPERATOR_PREVIEW_TOKEN) return;
+  // Sin contacto, la web avisa al ÚLTIMO LEAD de esa placa → un pedido de prueba de la consola (o una
+  // placa testigo del chequeo diario) le mandaría correo/WhatsApp a un cliente real. Solo con contacto explícito.
+  if (!isClientOrigin(p.origin) && !p.email && !p.whatsapp) return;
   try {
     const r = await fetch(`${WEB_REPORT_URL}/api/notify-ready`, {
       method: 'POST',

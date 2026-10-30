@@ -37,6 +37,8 @@ placape-ops — comandos permitidos (todo queda auditado):
   grep <proc> <regex> [n]        filtra los logs (n líneas leídas, ≤20000)
   src-log <PLACA> <fuente> [n]   log de una fuente de una placa (/root/out/PLACA/fuente.log)
   report <PLACA>                 estado por fuente del último reporte de la placa
+  shots <PLACA> | shot <PLACA> <archivo.png>   lista / descarga (base64) capturas de la placa
+  web-check                      ¿la web (Vercel) acepta el token del VPS? (no envía nada)
   health | health-run            ver / lanzar el chequeo diario (fuentes + infra + seguridad)
   alerts                         reportes con error entregados a clientes (recientes)
   enqueue <PLACA> [BASIC|PRO|ULTRA]   encola un pedido de prueba (origen operador)
@@ -74,6 +76,16 @@ EOF
     f="$(outbase)/$pl/$src.log"; [[ -f "$f" ]] || die "no existe $f"
     tail -n "$n" "$f"
     ;;
+  shots)
+    pl="${1:-}"; need placa "$pl" '^[A-Z0-9]{5,8}$'
+    ls -la --time-style=+%F_%T "$(outbase)/$pl"/*.png 2>/dev/null | awk '{print $6, $5, $7}' | sed "s|$(outbase)/$pl/||"
+    ;;
+  shot)
+    pl="${1:-}"; f="${2:-}"; need placa "$pl" '^[A-Z0-9]{5,8}$'; need archivo "$f" '^[A-Za-z0-9_.-]{1,80}\.png$'
+    p="$(outbase)/$pl/$f"; [[ -f "$p" ]] || die "no existe $f"
+    (( $(stat -c %s "$p") <= 4000000 )) || die "captura muy grande"
+    base64 -w0 "$p"; echo
+    ;;
   report)
     pl="${1:-}"; need placa "$pl" '^[A-Z0-9]{5,8}$'
     f="$(outbase)/$pl/reporte.json"; [[ -f "$f" ]] || die "sin reporte para $pl"
@@ -89,6 +101,18 @@ EOF
       for(const c of [...(r.infra||[]),...(r.security||[])])console.log(`  ${c.severity.padEnd(4)} ${c.label}: ${c.detail}`);
       for(const x of r.sources||[]){console.log(`  ${x.verdict.padEnd(12)} ${x.source} ok=${x.ok} err=${x.err}`);for(const e of x.errors.slice(0,2))console.log(`      ${e.placa}: ${e.summary}`)}
       const c=d.clients24h;if(c)console.log(`clientes 24h: ${c.total} · con error ${c.conError} · sin reporte ${c.sinReporte} · top ${c.top.map(t=>t.source+"x"+t.count).join(",")}`)})'
+    ;;
+  web-check)
+    # ¿La web acepta el token del VPS? POST vacío a notify-ready: 400 (falta placa) = token OK; 401 = no
+    # coincide con Vercel. No envía nada a nadie. El token se lee del env y nunca se imprime.
+    base=$(grep -E '^WEB_REPORT_URL=' "$ENV_FILE" | tail -1 | cut -d= -f2-); tok=$(grep -E '^OPERATOR_PREVIEW_TOKEN=' "$ENV_FILE" | tail -1 | cut -d= -f2-)
+    [[ -n "$base" && -n "$tok" ]] || die "falta WEB_REPORT_URL u OPERATOR_PREVIEW_TOKEN en placape.env"
+    code=$(curl -s -o /dev/null -m 20 -w '%{http_code}' -X POST -H 'Content-Type: application/json' -H "x-operator-token: $tok" -d '{}' "$base/api/notify-ready")
+    case "$code" in
+      400) echo "OK: la web acepta el token (HTTP 400 = falta placa, esperado)";;
+      401) echo "FALLA: HTTP 401 → el token de Vercel NO coincide con el del VPS (o falta Redeploy en Vercel)";;
+      *) echo "respuesta inesperada: HTTP $code";;
+    esac
     ;;
   health-run)
     curl -s -m 10 -X POST "$CONSOLE/api/health/run"; echo
