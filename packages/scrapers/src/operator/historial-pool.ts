@@ -4,7 +4,7 @@ import { join } from 'node:path';
 import { runHistorialRegistral } from './historial.js';
 import { sprlSlots, type SprlSlot } from './sprl-slots.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
-import { sprlLogin } from './sprl-login.js';
+import { sprlLogin, sprlSessionState, RX_SESION_FINALIZADA as RX_FIN } from './sprl-login.js';
 import { sprlLoginEnabled, loginBackoffOk, recordLoginAttempt } from './sprl-login-backoff.js';
 
 /**
@@ -193,20 +193,26 @@ async function warmSession(browser: Browser, slot?: SprlSlot): Promise<string> {
     // innerText ACOTADO (4s): sin timeout usaría el default de 30s → bajo contención el heartbeat se
     // colgaría y daría falso CAIDA (mismo bug que ya se arregló en sprl-login.ts).
     body = (await page.locator('body').innerText({ timeout: 4000 }).catch(() => '')).toUpperCase();
-    if (RX_VIVA.test(body)) break;
+    // El modal "Sesión Finalizada" aparece cuando falla la 1ª llamada a la API (un par de segundos
+    // después de pintar la cabecera "¡Hola!") → no cortar en el primer VIVA.
+    if (RX_FIN.test(body) || (RX_VIVA.test(body) && i >= 3)) break;
     await sleep(1000);
   }
-  const caida = !RX_VIVA.test(body) && /PASSWORD|USERNAME|INGRESAR/.test(body);
-  let state = RX_VIVA.test(body) ? 'VIVA' : (caida ? 'CAIDA' : 'DESCONOCIDO');
+  // FINALIZADA = la cabecera dice "¡Hola!" pero SUNARP ya cerró la sesión (modal "Sesión Finalizada"):
+  // antes contaba como VIVA y el slot quedaba muerto con heartbeats "VIVA" (CHU444, 30-oct).
+  const st = sprlSessionState(body);
+  const finalizada = st === 'FINALIZADA';
+  const caida = st === 'CAIDA' || finalizada;
+  let state: string = st;
 
   // RE-LOGIN ACOTADO desde el heartbeat. En modo continuo el pool tiene el puerto tomado, así que el
   // keep-alive SALTA el slot (portBusy) y NUNCA lo re-loguea → una sesión CAIDA (token SSO expirado, que
   // un simple refresh no recupera) se queda muerta hasta que un reporte paga el login FRÍO — justo lo que
   // dispara el lockout por IP. El motor es el ÚNICO que alcanza el slot, así que aquí re-sembramos la
   // sesión: UN login por slot cada BACKOFF (compartido con el keep-alive vía sprl-login-backoff) → sin storm.
-  if (state === 'CAIDA' && slot?.user && slot?.pass && sprlLoginEnabled() && loginBackoffOk(slot.index)) {
+  if (caida && slot?.user && slot?.pass && sprlLoginEnabled() && loginBackoffOk(slot.index)) {
     recordLoginAttempt(slot.index);
-    const r = await sprlLogin(page, ctx, { user: slot.user, pass: slot.pass }).catch(() => ({ ok: false, locked: false }));
+    const r = await sprlLogin(page, ctx, { user: slot.user, pass: slot.pass, force: finalizada }).catch(() => ({ ok: false, locked: false }));
     state = r.ok ? 'VIVA(re-login)' : (r.locked ? 'CAIDA(lockout)' : 'CAIDA(login-fail)');
   }
   return state;

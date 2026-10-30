@@ -24,9 +24,26 @@ const wait = (ms: number): Promise<void> => new Promise((r) => setTimeout(r, ms)
 // Chrome está trabado, no solo lento → falla rápido en vez de colgar.
 const bodyText = (page: Page, timeout = 4000): Promise<string> => page.locator('body').innerText({ timeout }).catch(() => '');
 
-/** ¿La sesión SPRL está activa (logueada) en esta página? */
+// SUNARP cerró la sesión del lado del servidor (otro login de la misma cuenta, token vencido o cambio de
+// IP): la cabecera SIGUE diciendo "¡Hola, …! SALDO…" (estado cacheado de la SPA) pero aparece el modal
+// "Sesión Finalizada" y la API rechaza todo → catálogos vacíos y búsqueda con filas=0. Visto 30-oct.
+export const RX_SESION_FINALIZADA = /SESI[OÓ]N FINALIZADA|CERR[OÓ] SU SESI[OÓ]N INTEMPESTIVAMENTE/i;
+
+/** Estado de la sesión a partir del texto visible de la página (puro, testeable). */
+export function sprlSessionState(text: string): 'VIVA' | 'FINALIZADA' | 'CAIDA' | 'DESCONOCIDO' {
+  const t = text.toUpperCase();
+  if (RX_SESION_FINALIZADA.test(t)) return 'FINALIZADA';
+  if (RX_VIVA.test(t)) return 'VIVA';
+  return /PASSWORD|USERNAME|INGRESAR/.test(t) ? 'CAIDA' : 'DESCONOCIDO';
+}
+
+/** ¿La sesión SPRL está activa (logueada) en esta página? Una sesión FINALIZADA por SUNARP no cuenta. */
 export async function sprlIsLogged(page: Page): Promise<boolean> {
-  return RX_VIVA.test((await bodyText(page)).toUpperCase());
+  return sprlSessionState(await bodyText(page)) === 'VIVA';
+}
+/** ¿SUNARP mostró "Sesión Finalizada"? (la sesión no se recupera esperando: hay que volver a loguear). */
+export async function sprlIsFinalizada(page: Page): Promise<boolean> {
+  return sprlSessionState(await bodyText(page)) === 'FINALIZADA';
 }
 /** ¿SUNARP muestra el mensaje de bloqueo por exceso de intentos? */
 export async function sprlIsLocked(page: Page): Promise<boolean> {
@@ -39,6 +56,8 @@ export interface SprlLoginOpts {
   log?: (m: string) => void;
   /** Ruta para el screenshot del form cuando falla (opcional). */
   shotPath?: string;
+  /** Re-login aunque la página PAREZCA logueada (sesión rancia: la API ya no la acepta). */
+  force?: boolean;
 }
 export interface SprlLoginResult {
   /** Sesión activa al terminar. */
@@ -57,13 +76,14 @@ export async function sprlLogin(page: Page, ctx: BrowserContext, opts: SprlLogin
   const { user, pass } = opts;
   const passVisible = async (): Promise<boolean> => page.locator('input[type="password"]:visible').first().isVisible().catch(() => false);
 
-  if (await sprlIsLogged(page)) return { ok: true, locked: false };
+  if (!opts.force && (await sprlIsLogged(page))) return { ok: true, locked: false };
   if (!user || !pass) { log('sin credenciales SPRL (user/pass)'); return { ok: false, locked: false }; }
+  if (opts.force) log('re-login FORZADO (la sesión aparenta estar viva pero SUNARP ya no la acepta)');
 
   // Forzar el FORM de login directo: limpiar storage+cookies → la SPA redirige al login (path
   // probado). El token del SPRL vive en localStorage, por eso esto desloguea de verdad y muestra el
   // formulario (más fiable que clic en INGRESAR).
-  if (!(await passVisible())) {
+  if (opts.force || !(await passVisible())) {
     await page.evaluate(() => { try { localStorage.clear(); sessionStorage.clear(); } catch { /* */ } }).catch(() => {});
     await ctx.clearCookies().catch(() => {});
     await page.goto(INGRESO, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});

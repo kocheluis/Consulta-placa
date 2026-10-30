@@ -8,7 +8,7 @@ import { parseAsientos, parseCaracteristicas, pdfBytesToText, construirTimeline,
 import type { VehicleSpecs } from '@app/shared';
 import { scrapeSunarpViaCdp } from './cdp-sunarp.js';
 import { findChrome, chromeFlags } from './chrome-path.js';
-import { sprlIsLogged, sprlLogin } from './sprl-login.js';
+import { sprlIsLogged, sprlIsFinalizada, sprlLogin } from './sprl-login.js';
 
 /**
  * HISTORIAL REGISTRAL completo (SUNARP → SPRL → Síguelo) por HÍBRIDO CDP.
@@ -317,8 +317,8 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     const isLogged = (): Promise<boolean> => sprlIsLogged(page);
     let blockReason = '';
     let freshLogin = false; // true = esta corrida arrancó con login fresco (NO con la sesión caliente del keep-alive)
-    const autoLogin = async (): Promise<boolean> => {
-      const r = await sprlLogin(page, ctx, { user, pass, log, shotPath: `${PROFILE}/_login.png` });
+    const autoLogin = async (force = false): Promise<boolean> => {
+      const r = await sprlLogin(page, ctx, { user, pass, log, shotPath: `${PROFILE}/_login.png`, force });
       if (r.locked) blockReason = 'lockout';
       return r.ok;
     };
@@ -329,17 +329,21 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // no está logueada entra al bucle de espera (re-auth OAuth puede tardar en VPS lento).
     const tLogin = Date.now();
     let logged = await isLogged();
-    for (let i = 0; i < 45 && !logged; i++) { await wait(1000); logged = await isLogged(); }
+    // "Sesión Finalizada" (SUNARP la cerró del lado del servidor) no se recupera esperando ni navegando:
+    // directo al login, sin gastar el minuto de espera del re-auth.
+    const finalizada = !logged && (await sprlIsFinalizada(page));
+    if (finalizada) log('SUNARP finalizó la sesión (modal "Sesión Finalizada") → login directo');
+    for (let i = 0; i < 45 && !logged && !finalizada; i++) { await wait(1000); logged = await isLogged(); }
     // RECUPERACIÓN SUAVE antes del login destructivo: la sesión puede seguir VIVA pero la página quedó
     // ilegible (Chrome trabado/contendido → isLogged devolvió '' por timeout). Una navegación LIMPIA a la
     // base (sin borrar cookies) deja que el re-auth la recupere. Solo si tras esto sigue sin sesión se
     // hace autoLogin (que SÍ limpia cookies y arriesga lockout por re-login en bucle).
-    if (!logged) {
+    if (!logged && !finalizada) {
       log(`sin sesión activa tras ${Math.round((Date.now() - tLogin) / 1000)}s → intento recuperar la sesión (navegación limpia)`);
       await page.goto(INGRESO, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
       for (let i = 0; i < 10 && !logged; i++) { await wait(1000); logged = await isLogged(); }
     }
-    if (!logged) { log('sesión no recuperada → login automático'); logged = await autoLogin(); freshLogin = logged; }
+    if (!logged) { log('sesión no recuperada → login automático'); logged = await autoLogin(finalizada); freshLogin = logged; }
     if (!logged) {
       await page.screenshot({ path: `${PROFILE}/_login.png`, fullPage: true }).catch(() => {});
       const err = blockReason === 'lockout'
@@ -490,6 +494,17 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // sede, se usa directo. Si viene vacío, resolvemos la sede (SUNARP) y reintentamos
     // CON oficina (camino antiguo, seguro) → la optimización nunca degrada el resultado.
     let titulos = await sprlBuscarTitulos(!!oficina);
+    // SUNARP finalizó la sesión a mitad (modal "Sesión Finalizada"): los reintentos con oficina darían
+    // vacío igual (~2.5 min cada uno). UN re-login forzado y se sigue con la sesión nueva.
+    if (!titulos.length && !partidaIncompleta && !freshLogin && (await sprlIsFinalizada(page))) {
+      log('modal "Sesión Finalizada" tras la búsqueda → re-login forzado (1 vez)');
+      const relog = await autoLogin(true);
+      freshLogin = true;
+      if (blockReason === 'lockout') {
+        return { ...empty, sede: oficina, vehiculo, locked: true, error: 'Cuenta SPRL bloqueada por SUNARP desde el VPS (re-login tras "Sesión Finalizada" superó el límite por IP). Espera ~1-2 h y reintenta UNA sola vez.' };
+      }
+      if (relog) titulos = await sprlBuscarTitulos(!!oficina);
+    }
     if (!titulos.length && !partidaIncompleta) {
       log('SPRL sin resultados → resuelvo sede (SUNARP) y reintento con oficina…');
       await ensureSede();
@@ -505,7 +520,8 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // el lockout por IP) y un último intento con la sesión nueva.
     if (!titulos.length && !partidaIncompleta && !freshLogin && vehiculo) {
       log('SPRL vacío con sesión caliente (SUNARP sí halló el vehículo) → posible sesión rancia; re-login y último intento…');
-      const relog = await autoLogin();
+      // force: sin él sprlLogin veía la cabecera "¡Hola!" y devolvía ok SIN re-loguear (CHU444, 30-oct).
+      const relog = await autoLogin(true);
       freshLogin = true; // ya intentamos el re-login: no reintentar de nuevo (bounded a 1)
       if (blockReason === 'lockout') {
         return { ...empty, sede: oficina, vehiculo, locked: true, error: 'Cuenta SPRL bloqueada por SUNARP desde el VPS (re-login por sesión rancia superó el límite por IP). Espera ~1-2 h y reintenta UNA sola vez.' };
