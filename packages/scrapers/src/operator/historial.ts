@@ -538,7 +538,33 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
 
     // ── [3] Síguelo por cada título → asiento PDF → parser ──
     const fire = (el: Element) => { for (const t of ['input', 'change', 'blur']) el.dispatchEvent(new Event(t, { bubbles: true })); };
+    // ANUNCIOS sobre Síguelo (oct-2026: banner "Sunarp simplifica" encima incluso del modal de T&C):
+    // tapan "Acepto" y "BUSCAR" → el clic no llega y listarAsientos nunca sale. Escape → botón cerrar →
+    // como último recurso se QUITA del DOM toda capa fija grande que no sea el form ni los T&C.
+    // ⚠ Sin funciones con nombre dentro del evaluate (landmine __name de tsx).
+    const cerrarAnuncios = async (pg: Page): Promise<number> => {
+      await pg.keyboard.press('Escape').catch(() => {});
+      const x = pg.locator('[aria-label*="cerrar" i]:visible, [aria-label*="close" i]:visible, [title*="cerrar" i]:visible, .swal2-close:visible, .btn-close:visible, button.close:visible, [class*="close" i]:not(input):visible').first();
+      if (await x.isVisible().catch(() => false)) { await x.click({ timeout: 2000 }).catch(() => {}); await wait(400); }
+      return pg.evaluate(() => {
+        let removed = 0;
+        const vw = window.innerWidth, vh = window.innerHeight;
+        for (const el of Array.from(document.querySelectorAll('body *')) as HTMLElement[]) {
+          const cs = getComputedStyle(el);
+          if (cs.position !== 'fixed' || cs.display === 'none' || cs.visibility === 'hidden') continue;
+          const r = el.getBoundingClientRect();
+          if (r.width * r.height < vw * vh * 0.25) continue;
+          const txt = (el.innerText || '').toLowerCase();
+          if (el.querySelector('#cboOficina') || txt.includes('acepto') || txt.includes('términos') || txt.includes('terminos')) continue;
+          if (!el.querySelector('img') && !/simplifica|tr[aá]mites/.test(txt)) continue;
+          el.remove(); removed++;
+        }
+        return removed;
+      }).catch(() => 0);
+    };
     const aceptarTC = async (pg: Page): Promise<void> => {
+      const quitados = await cerrarAnuncios(pg);
+      if (quitados) log(`  Síguelo: ${quitados} anuncio(s) emergente(s) quitado(s)`);
       const btn = pg.locator('button').filter({ hasText: /acepto/i }).filter({ hasNotText: /no\s*acepto/i }).first();
       if (await btn.isVisible().catch(() => false)) { await btn.click().catch(() => {}); await wait(700); return; }
       const link = pg.locator('a:has-text("ingresar"), a:has-text("términos"), a:has-text("terminos")').first();
@@ -557,10 +583,15 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       const ofi = await pg.locator('#cboOficina').evaluate((el) => (el as HTMLSelectElement).selectedOptions[0]?.textContent ?? '').catch(() => '?');
       const ts = (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 800 }).catch(() => '')).length;
       const btn = await pg.locator('button:has-text("BUSCAR")').first().isEnabled().catch(() => false);
-      const txt = (await pg.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
+      const box = await pg.locator('button:has-text("BUSCAR")').first().boundingBox().catch(() => null);
+      const tapa = box ? await pg.evaluate((p) => {
+        const e = document.elementFromPoint(p.x, p.y) as HTMLElement | null;
+        return e ? `${e.tagName.toLowerCase()}${e.id ? '#' + e.id : ''}.${String(e.className || '').slice(0, 60)} "${(e.innerText || '').trim().slice(0, 30)}"` : 'nada';
+      }, { x: box.x + box.width / 2, y: box.y + box.height / 2 }).catch(() => '?') : 'sin-boton';
+      const txt =(await pg.locator('body').innerText({ timeout: 3000 }).catch(() => '')).replace(/\s+/g, ' ').trim().slice(0, 200);
       const shot = opts.shotPath ? opts.shotPath.replace(/[^/\\]+$/, `siguelo-${tit}.png`) : `${PROFILE}/_siguelo-${tit}.png`;
       await pg.screenshot({ path: shot, fullPage: true }).catch(() => {});
-      log(`  Síguelo DIAG ${tit} · paso=${step} · ${Math.round((Date.now() - t0) / 1000)}s · url=${pg.url().slice(0, 70)} · oficinas=${opts2} sel="${ofi.trim()}" · turnstile=${ts} · buscar=${btn ? 'on' : 'off'} · texto="${txt}" · captura=${shot}`);
+      log(`  Síguelo DIAG ${tit} · paso=${step} · ${Math.round((Date.now() - t0) / 1000)}s · url=${pg.url().slice(0, 70)} · oficinas=${opts2} sel="${ofi.trim()}" · turnstile=${ts} · buscar=${btn ? 'on' : 'off'} · encima-de-BUSCAR=${tapa} · texto="${txt}" · captura=${shot}`);
     }
     async function searchSiguelo(pg: Page, anioT: string, numeroT: string): Promise<string | null> {
       const t0 = Date.now();
