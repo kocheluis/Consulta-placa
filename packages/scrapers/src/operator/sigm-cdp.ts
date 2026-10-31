@@ -222,8 +222,15 @@ export async function scrapeSigmViaCdp(plateRaw: string, opts: CdpSigmOptions = 
     await inp.fill(plate, { timeout: 4000 }).catch((e) => log(`fill: ${(e as Error).message}`));
     await wait(400);
     const respP = page.waitForResponse((r) => /gratuita\/busqueda/i.test(r.url()), { timeout: 30000 }).catch(() => null);
-    await page.locator('button:has-text("Consultar"):visible').first().click({ timeout: 5000 }).catch(async () => {
-      await page.locator('button:has-text("Consultar"):visible').first().click({ force: true }).catch((e) => log(`Consultar: ${(e as Error).message}`));
+    // 3er respaldo: click() del DOM. Tras quitar el modal por JS la página puede quedar sin scroll y
+    // Playwright (incluso con force) falla "Element is outside of the viewport" (CHU444, 31-oct) → la
+    // búsqueda nunca se enviaba y SIGM salía ERROR tras 30 s.
+    const consultar = page.locator('button:has-text("Consultar"):visible').first();
+    await consultar.click({ timeout: 5000 }).catch(async () => {
+      await consultar.click({ force: true, timeout: 5000 }).catch(async (e) => {
+        log(`Consultar: ${(e as Error).message.split('\n')[0]} → click() del DOM`);
+        await consultar.evaluate((el) => (el as HTMLElement).click()).catch((e2) => log(`Consultar (DOM): ${(e2 as Error).message.split('\n')[0]}`));
+      });
     });
     const resp = await respP;
     if (!resp) return { ok: false, status: 'ERROR', error: 'SIGM no respondió /gratuita/busqueda (¿Turnstile/reCAPTCHA?)' };
