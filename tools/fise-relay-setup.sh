@@ -23,10 +23,13 @@ VPS_URL=$(echo "$VPS_URL" | sed 's:/*$::')
 echo "== 1/6 actualizando Termux y paquetes (node, termux-api)… (puede tardar unos minutos)"
 # ACTUALIZACIÓN COMPLETA primero: un `pkg install` suelto puede subir libcurl sin subir openssl y deja
 # curl roto ("CANNOT LINK EXECUTABLE curl: cannot locate symbol SSL_…", visto 31-oct).
+# `apt` y no `pkg`: el wrapper `pkg` usa curl para elegir mirror, así que con curl roto ni arranca.
 export DEBIAN_FRONTEND=noninteractive
-yes | pkg upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || yes | pkg upgrade -y
-yes | pkg install -y nodejs-lts termux-api curl openssl >/dev/null 2>&1 || pkg install -y nodejs-lts termux-api curl openssl
-curl --version >/dev/null 2>&1 || { echo "curl sigue roto tras actualizar: corre 'pkg upgrade' a mano y vuelve a intentar" >&2; exit 1; }
+APT_OPTS='-y -o Dpkg::Options::=--force-confnew'
+apt update >/dev/null 2>&1 || apt update
+apt full-upgrade $APT_OPTS >/dev/null 2>&1 || apt full-upgrade $APT_OPTS
+apt install $APT_OPTS nodejs-lts termux-api curl openssl >/dev/null 2>&1 || apt install $APT_OPTS nodejs-lts termux-api curl openssl
+curl --version >/dev/null 2>&1 || { echo "curl sigue roto tras actualizar: corre 'apt update && apt full-upgrade' a mano y vuelve a intentar" >&2; exit 1; }
 
 echo "== 2/6 descargando worker y supervisor…"
 curl -fsSL "$RAW/fise-relay-celular.mjs" -o "$HOME/fise-relay-celular.mjs"
