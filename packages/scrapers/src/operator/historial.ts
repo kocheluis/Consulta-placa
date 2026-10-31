@@ -614,7 +614,12 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       await pg.locator('input[name="numeroTitulo"]').evaluate(fire).catch(() => {});
       // Poll del Turnstile a 400ms (antes 1000ms): mismo tope (~20s) pero exit más rápido. Se repite
       // por CADA título → en autos con varios títulos el ahorro se multiplica.
-      for (let i = 0; i < 50; i++) { if (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')) break; await wait(400); }
+      let tsOk = false;
+      for (let i = 0; i < 50; i++) { if (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 400 }).catch(() => '')) { tsOk = true; break; } await wait(400); }
+      // Sin Turnstile resuelto, BUSCAR igual está habilitado pero el portal responde "Por favor ingrese el
+      // código captcha" (swal) y NO consulta → se esperaban 70 s a listarAsientos en vano (CHU444, 31-oct).
+      // Corte inmediato: el caller reintenta con la página recargada (challenge nuevo).
+      if (!tsOk) { await sigueloDiag(pg, tit, t0, 'turnstile-sin-resolver'); return null; }
       const buscar = pg.locator('button:has-text("BUSCAR")').first();
       if (!(await buscar.isEnabled().catch(() => false))) { await aceptarTC(pg); await wait(500); }
       if (!(await buscar.isEnabled().catch(() => false))) { await sigueloDiag(pg, tit, t0, 'buscar-deshabilitado'); return null; }
