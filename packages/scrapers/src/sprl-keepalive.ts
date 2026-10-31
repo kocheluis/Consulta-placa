@@ -120,6 +120,14 @@ async function refreshSlot(slot: SprlSlot): Promise<string> {
 }
 
 (async () => {
+  // MOTOR CONTINUO: el pool de historial mantiene sus Chrome SPRL calientes con heartbeats (el 1º a los
+  // ~20 s de abrirlos). Este keep-alive sobra y CHOCA: si corre mientras el pool aún no tomó el puerto
+  // (arranque/deploy), abre un Chrome en ese puerto, el pool se le conecta y al terminar lo mata → el
+  // pool queda con el handle muerto ("desconectado → reabierto", 31-oct) y pierde la sesión.
+  if (process.env.ENGINE_CONTINUOUS === '1' && process.env.SPRL_KEEPALIVE_FORCE !== '1') {
+    appendFileSync(LOG, `${peruStamp()} skip=motor-continuo (el pool mantiene las sesiones)\n`);
+    process.exit(0);
+  }
   // Refresca CADA slot configurado (cuentas 1, 2 y 3 si existen) EN SECUENCIA: cada uno tiene su
   // perfil/puerto propio, así TODAS las sesiones se mantienen vivas → habilitar una cuenta nueva es
   // solo poner sus env (SPRL_USER_N/SPRL_PASS_N); este keep-alive la cubre automáticamente. Sin

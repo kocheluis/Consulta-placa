@@ -165,7 +165,7 @@ EOF
     npm install --no-audit --no-fund --loglevel=error
     npm run -s build -w @app/shared
     npx playwright install chromium >/dev/null 2>&1 || echo "aviso: playwright install falló"
-    pm2 restart operador sprl-keepalive --update-env >/dev/null; sleep 10; pm2_summary
+    pm2 restart operador --update-env >/dev/null; sleep 10; pm2_summary
     # Esta misma herramienta se actualiza desde el repo (mismo nivel de confianza que el código del motor,
     # que ya corre como root desde git). Solo si el archivo nuevo pasa `bash -n`.
     for f in placape-ops placape-ops-ssh; do
@@ -179,7 +179,7 @@ EOF
     [[ -s "$PREV_REV" ]] || die "no hay versión previa registrada"
     cd "$APP"; rev="$(cat "$PREV_REV")"; need rev "$rev" '^[0-9a-f]{40}$'
     git reset -q --hard "$rev"; npm install --no-audit --no-fund --loglevel=error; npm run -s build -w @app/shared
-    pm2 restart operador sprl-keepalive --update-env >/dev/null; sleep 10; pm2_summary
+    pm2 restart operador --update-env >/dev/null; sleep 10; pm2_summary
     echo "volví a $(git log -1 --format='%h %s'). OJO: main local quedó atrás de origin; el próximo deploy lo adelanta."
     ;;
   audit)
