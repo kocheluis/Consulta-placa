@@ -29,6 +29,19 @@ Si el celular no da señales de vida (>2 min sin poll), la fuente FISE **falla a
 un mensaje claro — el reporte no se cuelga ni pierde tiempo. Cuando el worker vuelve, FISE se
 reactiva solo (sin reiniciar nada).
 
+## Instalación rápida (recomendada)
+
+1. **VPS:** `ssh placape-vps fise-token` (lo genera y lo muestra una vez) → `ssh placape-vps restart operador`
+   → `ssh placape-vps fise-status` debe decir `listener :3011 ESCUCHANDO`.
+2. **Celular (Termux), un solo comando** — instala, configura, deja el arranque automático y lo prende:
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-setup.sh | sh -s -- http://IP-DEL-VPS:3011 EL_TOKEN
+   ```
+   Termina diciendo `✅ LISTO` cuando el VPS ya ve latir al celular. Se puede repetir sin miedo
+   (reemplaza la instalación anterior, p. ej. una que apuntaba a otro VPS).
+
+Lo de abajo es el detalle manual de lo mismo.
+
 ## Setup — VPS (una vez)
 
 1. Generar un token y guardarlo en `/root/placape.env`:

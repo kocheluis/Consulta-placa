@@ -38,6 +38,8 @@ placape-ops — comandos permitidos (todo queda auditado):
   src-log <PLACA> <fuente> [n]   log de una fuente de una placa (/root/out/PLACA/fuente.log)
   report <PLACA>                 estado por fuente del último reporte de la placa
   shots <PLACA> | shot <PLACA> <archivo.png>   lista / descarga (base64) capturas de la placa
+  fise-token [rotate]            genera el token del relay FISE (si no hay) y lo muestra 1 vez para el celular
+  fise-status                    estado del relay FISE (¿celular latiendo? ¿listener :3011 abierto?)
   web-check                      ¿la web (Vercel) acepta el token del VPS? (no envía nada)
   health | health-run            ver / lanzar el chequeo diario (fuentes + infra + seguridad)
   alerts                         reportes con error entregados a clientes (recientes)
@@ -102,6 +104,23 @@ EOF
       for(const c of [...(r.infra||[]),...(r.security||[])])console.log(`  ${c.severity.padEnd(4)} ${c.label}: ${c.detail}`);
       for(const x of r.sources||[]){console.log(`  ${x.verdict.padEnd(12)} ${x.source} ok=${x.ok} err=${x.err}`);for(const e of x.errors.slice(0,2))console.log(`      ${e.placa}: ${e.summary}`)}
       const c=d.clients24h;if(c)console.log(`clientes 24h: ${c.total} · con error ${c.conError} · sin reporte ${c.sinReporte} · top ${c.top.map(t=>t.source+"x"+t.count).join(",")}`)})'
+    ;;
+  fise-token)
+    # Única excepción a "no tocar secretos": el token del RELAY FISE es de bajo alcance (solo deja pedir
+    # trabajos de FISE y devolver su resultado) y hay que llevarlo al celular, así que se genera aquí y se
+    # muestra UNA vez. `fise-token rotate` invalida el anterior (el celular viejo queda rechazado).
+    cur=$(grep -E '^FISE_RELAY_TOKEN=' "$ENV_FILE" | tail -1 | cut -d= -f2-)
+    if [[ -n "$cur" && "${1:-}" != "rotate" ]]; then echo "ya existe (${#cur} caracteres). Para regenerarlo: fise-token rotate"; exit 0; fi
+    tok=$(openssl rand -hex 16)
+    cp -p "$ENV_FILE" "$ENV_FILE.bak-$(date +%Y%m%d%H%M%S)"
+    if grep -qE '^FISE_RELAY_TOKEN=' "$ENV_FILE"; then sed -i "s|^FISE_RELAY_TOKEN=.*|FISE_RELAY_TOKEN=$tok|" "$ENV_FILE"; else printf 'FISE_RELAY_TOKEN=%s\n' "$tok" >> "$ENV_FILE"; fi
+    chmod 600 "$ENV_FILE"
+    echo "$tok"
+    echo "(guardado en placape.env; aplica con: restart operador)" >&2
+    ;;
+  fise-status)
+    curl -s -m 10 "$CONSOLE/api/fise-relay/status"; echo
+    ss -tln 2>/dev/null | grep -q ":${FISE_RELAY_PORT:-3011} " && echo "listener :${FISE_RELAY_PORT:-3011} ESCUCHANDO" || echo "listener :${FISE_RELAY_PORT:-3011} NO escucha (¿falta FISE_RELAY_TOKEN o reiniciar?)"
     ;;
   web-check)
     # ¿La web acepta el token del VPS? POST vacío a notify-ready: 400 (falta placa) = token OK; 401 = no

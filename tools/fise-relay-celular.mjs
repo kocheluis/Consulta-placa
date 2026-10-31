@@ -132,7 +132,7 @@ if (BASE_RAW === 'test-infogas') {
 
 if (!BASE_RAW || !TOKEN) {
   console.error('Uso: node fise-relay-celular.mjs <URL-del-VPS> <token>');
-  console.error('Ej.: node fise-relay-celular.mjs http://149.104.66.122:3011 abc123');
+  console.error('Ej.: node fise-relay-celular.mjs http://IP-DEL-VPS:3011 abc123');
   console.error('Test de red (sin VPS): node fise-relay-celular.mjs test | test-infogas');
   process.exit(1);
 }
