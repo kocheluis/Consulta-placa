@@ -37,7 +37,7 @@ async function acquireCap(): Promise<() => void> {
 /** Captura el <img> del captcha como PNG base64 y lo resuelve con CapSolver, SERIALIZADO por el semáforo
  *  global (evita el HTTP 400 por saturación) y esperando a que la imagen esté cargada (naturalWidth>0) y
  *  con bytes reales (>500) antes de mandarla — sale al toque cuando ya está lista. */
-async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string> {
+async function readCaptcha(solver: CaptchaSolver, img: Locator, opts?: { numeric?: boolean }): Promise<string> {
   const release = await acquireCap();
   try {
     let buf: Uint8Array = Buffer.alloc(0);
@@ -51,7 +51,7 @@ async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string>
     // engañoso "HTTP 400"): lanza un error CLARO que dice que el portal no sirvió la imagen. Así el
     // log distingue "imagen no cargó" (lado nuestro/portal) de "CapSolver rechazó una imagen válida".
     if (buf.length <= 500) throw new Error(`imagen de captcha vacía/no cargó (${buf.length} bytes) — el portal no la sirvió`);
-    return (await solver.solveImage(Buffer.from(buf).toString('base64'))).trim();
+    return (await solver.solveImage(Buffer.from(buf).toString('base64'), opts)).trim();
   } finally {
     release();
   }
@@ -65,6 +65,12 @@ async function readCaptcha(solver: CaptchaSolver, img: Locator): Promise<string>
  */
 export function cleanCallaoCaptcha(s: string): string {
   return s.replace(/\D/g, '');
+}
+
+/** Captcha del MTC CITV: exactamente 6 dígitos. Otra cosa (5 dígitos, letras) → '' = no enviar. */
+export function cleanMtcCaptcha(s: string): string {
+  const d = s.replace(/\D/g, '');
+  return d.length === 6 ? d : '';
 }
 
 async function findFrameWith(page: Page, selector: string): Promise<Frame | null> {
@@ -228,14 +234,19 @@ export async function runMtcCitv(
     const CAP_ERR = /captcha|c[oó]digo ingresado|no es v[aá]lid/i;
     let cap = '';
 
-    for (let i = 1; i <= 4; i++) {
+    // El captcha del MTC son SIEMPRE 6 dígitos (visto 31-oct: "035363"); el OCR genérico devolvía 5
+    // ("51544") y el portal lo rechazaba los 4 intentos. Modelo numérico + solo se ENVÍA una lectura de
+    // 6 dígitos; si no, captcha nuevo sin gastar un envío. 6 vueltas (antes 4) porque una lectura mala
+    // ya no cuesta un rechazo del portal.
+    for (let i = 1; i <= 6; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1200); }
       await selectPlaca();
       await plateInput.fill(plate);
       dialog = '';
       await img.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
       await wait(900); // el #imgCaptcha lo pone JS; deja que termine de renderizar
-      cap = await readCaptcha(solver, img);
+      cap = cleanMtcCaptcha(await readCaptcha(solver, img, { numeric: true }));
+      if (!cap) continue;
       await capInput.fill(cap);
       await buscar.click();
       let body = '';

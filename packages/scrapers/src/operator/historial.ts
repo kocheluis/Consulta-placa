@@ -262,7 +262,10 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     sunarpP = Promise.resolve(null);
   } else {
     log('Consulta Vehicular (SUNARP) → sede (en paralelo con el SPRL)…');
-    sunarpP = scrapeSunarpViaCdp(plate, { shotPath: opts.shotPath ?? `${PROFILE}/_sunarp.png`, log: (m) => log(`sunarp: ${m}`) }).catch(() => null);
+    // dataWaitMs 30 s: la espera larga (180 s) es para que un operador resuelva el Turnstile A MANO; en el
+    // motor nadie lo hace. Con Turnstile OK la imagen llega en ~2 s. Normalmente ni corre: reusa la consulta
+    // de la fuente `sunarp` de la misma corrida (consulta compartida en cdp-sunarp).
+    sunarpP = scrapeSunarpViaCdp(plate, { shotPath: opts.shotPath ?? `${PROFILE}/_sunarp.png`, dataWaitMs: 30_000, log: (m) => log(`sunarp: ${m}`) }).catch(() => null);
   }
   // Resuelve la sede desde SUNARP (idempotente): Síguelo la necesita y el fallback del SPRL.
   const ensureSede = async (): Promise<void> => {

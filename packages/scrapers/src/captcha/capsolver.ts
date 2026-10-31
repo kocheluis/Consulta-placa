@@ -85,13 +85,18 @@ export class CapSolverSolver implements CaptchaSolver {
     return solution.gRecaptchaResponse;
   }
 
-  async solveImage(imageBase64: string): Promise<string> {
+  async solveImage(imageBase64: string, opts?: { numeric?: boolean }): Promise<string> {
     // ImageToTextTask responde SÍNCRONO: la solución viene en createTask, no por
     // polling (un getTaskResult posterior da "task data has expired", errorId=1).
-    const res = await post<CreateTaskResponse>('/createTask', {
+    // numeric → module "number" (modelo de dígitos; el genérico se comía dígitos del captcha de 6 del MTC).
+    // Si CapSolver rechazara el módulo, se repite SIN él: nunca peor que antes.
+    let res = await post<CreateTaskResponse>('/createTask', {
       clientKey: this.clientKey,
-      task: { type: 'ImageToTextTask', body: imageBase64 },
+      task: { type: 'ImageToTextTask', body: imageBase64, ...(opts?.numeric ? { module: 'number' } : {}) },
     });
+    if (opts?.numeric && res.errorId !== 0) {
+      res = await post<CreateTaskResponse>('/createTask', { clientKey: this.clientKey, task: { type: 'ImageToTextTask', body: imageBase64 } });
+    }
     if (res.errorId !== 0) {
       throw new Error(`CapSolver createTask (image): ${res.errorDescription ?? 'error'}`);
     }

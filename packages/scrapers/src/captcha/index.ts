@@ -12,8 +12,9 @@ export interface CaptchaSolver {
   solveRecaptchaV2(sitekey: string, url: string): Promise<string>;
   /** Resuelve un reCAPTCHA v3 (por score) dado sitekey, URL y la acción de la página. */
   solveRecaptchaV3(sitekey: string, url: string, action: string): Promise<string>;
-  /** Resuelve un CAPTCHA de imagen (base64) y devuelve el texto. */
-  solveImage(imageBase64: string): Promise<string>;
+  /** Resuelve un CAPTCHA de imagen (base64) y devuelve el texto. `numeric`: el captcha es solo dígitos
+   *  (el proveedor puede usar un modelo numérico; quien no lo soporte lo ignora). */
+  solveImage(imageBase64: string, opts?: { numeric?: boolean }): Promise<string>;
   /** Resuelve un Cloudflare Turnstile dado su sitekey y la URL. Devuelve el token. */
   solveTurnstile(sitekey: string, url: string): Promise<string>;
 }

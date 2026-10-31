@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 import { spawn } from 'node:child_process';
-import { writeFileSync } from 'node:fs';
+import { writeFileSync, copyFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { chromium, type Browser } from 'playwright';
 import { SectionStatus, SourceId, type SourceResult } from '@app/shared';
@@ -115,12 +115,42 @@ async function acquirePortLock(port: number): Promise<() => void> {
   return release;
 }
 
+/**
+ * CONSULTA COMPARTIDA por placa: la fuente `sunarp` y el SUNARP interno de `historial` piden LO MISMO
+ * en la misma corrida. Antes cada una hacía su consulta (en fila por el lock de puerto) y si el
+ * Turnstile del 2º no pasaba, el historial esperaba 180 s y seguía con sede por defecto (CHU444, 31-oct:
+ * +3 min). Ahora el 2º reutiliza el resultado (en curso o de hace < 3 min) del 1º. Solo se comparten
+ * resultados BUENOS (ok / placa inexistente); un fallo no se cachea → el siguiente reintenta normal.
+ */
+const SHARE_MS = Number(process.env.SUNARP_SHARE_MS ?? 3 * 60_000);
+const shared = new Map<string, { at: number; shot: string; p: Promise<CdpSunarpResult> }>();
+
 export async function scrapeSunarpViaCdp(
   plateRaw: string,
   opts: CdpSunarpOptions,
 ): Promise<CdpSunarpResult> {
-  const log = opts.log ?? (() => {});
   const plate = plateRaw.toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const hit = shared.get(plate);
+  if (hit && Date.now() - hit.at < SHARE_MS) {
+    const r = await hit.p.catch(() => null);
+    if (r && (r.ok || r.notFound)) {
+      (opts.log ?? (() => {}))('reuso la consulta SUNARP de esta placa hecha en esta corrida (sin repetirla)');
+      if (hit.shot !== opts.shotPath) { try { copyFileSync(hit.shot, opts.shotPath); } catch { /* sin captura previa */ } }
+      return r;
+    }
+  }
+  const entry = { at: Date.now(), shot: opts.shotPath, p: scrapeSunarpOnce(plate, opts) };
+  shared.set(plate, entry);
+  const r = await entry.p;
+  if (!(r.ok || r.notFound) && shared.get(plate) === entry) shared.delete(plate);
+  return r;
+}
+
+async function scrapeSunarpOnce(
+  plate: string,
+  opts: CdpSunarpOptions,
+): Promise<CdpSunarpResult> {
+  const log = opts.log ?? (() => {});
   const chrome = findChrome();
   if (!chrome) {
     return { ok: false, status: SectionStatus.UNAVAILABLE, error: 'No encontré chrome.exe. Instala Google Chrome.' };
