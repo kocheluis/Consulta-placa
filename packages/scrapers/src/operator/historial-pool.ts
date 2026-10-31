@@ -237,13 +237,16 @@ async function takeWarm(
   everyMs: number,
   onBeat: (state: string) => void,
   slot?: SprlSlot,
+  firstBeatMs?: number,
 ): Promise<HistorialTask | null> {
   if (!browser || everyMs <= 0) return take();
   const taskP = take();
   let resolved = false;
   void taskP.then(() => { resolved = true; }, () => { resolved = true; });
+  let next = firstBeatMs ?? everyMs;
   for (;;) {
-    const d = delayHandle(everyMs);
+    const d = delayHandle(next);
+    next = everyMs;
     const winner = await Promise.race([taskP.then(() => 'task'), d.p.then(() => 'beat')]);
     d.cancel();
     if (winner === 'task' || resolved) return taskP;
@@ -327,10 +330,14 @@ export async function runHistorialPoolLive(
       slog(slot.index, `abriendo Chrome SPRL :${slot.port} (pool continuo)`);
       let { browser, close } = await openBrowser(slot);
       let failover = false;
+      // Chrome recién abierto (arranque/deploy): el 1er heartbeat a los ~20 s y no a los 6 min → la sesión
+      // se recupera (o re-loguea con backoff) ANTES del primer reporte, que si no pagaba ~90 s de login.
+      let firstBeat: number | undefined = Number(process.env.HISTORIAL_FIRST_BEAT_MS ?? 20_000);
       try {
         for (;;) {
           // Espera la próxima tarea manteniendo CALIENTE la sesión (heartbeat) → evita el cold-login.
-          const task: HistorialTask | null = pending ?? (await takeWarm(take, browser, heartbeatMs, (st) => elog(`heartbeat slot${slot.index} sesión=${st}`), slot));
+          const task: HistorialTask | null = pending ?? (await takeWarm(take, browser, heartbeatMs, (st) => elog(`heartbeat slot${slot.index} sesión=${st}`), slot, firstBeat));
+          firstBeat = undefined;
           pending = null;
           if (!task) return; // canal cerrado → apagado limpio (sale del worker por completo)
           // AUTO-SANA: si algo mató el Chrome parqueado (killEngineChrome de un cancel/manual, crash),

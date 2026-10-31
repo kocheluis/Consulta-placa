@@ -235,9 +235,9 @@ export async function runMtcCitv(
     let cap = '';
 
     // El captcha del MTC son SIEMPRE 6 dígitos (visto 31-oct: "035363"); el OCR genérico devolvía 5
-    // ("51544") y el portal lo rechazaba los 4 intentos. Modelo numérico + solo se ENVÍA una lectura de
-    // 6 dígitos; si no, captcha nuevo sin gastar un envío. 6 vueltas (antes 4) porque una lectura mala
-    // ya no cuesta un rechazo del portal.
+    // ("51544") y el portal lo rechazaba los 4 intentos. Solo se ENVÍA una lectura de 6 dígitos; si no,
+    // captcha nuevo sin gastar un envío. 6 vueltas (antes 4) porque una lectura mala ya no cuesta un
+    // rechazo del portal.
     for (let i = 1; i <= 6; i++) {
       if (i > 1) { await page.reload({ waitUntil: 'domcontentloaded' }); await wait(1200); }
       await selectPlaca();
