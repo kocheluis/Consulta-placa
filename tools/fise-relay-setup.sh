@@ -20,8 +20,13 @@ if [ -z "$VPS_URL" ] || [ -z "$TOKEN" ]; then
 fi
 VPS_URL=$(echo "$VPS_URL" | sed 's:/*$::')
 
-echo "== 1/6 paquetes (node, termux-api)…"
-yes | pkg install -y nodejs-lts termux-api curl >/dev/null 2>&1 || pkg install -y nodejs-lts termux-api curl
+echo "== 1/6 actualizando Termux y paquetes (node, termux-api)… (puede tardar unos minutos)"
+# ACTUALIZACIÓN COMPLETA primero: un `pkg install` suelto puede subir libcurl sin subir openssl y deja
+# curl roto ("CANNOT LINK EXECUTABLE curl: cannot locate symbol SSL_…", visto 31-oct).
+export DEBIAN_FRONTEND=noninteractive
+yes | pkg upgrade -y -o Dpkg::Options::=--force-confnew >/dev/null 2>&1 || yes | pkg upgrade -y
+yes | pkg install -y nodejs-lts termux-api curl openssl >/dev/null 2>&1 || pkg install -y nodejs-lts termux-api curl openssl
+curl --version >/dev/null 2>&1 || { echo "curl sigue roto tras actualizar: corre 'pkg upgrade' a mano y vuelve a intentar" >&2; exit 1; }
 
 echo "== 2/6 descargando worker y supervisor…"
 curl -fsSL "$RAW/fise-relay-celular.mjs" -o "$HOME/fise-relay-celular.mjs"
