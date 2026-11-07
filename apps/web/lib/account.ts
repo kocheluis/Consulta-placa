@@ -110,11 +110,14 @@ export type OAuthProvider = 'google' | 'facebook';
  * Inicia sesión con un proveedor social. Redirige el navegador al proveedor; al
  * volver, /auth/callback canjea el código por sesión. Requiere Supabase.
  */
-export async function signInWithProvider(provider: OAuthProvider): Promise<void> {
+export async function signInWithProvider(provider: OAuthProvider, next?: string | null): Promise<void> {
   if (!usingSupabase) throw new Error('El acceso con Google/Facebook requiere Supabase configurado.');
   const client = await sb();
+  // `next`: a dónde volver tras el login (el callback lo valida como ruta interna).
   const redirectTo =
-    typeof window !== 'undefined' ? `${window.location.origin}/auth/callback` : undefined;
+    typeof window !== 'undefined'
+      ? `${window.location.origin}/auth/callback${next ? `?next=${encodeURIComponent(next)}` : ''}`
+      : undefined;
   const { error } = await client.auth.signInWithOAuth({ provider, options: { redirectTo } });
   if (error) throw new Error(translate(error.message));
 }

@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import { StateScreen } from '@/components/StateScreen';
 import { Button } from '@/components/ui/Button';
+import { ContinuarReporte } from '@/components/ContinuarReporte';
 
 export const metadata: Metadata = {
   title: 'Cuenta confirmada — PlacaPe',
@@ -42,6 +43,7 @@ export default async function ConfirmadoPage({
         description="Tu correo quedó verificado y tu cuenta de PlacaPe está activa. Ya puedes consultar el historial de cualquier placa del Perú."
       >
         <div className="flex flex-wrap justify-center gap-3">
+          <ContinuarReporte />
           <Button variant="accent" size="lg" href="/" iconRight="arrow_forward">
             Consultar una placa
           </Button>

@@ -34,7 +34,7 @@ import {
   ReportTier,
 } from '@app/shared';
 import { useConsulta, type CupoInfo } from '@/lib/use-consulta';
-import { getPaidTier, buyReport, type Tier } from '@/lib/account';
+import { getPaidTier, buyReport, getAccount, type Tier } from '@/lib/account';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
 import { Badge } from '@/components/ui/Badge';
@@ -42,8 +42,7 @@ import { Card } from '@/components/ui/Card';
 import { Tag } from '@/components/ui/Tag';
 import { RiskGauge } from '@/components/RiskGauge';
 import { StateScreen } from '@/components/StateScreen';
-import { LeadGate } from '@/components/LeadGate';
-import { getStoredLead } from '@/lib/lead';
+import { AuthGate } from '@/components/AuthGate';
 
 // Activo por defecto (el pipeline ya está vivo). Kill-switch: NEXT_PUBLIC_PRO_ENABLED=false.
 const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED !== 'false';
@@ -120,7 +119,15 @@ export default function ReportePage() {
   useEffect(() => {
     try { setPreview(new URLSearchParams(window.location.search).get('preview') || undefined); } catch { /* noop */ }
   }, []);
-  const state = useConsulta(placa, refreshToken, PRO_ENABLED, preview);
+  // ACCESO OBLIGATORIO: toda consulta requiere cuenta (antes: lead gate de correo en localStorage).
+  // null = verificando la sesión; false = pedir login/registro; true = puede ver (o preview de operador).
+  const [unlocked, setUnlocked] = useState<boolean | null>(null);
+  useEffect(() => {
+    if (preview) { setUnlocked(true); return; }
+    getAccount().then((a) => setUnlocked(!!a)).catch(() => setUnlocked(false));
+  }, [preview]);
+  // Sin sesión NO se consulta nada (ni se encola): primero la cuenta.
+  const state = useConsulta(placa, refreshToken, PRO_ENABLED && unlocked === true, preview);
   const actualizar = () => setRefreshToken((n) => n + 1);
   // Reintento SOLO-ERRORES: encola en el backend la re-corrida de las fuentes que fallaron (el motor
   // reusa las buenas y repara las malas). Distinto de `actualizar`, que solo RE-LEE el reporte cacheado.
@@ -131,12 +138,6 @@ export default function ReportePage() {
     actualizar(); // el pedido nuevo pone `generating:true` → la vista sondea hasta el reporte reparado
   };
 
-  // Pantalla intermedia (lead gate): null mientras leemos localStorage, luego true si
-  // este navegador ya dejó su contacto (o si es preview de operador).
-  const [unlocked, setUnlocked] = useState<boolean | null>(null);
-  useEffect(() => {
-    setUnlocked(preview ? true : getStoredLead() != null);
-  }, [preview]);
 
   // Al quedar listo el reporte, retén ~0.9 s mostrando 100% antes de revelarlo (cierre visual).
   const [reveal, setReveal] = useState(false);
@@ -161,9 +162,9 @@ export default function ReportePage() {
     return <div className="min-h-[60vh] bg-background" />;
   }
 
-  // Captura obligatoria: el reporte se genera en background mientras se llena.
+  // Sin cuenta: iniciar sesión o crear cuenta (vuelve a este reporte al terminar).
   if (!unlocked) {
-    return <LeadGate placa={placa} ready={state.phase === 'done'} onUnlock={() => setUnlocked(true)} />;
+    return <AuthGate placa={placa} />;
   }
 
   if (state.phase === 'loading' || (ready && !reveal)) {

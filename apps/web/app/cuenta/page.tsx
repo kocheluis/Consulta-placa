@@ -17,6 +17,7 @@ import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Icon } from '@/components/ui/Icon';
 import { Badge } from '@/components/ui/Badge';
+import { safeNext, rememberNext, takeNext } from '@/lib/next-path';
 
 type View = 'login' | 'register' | 'forgot';
 
@@ -83,12 +84,12 @@ function BrandPanel() {
 }
 
 /* ── Login social (Supabase OAuth: Google + Facebook) ─────────────── */
-function SocialButtons({ onError }: { onError: (m: string) => void }) {
+function SocialButtons({ onError, next }: { onError: (m: string) => void; next?: string | null }) {
   const [busy, setBusy] = useState<'google' | 'facebook' | null>(null);
   const go = async (provider: 'google' | 'facebook') => {
     setBusy(provider);
     try {
-      await signInWithProvider(provider);
+      await signInWithProvider(provider, next);
       // En éxito, el navegador se redirige al proveedor (no vuelve aquí).
     } catch (err) {
       onError((err as Error).message);
@@ -318,9 +319,21 @@ export default function CuentaPage() {
   const [busy, setBusy] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
 
+  // ?next=/reporte/ABC123 (viene del reporte que pidió iniciar sesión) y ?view=register (crear cuenta).
+  const [next, setNext] = useState<string | null>(null);
   useEffect(() => {
+    const qs = new URLSearchParams(window.location.search);
+    const n = safeNext(qs.get('next'));
+    if (n) { setNext(n); rememberNext(n); }
+    if (qs.get('view') === 'register') setView('register');
     getAccount().then(setAccount).catch(() => setAccount(null));
   }, []);
+  // Con sesión iniciada, vuelve a lo que la persona quería hacer (su reporte), si lo había.
+  useEffect(() => {
+    if (!account) return;
+    const dest = next ?? takeNext();
+    if (dest) { takeNext(); window.location.replace(dest); }
+  }, [account, next]);
 
   const go = (v: View) => {
     setView(v);
@@ -415,7 +428,7 @@ export default function CuentaPage() {
               <p className="mb-6 font-body text-[15px] text-muted">
                 Ingresa para ver tus reportes guardados.
               </p>
-              <SocialButtons onError={setError} />
+              <SocialButtons onError={setError} next={next} />
               <Divider label="o con tu correo" />
             </>
           ) : (
@@ -426,7 +439,7 @@ export default function CuentaPage() {
               <p className="mb-6 font-body text-[15px] text-muted">
                 Gratis. Tu primer reporte básico no cuesta nada.
               </p>
-              <SocialButtons onError={setError} />
+              <SocialButtons onError={setError} next={next} />
               <Divider label="o con tu correo" />
             </>
           )}
