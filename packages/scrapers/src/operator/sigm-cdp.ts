@@ -1,9 +1,11 @@
 /* eslint-disable no-console */
 import { spawn } from 'node:child_process';
 import crypto from 'node:crypto';
+import { writeFileSync } from 'node:fs';
 import { chromium, type Browser, type Page } from 'playwright';
 import { findChrome, chromeFlags } from './chrome-path.js';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
+import { parseSigmForm, fechaDeFolio, type PdfItem, type SigmGarantiaForm } from './sigm-form.js';
 
 /**
  * SIGM (Sistema Informativo de Garantías Mobiliarias, SUNARP) por HÍBRIDO CDP — la misma vía
@@ -51,6 +53,10 @@ export interface SigmFolio {
   incumplimiento?: string | null;
   /** Monto de ejecución (Detalle), en soles. */
   amount?: number | null;
+  /** Fecha de CONSTITUCIÓN de la garantía (el folio causal arranca con ella). */
+  fechaConstitucion?: string | null;
+  /** Datos del formulario del Detalle (bien, monto máximo, plazo, cláusula…). Sin deudor (L-01). */
+  garantia?: SigmGarantiaForm | null;
 }
 export interface CdpSigmOptions {
   /** Puerto CDP (default 9227 / env CDP_SIGM_PORT). Distinto de ATU (:9226) para no chocar. */
@@ -72,16 +78,23 @@ const str = (v: unknown): string | null => {
   return t && t !== '-' ? t : null;
 };
 
-/** Extrae el texto de un PDF (base64/buffer) con pdfjs — este PDF SÍ tiene capa de texto. */
-async function pdfText(buf: Buffer): Promise<string> {
+/** Textos del PDF con su posición y dirección (el parser empareja etiqueta→valor por geometría). */
+async function pdfItems(buf: Buffer): Promise<PdfItem[]> {
   const doc = await getDocument({ data: new Uint8Array(buf), verbosity: 0 }).promise;
-  let out = '';
+  const out: PdfItem[] = [];
   for (let p = 1; p <= doc.numPages; p++) {
-    const pg = await doc.getPage(p);
-    const tc = await pg.getTextContent();
-    out += ' ' + tc.items.map((it) => ('str' in it ? it.str : '')).join(' ');
+    const tc = await (await doc.getPage(p)).getTextContent();
+    for (const it of tc.items) {
+      if (!('str' in it) || !it.str.trim()) continue;
+      const t = it.transform as number[];
+      out.push({ page: p, str: it.str, x: t[4]!, y: t[5]!, dx: t[0]!, dy: t[1]! });
+    }
   }
   return out;
+}
+/** Extrae el texto de un PDF (base64/buffer) con pdfjs — este PDF SÍ tiene capa de texto. */
+async function pdfText(buf: Buffer): Promise<string> {
+  return (await pdfItems(buf)).map((i) => i.str).join(' ');
 }
 
 /** Parsea el formulario de INICIO DE EJECUCIÓN → acreedor (§3), incumplimiento (§5) y monto. */
@@ -107,7 +120,7 @@ function parseFormulario(text: string): { acreedor: string | null; incumplimient
  * PDF cifrado → se descifra, se extrae el texto y se parsean acreedor/incumplimiento/monto. NO
  * extrae el deudor/garante (§2): PII de tercero (L-01). No fatal: si falla, la lista igual sirve.
  */
-async function capturarDetalle(page: Page, log: (m: string) => void): Promise<{ acreedor: string | null; incumplimiento: string | null; amount: number | null } | null> {
+async function capturarDetalle(page: Page, log: (m: string) => void, plate: string): Promise<{ acreedor: string | null; incumplimiento: string | null; amount: number | null; garantia: SigmGarantiaForm | null } | null> {
   const sel = 'table tbody td:last-child button, table tbody td:last-child .anticon, table tbody td:last-child [nz-icon], table tbody td:last-child svg, table tbody td:last-child i';
   // Deja que Angular termine de pintar la tabla y cablear el botón "Servicios" antes de clickear.
   await wait(2500);
@@ -118,18 +131,28 @@ async function capturarDetalle(page: Page, log: (m: string) => void): Promise<{ 
   const resp = await respP;
   if (!resp) { log('detalle: no capturé el formulario (/sigm-reporte/form)'); return null; }
 
-  let text = '';
+  let items: PdfItem[] = [];
   try {
     const j = JSON.parse((await resp.text()) || '{}') as { cmVzcG9uc2U?: string };
     const dec = j.cmVzcG9uc2U ? sigmDecrypt(j.cmVzcG9uc2U) : null;
     const model = dec ? (JSON.parse(dec) as { model?: { documento?: string } }) : null;
     const b64 = model?.model?.documento;
-    if (b64) text = await pdfText(Buffer.from(b64, 'base64'));
+    if (b64) items = await pdfItems(Buffer.from(b64, 'base64'));
   } catch (e) { log(`detalle parse: ${(e as Error).message}`); }
-
+  const text = items.map((i) => i.str).join(' ');
   if (SIGM_DEBUG && text) log(`[DETALLE-TEXT] ${text.replace(/\s+/g, ' ').slice(0, 2500)} [/DETALLE-TEXT]`);
-  if (!text.trim()) return null;
-  return parseFormulario(text);
+  if (!text.trim()) { log(`detalle: el formulario (${resp.url().split('/').pop()}) vino sin texto`); return null; }
+  // Constitución/Modificación: bien, monto máximo, plazo, cláusula (por geometría). Inicio de
+  // Ejecución: además acreedor/incumplimiento/monto de ejecución (parser de texto previo).
+  const garantia = parseSigmForm(items, plate);
+  const ejec = parseFormulario(text);
+  log(`detalle: formulario ${garantia.formulario ?? '?'} ${garantia.numeroFormulario ?? ''} · ${garantia.bienes.length} bien(es) · monto máx ${garantia.montoMaximo ?? '—'} ${garantia.moneda ?? ''}`);
+  return {
+    acreedor: ejec.acreedor ?? ([garantia.acreedor, garantia.acreedorRuc ? `RUC ${garantia.acreedorRuc}` : null].filter(Boolean).join(' · ') || null),
+    incumplimiento: ejec.incumplimiento,
+    amount: ejec.amount,
+    garantia,
+  };
 }
 
 /** Conecta a un Chrome ya abierto en el puerto; si no hay, lanza uno limpio en la URL de SIGM. */
@@ -204,6 +227,25 @@ export async function scrapeSigmViaCdp(plateRaw: string, opts: CdpSigmOptions = 
     const ctx = browser.contexts()[0] ?? (await browser.newContext());
     const page = ctx.pages()[0] ?? (await ctx.newPage());
 
+    // SIGM_DUMP_DIR: vuelca DESCIFRADAS todas las respuestas del api-gateway (y el texto de cada PDF)
+    // para estudiar formularios nuevos. Solo diagnóstico; contiene PII → nunca en el repo.
+    const dumpDir = process.env.SIGM_DUMP_DIR;
+    if (dumpDir) {
+      let n = 0;
+      page.on('response', (r) => {
+        if (!/sigm-(consulta|reporte)/i.test(r.url())) return;
+        void r.text().then(async (t) => {
+          const k = `${String(++n).padStart(2, '0')}-${r.url().split('?')[0]!.split('/').slice(-2).join('_')}`;
+          let body = t;
+          try { const j = JSON.parse(t) as { cmVzcG9uc2U?: string }; if (j.cmVzcG9uc2U) body = sigmDecrypt(j.cmVzcG9uc2U) ?? t; } catch { /* no JSON */ }
+          const docs: string[] = [];
+          try { const o = JSON.parse(body) as { model?: { documento?: string } }; if (o.model?.documento) { docs.push(o.model.documento); o.model.documento = '<PDF>'; body = JSON.stringify(o); } } catch { /* no JSON */ }
+          writeFileSync(`${dumpDir}/${k}.json`, `${r.request().method()} ${r.url()}\n${r.request().postData() ?? ''}\n\n${body}`);
+          for (const [i, d] of docs.entries()) writeFileSync(`${dumpDir}/${k}-pdf${i}.txt`, await pdfText(Buffer.from(d, 'base64')).catch((e) => `ERR ${e}`));
+        }).catch(() => {});
+      });
+    }
+
     await page.goto(URL, { waitUntil: 'domcontentloaded', timeout: 60000 }).catch(() => {});
     if (!(await esperarTurnstile(page, log))) log('⚠️ Turnstile NO pasó pasivo (¿IP marcada?)');
     await wait(1500);
@@ -246,14 +288,15 @@ export async function scrapeSigmViaCdp(plateRaw: string, opts: CdpSigmOptions = 
       fechaInscripcion: str(f.fechaInscripcion),
       ultimaOperacion: str(f.ultimaOperacion),
       partida: str(f.numPartida),
+      fechaConstitucion: fechaDeFolio(str(f.numeroFolio)),
     }));
     const hasLiens = items.length > 0;
 
     // Detalle (acreedor §3 + incumplimiento §5 + monto) del 1er folio — solo si hay garantía.
     if (hasLiens) {
       try {
-        const det = await capturarDetalle(page, log);
-        if (det && items[0]) { items[0].acreedor = det.acreedor; items[0].incumplimiento = det.incumplimiento; items[0].amount = det.amount; }
+        const det = await capturarDetalle(page, log, plate);
+        if (det && items[0]) { items[0].acreedor = det.acreedor; items[0].incumplimiento = det.incumplimiento; items[0].amount = det.amount; items[0].garantia = det.garantia; }
         if (det?.acreedor) log(`acreedor: ${det.acreedor}${det.amount ? ` · monto S/${det.amount}` : ''}`);
       } catch (e) { log(`detalle: ${(e as Error).message}`); }
     }

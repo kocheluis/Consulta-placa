@@ -29,6 +29,7 @@ import {
 } from '@app/shared';
 import type { OperatorSourceResult } from './index.js';
 import { agruparAsientos, type AsientoRecord } from './asiento-parser.js';
+import type { SigmGarantiaForm } from './sigm-form.js';
 
 /**
  * Transforma los resultados crudos del motor del operador (por fuente) al `Report`
@@ -113,17 +114,35 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
   let sigmPayload: GravamenesPayload | null = null;
   if (sigmOk) {
     const sd = data(sigmRes);
-    const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => ({
-      type: 'Garantía mobiliaria',
-      // Acreedor del Detalle §3 (normalmente banco/financiera → intacto; persona con DNI → se
-      // enmascara). El deudor §2 NO se expone (PII/L-01).
-      creditor: maskHistorialParties((f.acreedor as string) || null),
-      amount: (f.amount as number) ?? null, // monto de ejecución (Detalle)
-      date: (f.fechaInscripcion as string) || null,
-      status: String(f.ultimaOperacion ?? '').toUpperCase() || 'VIGENTE',
-      detail: (f.incumplimiento as string) || null, // del Detalle §5 (descripción del incumplimiento)
-      folio: (f.folio as string) || null,
-    } as GravamenItem));
+    const sigmItems = ((sd.items ?? []) as Array<Record<string, unknown>>).map((f) => {
+      const g = (f.garantia ?? null) as SigmGarantiaForm | null;
+      const bien = g?.bienes?.[0] ?? null;
+      const cur = /D[OÓ]LAR|US\$|USD/i.test(g?.moneda ?? '') ? 'US$' : 'S/';
+      const montoMax = g?.montoMaximo ?? null;
+      return {
+        type: g?.tipoGarantia ? g.tipoGarantia.charAt(0) + g.tipoGarantia.slice(1).toLowerCase() : 'Garantía mobiliaria',
+        // Acreedor del Detalle (normalmente banco/financiera → intacto; persona con DNI → se
+        // enmascara). El deudor NO se expone (PII/L-01).
+        creditor: maskHistorialParties((f.acreedor as string) || null),
+        amount: (f.amount as number) ?? null, // monto de ejecución (Detalle de Inicio de Ejecución)
+        // Sin ejecución, el monto relevante es el MÁXIMO garantizado del formulario (con su moneda).
+        amountLabel: f.amount == null && montoMax != null
+          ? `${cur} ${montoMax.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} (monto máximo garantizado)` : null,
+        date: (f.fechaInscripcion as string) || null,
+        status: String(f.ultimaOperacion ?? '').toUpperCase() || 'VIGENTE',
+        detail: (f.incumplimiento as string) || null, // del Detalle §5 (descripción del incumplimiento)
+        folio: (f.folio as string) || null,
+        garantia: g ? {
+          formulario: g.formulario, numeroFormulario: g.numeroFormulario,
+          constituida: (f.fechaConstitucion as string) || null,
+          tipoGarantia: g.tipoGarantia, moneda: g.moneda, montoMaximo: montoMax, finAviso: g.finAviso,
+          indicadorPosesion: g.indicadorPosesion, acuerdoPartes: g.acuerdoPartes, preinscripcion: g.preinscripcion, gmpa: g.gmpa,
+          bien: bien ? { ...bien, modelo: g.modeloDescripcion ?? bien.modelo } : null,
+          placaCoincide: bien?.placa ? bien.placa.replace(/[^A-Z0-9]/gi, '').toUpperCase() === plate.replace(/[^A-Z0-9]/gi, '').toUpperCase() : null,
+          clausula: g.clausula, modificaciones: g.modificaciones ?? [],
+        } : null,
+      } as GravamenItem;
+    });
     sigmPayload = { hasLiens: Boolean(sd.hasLiens) || sigmItems.length > 0, total: sigmItems.length, items: sigmItems };
   }
   const sigmHasLiens = !!sigmPayload && (sigmPayload.total ?? 0) > 0;

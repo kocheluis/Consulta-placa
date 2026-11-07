@@ -14,6 +14,7 @@ import type {
   CapturaIndicator,
   RevisionTecnica,
   GravamenesPayload,
+  GarantiaDetalle,
   HistorialPayload,
   TransporteInfo,
   VehicleSpecs,
@@ -1693,6 +1694,54 @@ function RevisionBody({ section, vehicle, onRetry }: { section: SectionResult; v
   );
 }
 
+const siNo = (v: string | null, si: string, no: string): string | null =>
+  v == null ? null : /^S[IÍ]$/i.test(v.trim()) ? si : /^NO$/i.test(v.trim()) ? no : v;
+
+/** Detalle del formulario SIGM: qué bien garantiza, hasta cuánto, por cuánto tiempo y la cláusula. */
+function GarantiaDetalleBlock({ g, creditor, amountLabel }: { g: GarantiaDetalle; creditor: string | null; amountLabel: string | null }) {
+  const b = g.bien;
+  const bienTxt = b ? [b.marca, b.modelo].filter(Boolean).join(' ') + (b.placa ? ` · placa ${b.placa}` : '') : null;
+  const resumen = creditor && amountLabel
+    ? `El vehículo respalda un crédito de ${creditor.split(' · ')[0]} por hasta ${amountLabel.replace(/ \(monto máximo garantizado\)$/, '')}. Para comprarlo libre de cargas, el acreedor debe cancelar esta garantía en el SIGM (Sunarp).`
+    : null;
+  return (
+    <div className="mt-3 flex flex-col gap-3 border-t border-border pt-3">
+      {resumen && <p className="font-body text-[13px] text-foreground">{resumen}</p>}
+      {g.placaCoincide === false && (
+        <StatusLine tone="warning" icon="report">
+          La garantía inscrita describe un bien con otra placa ({b?.placa}). Verifica motor y serie antes de comprar.
+        </StatusLine>
+      )}
+      <DefGrid
+        items={[
+          ['Constituida', g.constituida],
+          ['Vigencia del aviso', g.finAviso ? (/INDETERMINADO/i.test(g.finAviso) ? 'Plazo indeterminado (hasta que se cancele)' : g.finAviso) : null],
+          ['Bien en garantía', bienTxt],
+          ['N.° de motor', b?.motor ?? null],
+          ['N.° de serie / VIN', b ? ([...new Set([b.serie, b.vin].filter(Boolean))].join(' / ') || null) : null],
+          ['¿Financia la compra del vehículo?', siNo(g.gmpa, 'Sí (garantía prioritaria de adquisición)', 'No')],
+          ['¿El acreedor tiene la posesión?', siNo(g.indicadorPosesion, 'Sí', 'No — el dueño conserva el vehículo')],
+          ['Preinscripción', siNo(g.preinscripcion, 'Sí', 'No')],
+          ['Acuerdo entre las partes', siNo(g.acuerdoPartes, 'Sí', 'No')],
+          ['Último formulario', g.formulario ? `${g.formulario.charAt(0)}${g.formulario.slice(1).toLowerCase()}${g.numeroFormulario ? ` N.° ${g.numeroFormulario}` : ''}` : null],
+        ]}
+      />
+      {g.modificaciones.length > 0 && (
+        <p className="font-body text-[13px] text-muted">
+          <span className="font-semibold text-foreground">Última modificación: </span>
+          {g.modificaciones.join(' · ')}
+        </p>
+      )}
+      {g.clausula && (
+        <details className="rounded-md border border-border bg-muted/5 p-2">
+          <summary className="cursor-pointer font-body text-[13px] font-semibold text-foreground">Ver cláusula del contrato</summary>
+          <p className="mt-2 font-body text-[13px] leading-relaxed text-muted">{g.clausula}</p>
+        </details>
+      )}
+    </div>
+  );
+}
+
 function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const g = section.payload as GravamenesPayload | undefined;
@@ -1748,6 +1797,7 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
               {it.detail}
             </p>
           )}
+          {it.garantia && <GarantiaDetalleBlock g={it.garantia} creditor={it.creditor} amountLabel={it.amountLabel ?? null} />}
         </div>
       ))}
       {list.length > MAX && (

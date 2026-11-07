@@ -393,6 +393,36 @@ export interface GravamenItem {
   detail?: string | null;
   /** Folio causal electrónico (SIGM), para trazabilidad. */
   folio?: string | null;
+  /** Detalle del formulario SIGM (Constitución/Modificación). Nunca trae al deudor (Ley 29733). */
+  garantia?: GarantiaDetalle | null;
+}
+
+/** Datos del formulario de una garantía mobiliaria (SIGM → "Detalle"). */
+export interface GarantiaDetalle {
+  /** Formulario leído: "CONSTITUCIÓN", "MODIFICACIÓN", "INICIO DE EJECUCIÓN"… + su número. */
+  formulario: string | null;
+  numeroFormulario: string | null;
+  /** Fecha de constitución (del folio causal). */
+  constituida: string | null;
+  tipoGarantia: string | null;
+  /** "SOL" / "DOLAR"… tal cual el SIGM. */
+  moneda: string | null;
+  montoMaximo: number | null;
+  /** "PLAZO INDETERMINADO" o fecha. */
+  finAviso: string | null;
+  indicadorPosesion: string | null;
+  acuerdoPartes: string | null;
+  preinscripcion: string | null;
+  /** Garantía mobiliaria prioritaria de adquisición (financia la compra del propio bien). */
+  gmpa: string | null;
+  /** El bien afectado, tal cual lo inscribió el acreedor. */
+  bien: { marca: string | null; modelo: string | null; motor: string | null; serie: string | null; vin: string | null; placa: string | null } | null;
+  /** ¿La placa del bien inscrito coincide con la consultada? null = el formulario no la trae. */
+  placaCoincide: boolean | null;
+  /** Cláusula del contrato (texto libre del acreedor). */
+  clausula: string | null;
+  /** Cambios de la última modificación ("Se agregó el bien específico…"). */
+  modificaciones: string[];
 }
 
 /** Payload de la sección GRAVAMENES (SIGM — garantías mobiliarias + cargas SUNARP). */
