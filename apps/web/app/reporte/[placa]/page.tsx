@@ -11,6 +11,7 @@ import type {
   SectionCatalogEntry,
   OwnerInfo,
   PapeletasPayload,
+  PapeletasPorSat,
   CapturaIndicator,
   RevisionTecnica,
   GravamenesPayload,
@@ -1311,13 +1312,61 @@ function IaBody({ section, onRetry }: { section: SectionResult; onRetry: () => v
   );
 }
 
+/** Resultado de CADA SAT consultada: qué se revisó, no solo lo que salió positivo. */
+function PorSatTable({ rows }: { rows: PapeletasPorSat[] }) {
+  const estado = (r: PapeletasPorSat): { txt: string; cls: string } =>
+    r.status === 'CON_PAPELETAS' ? { txt: 'Con papeletas', cls: 'bg-warning-bg text-warning-fg' }
+      : r.status === 'SIN_PAPELETAS' ? { txt: 'Sin papeletas', cls: 'bg-success-bg text-success' }
+        : { txt: 'No disponible', cls: 'bg-muted/10 text-muted' };
+  return (
+    <div className="flex flex-col gap-1.5">
+      <p className="font-body text-[12px] font-semibold uppercase tracking-wide text-muted">Resultado por SAT consultada</p>
+      <div className="overflow-x-auto rounded-lg border border-border">
+        <table className="w-full border-collapse font-body text-[13px]">
+          <thead>
+            <tr className="bg-muted/5 text-left text-[11px] uppercase tracking-wide text-muted">
+              <th className="px-3 py-2 font-semibold">SAT</th>
+              <th className="px-3 py-2 font-semibold">Resultado</th>
+              <th className="px-3 py-2 text-right font-semibold">Papeletas</th>
+              <th className="px-3 py-2 text-right font-semibold">Monto</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((r) => {
+              const e = estado(r);
+              return (
+                <tr key={r.entity} className="border-t border-border align-top">
+                  <td className="px-3 py-2 font-semibold text-foreground">
+                    {r.entity}
+                    {r.note && <div className="mt-0.5 text-[11px] font-normal leading-snug text-muted">{r.note}</div>}
+                  </td>
+                  <td className="px-3 py-2"><span className={`whitespace-nowrap rounded px-1.5 py-0.5 text-[11px] font-semibold ${e.cls}`}>{e.txt}</span></td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums text-foreground">{r.status === 'ERROR' ? '—' : r.count ?? (r.status === 'CON_PAPELETAS' ? '?' : '0')}</td>
+                  <td className="px-3 py-2 text-right font-mono tabular-nums text-foreground whitespace-nowrap">
+                    {r.status === 'ERROR' ? '—' : r.amount != null && r.amount > 0 ? `${r.estimado ? '~' : ''}S/ ${r.amount.toFixed(2)}` : r.status === 'CON_PAPELETAS' ? 'Ver portal' : 'S/ 0.00'}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: () => void }) {
   if (section.status !== SectionStatus.AVAILABLE) return <Unavailable status={section.status} onRetry={onRetry} />;
   const p = section.payload as PapeletasPayload | undefined;
   if (!p) return <Unavailable status={SectionStatus.UNAVAILABLE} onRetry={onRetry} />;
   const dondeTxt = p.checkedScopes && p.checkedScopes.length ? p.checkedScopes.join(' ni ') : 'las jurisdicciones consultadas';
   if (p.total === 0) {
-    return <StatusLine tone="success" icon="verified">{`Sin papeletas pendientes en ${dondeTxt}`}</StatusLine>;
+    return (
+      <div className="flex flex-col gap-3">
+        <StatusLine tone="success" icon="verified">{`Sin papeletas pendientes en ${dondeTxt}`}</StatusLine>
+        {p.porSat && p.porSat.length > 0 && <PorSatTable rows={p.porSat} />}
+      </div>
+    );
   }
   // `p.count` = nº REAL de papeletas (si el grid del SAT se pudo leer). Si quedó indefinido, hubo
   // resultado pero no se leyó el detalle: NO inventamos un conteo (antes caía a `p.total`, que es el
@@ -1335,7 +1384,9 @@ function PapeletasBody({ section, onRetry }: { section: SectionResult; onRetry: 
           {`Beneficio de pronto pago: S/ ${p.benefitAmount.toFixed(2)}${p.benefitUntil ? ` si cancelas antes del ${p.benefitUntil}` : ''}`}
         </StatusLine>
       ) : null}
-      <DefGrid items={p.items.map((it) => [it.entity, it.amount > 0 ? `S/ ${it.amount.toFixed(2)}` : 'Pendiente (revisar en el portal)'] as [string, string])} />
+      {p.porSat && p.porSat.length > 0
+        ? <PorSatTable rows={p.porSat} />
+        : <DefGrid items={p.items.map((it) => [it.entity, it.amount > 0 ? `S/ ${it.amount.toFixed(2)}` : 'Pendiente (revisar en el portal)'] as [string, string])} />}
       {p.detalle && p.detalle.length > 0 && (
         <div className="flex flex-col gap-2">
           <p className="font-body text-[12px] font-semibold uppercase tracking-wide text-muted">Detalle de papeletas</p>

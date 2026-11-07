@@ -14,6 +14,7 @@ import {
   type CapturaIndicator,
   type RevisionTecnica,
   type PapeletasPayload,
+  type PapeletasPorSat,
   type PapeletaItem,
   type PapeletaDetalle,
   type GravamenesPayload,
@@ -356,7 +357,26 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       ...scopeDetalle(satcaj, 'SAT Cajamarca', false),
       ...scopeDetalle(sataqp, 'SAT Arequipa', false),
     ];
+    // Tabla "resultado por SAT": una fila por jurisdicción CONSULTADA, tenga o no papeletas (el cliente
+    // ve qué se revisó, no solo lo que salió positivo).
+    const fila = (r: OperatorSourceResult | undefined, entity: string, opts: { count: number; amount: number; estimado?: boolean; note?: string | null }): PapeletasPorSat | null => {
+      if (!r) return null;
+      if (r.status === 'ERROR') return { entity, status: 'ERROR', count: null, amount: null, note: 'No se pudo consultar (portal caído o captcha) — reintentar' };
+      if (r.status !== 'ENCONTRADO') return { entity, status: 'SIN_PAPELETAS', count: 0, amount: 0 };
+      return { entity, status: 'CON_PAPELETAS', count: opts.count || null, amount: opts.amount > 0 ? opts.amount : null, ...(opts.estimado ? { estimado: true } : {}), note: opts.note ?? null };
+    };
+    const porSat = [
+      fila(satP, 'SAT Lima', { count: limaCount, amount: limaAmt }),
+      fila(callao, 'SAT Callao', { count: callaoCount, amount: callaoAmt,
+        note: num(data(callao).benefit) > 0 ? `Con beneficio de pronto pago: S/ ${num(data(callao).benefit).toFixed(2)}${data(callao).benefitUntil ? ` hasta ${String(data(callao).benefitUntil)}` : ''}` : null }),
+      fila(satt, 'SATT Trujillo', { count: sattCount, amount: sattAmt }),
+      fila(satp, 'SAT Piura', { count: satpCount, amount: satpAmt }),
+      fila(satch, 'SAT Chiclayo', { count: satchCount, amount: satchAmt, estimado: satchEstimado, note: satchEstimado ? 'El portal no publica importes: monto estimado con la tabla de infracciones' : null }),
+      fila(satcaj, 'SAT Cajamarca', { count: satcajCount, amount: satcajAmt }),
+      fila(sataqp, 'SAT Arequipa', { count: sataqpCount, amount: sataqpAmt }),
+    ].filter((x): x is PapeletasPorSat => !!x);
     const pay: PapeletasPayload = {
+      porSat,
       total: items.length,
       ...(papeletaCount > 0 ? { count: papeletaCount } : {}),
       pendingAmount: Math.round((limaAmt + callaoAmt + sattAmt + satpAmt + satchAmt + satcajAmt + sataqpAmt) * 100) / 100,

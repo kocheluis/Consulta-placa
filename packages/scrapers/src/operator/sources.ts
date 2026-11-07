@@ -120,6 +120,15 @@ export async function runSatCaptura(
 }
 
 /* ───────────────── Callao · Papeletas (captcha imagen inline) ───────────────── */
+/** Cierra los comunicados emergentes del portal de Callao (botón "Entendido" / X del modal). */
+async function cerrarModalCallao(page: Page): Promise<void> {
+  for (let i = 0; i < 3; i++) {
+    const btn = page.locator('.modal.show button:has-text("Entendido"), .modal.show .btn-close, .modal.show button.close, .swal2-confirm, button:has-text("ENTENDIDO")').first();
+    if (!(await btn.isVisible().catch(() => false))) break;
+    await btn.click({ timeout: 3000 }).catch(async () => { await btn.evaluate((el) => (el as HTMLElement).click()).catch(() => {}); });
+    await wait(500);
+  }
+}
 export async function runCallao(
   page: Page,
   plate: string,
@@ -160,6 +169,9 @@ export async function runCallao(
       const visible = await valor.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
       if (!visible) continue;
       sawForm = true;
+      // Comunicados emergentes (nov-2026: "Comunicado importante" del D.S. 017-2026-MTC) tapan el form:
+      // el clic en Buscar no llegaba y el parser daba ENCONTRADO vacío ("? · S/ 0.00", CYI006).
+      await cerrarModalCallao(page);
       await selectPlaca();
       await valor.fill(plate);
       dialog = '';
@@ -184,6 +196,9 @@ export async function runCallao(
       const total = totalM ? money(totalM[1] ?? '') : 0;
       const benefit = totalM && totalM[2] ? money(totalM[2]) : 0;
       const count = Number(body.match(/total de\s*(\d+)\s*registros/i)?.[1] ?? 0);
+      // Sin pie "Total" ni "N registros" no es un resultado: es la página sin buscar (modal, captcha no
+      // enviado…). Reintenta en vez de inventar un ENCONTRADO vacío.
+      if (!totalM && !count) continue;
       const benefitUntil = body.match(/beneficio\s+hasta\s+el\s+(\d{2}\/\d{2}\/\d{4})/i)?.[1] ?? null;
       return { ...base, status: 'ENCONTRADO',
         summary: `Papeletas en Callao: ${count || '?'} · S/ ${total.toFixed(2)}${benefit > 0 ? ` · beneficio S/ ${benefit.toFixed(2)}${benefitUntil ? ` hasta ${benefitUntil}` : ''}` : ''}`,

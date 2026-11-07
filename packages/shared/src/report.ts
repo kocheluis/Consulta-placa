@@ -147,6 +147,21 @@ export interface PapeletasPayload {
   benefitAmount?: number;
   /** Fecha límite del beneficio de pronto pago, tal como la muestra el portal (dd/mm/aaaa). */
   benefitUntil?: string | null;
+  /** Resultado de CADA SAT consultada (tabla del reporte), incluidas las que no tienen papeletas o fallaron. */
+  porSat?: PapeletasPorSat[];
+}
+
+/** Una fila de la tabla "resultado por SAT". */
+export interface PapeletasPorSat {
+  entity: string;
+  /** CON_PAPELETAS / SIN_PAPELETAS / ERROR (no se pudo consultar). */
+  status: 'CON_PAPELETAS' | 'SIN_PAPELETAS' | 'ERROR';
+  count: number | null;
+  amount: number | null;
+  /** Monto estimado (el portal no publica importes, p. ej. Chiclayo). */
+  estimado?: boolean;
+  /** Matiz corto: beneficio de pronto pago, motivo del error… */
+  note?: string | null;
 }
 
 /** Payload de la sección CAPTURA (orden de captura SAT). */
