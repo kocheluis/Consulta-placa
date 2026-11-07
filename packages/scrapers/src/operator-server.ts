@@ -713,6 +713,12 @@ function startContinuousRunner(): void {
               // Reúso COMPLETO: entrega directa, pero para un cliente respeta el mínimo (perceived-work).
               if (reuseDelay > 0) { console.log(`[memoria] ${p.placa}: reúso completo → espera ${Math.round(reuseDelay / 1000)}s (reporte no propio del usuario)`); await sleep(reuseDelay); }
               console.log(`[memoria] ${p.placa}: todo fresco (<${memoryTtlH}h) → reúso completo, 0 re-corridas`);
+              // ULTRA: el reporte publicado puede ser de un PRO (sin IA). Se re-arma con las fuentes reusadas
+              // y pasa por finalizeJob → análisis IA + valorización + publicación (antes se entregaba sin IA).
+              if (tier === 'ULTRA') {
+                await finalizeJob(p, { id: String(p.id), plate: p.placa, tier, sources: [...fullSources], outDir: plateDir(p.placa), results: [...plan.reuse], percent: 100, done: true });
+                continue;
+              }
               await queue.setDone(p.id, join(plateDir(p.placa), 'reporte.json')); await notifyReady(p, tier); continue;
             }
             jobSources = plan.rerun; reuse = plan.reuse; reuseJobDelay = reuseDelay;
