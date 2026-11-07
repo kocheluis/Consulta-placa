@@ -6,10 +6,10 @@ import { SectionKind, SectionStatus, buildValuation, type Report, type IaAnalysi
  * compra, recomendación, banderas priorizadas y un comentario de precio. Llamada directa a la
  * Messages API por `fetch` (el motor ya usa fetch para todo lo externo; el deploy no corre
  * `npm install`, así que no se agrega el SDK). Structured output (`output_config.format`)
- * garantiza JSON válido. Modelo por defecto: Claude Opus 5.5 (thinking adaptativo siempre activo; la
- * profundidad se controla con `effort`, perilla `ANTHROPIC_EFFORT`, default "high"). Si Claude declina
- * por política (refusal), el fallback del servidor (`fallbacks: "default"`) reintenta con otro modelo
- * dentro de la misma llamada.
+ * garantiza JSON válido. Modelo por defecto: Claude Haiku 5.5 (el más económico: solo interpreta
+ * los datos YA consultados; la profundidad se controla con `effort`, perilla `ANTHROPIC_EFFORT`, default
+ * "medium"). Se puede subir a Sonnet/Opus con `ANTHROPIC_MODEL` sin tocar código; en esos modelos, si
+ * Claude declina por política (refusal), el fallback del servidor reintenta con otro modelo.
  *
  * PRIVACIDAD: se envía un resumen DE-IDENTIFICADO (sin nombres ni DNI de terceros), solo
  * hechos de riesgo (marca/año, banderas, montos, fechas, estados). Menos PII y menos tokens.
@@ -18,8 +18,8 @@ import { SectionKind, SectionStatus, buildValuation, type Report, type IaAnalysi
  * sale sin la sección IA en vez de romperse; se activa agregando la clave (patrón "solo env").
  */
 const API_KEY = () => process.env.ANTHROPIC_API_KEY ?? '';
-const MODEL = () => process.env.ANTHROPIC_MODEL ?? 'claude-opus-5-5';
-const EFFORT = () => process.env.ANTHROPIC_EFFORT ?? 'high';
+const MODEL = () => process.env.ANTHROPIC_MODEL ?? 'claude-haiku-5-5';
+const EFFORT = () => process.env.ANTHROPIC_EFFORT ?? 'medium';
 const BASE = () => (process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/+$/, '');
 const OPENAI_KEY = () => process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL = () => process.env.OPENAI_MODEL ?? 'gpt-4o';
@@ -198,8 +198,7 @@ function buildSummary(report: Report): Record<string, unknown> {
 async function callAnthropic(userText: string, signal: AbortSignal): Promise<{ text: string; model: string }> {
   const model = MODEL();
   // `effort` NO existe en Haiku 4.5 ni Sonnet 4.5 (devuelven 400). Se envía solo si el modelo lo soporta.
-  // En Opus 5.5 el default es "medium": se fija explícito (ANTHROPIC_EFFORT) porque la valorización y el
-  // cruce de fuentes ganan con más razonamiento.
+  // Se fija explícito (ANTHROPIC_EFFORT) para que el costo no dependa del default de cada modelo.
   const outputConfig: Record<string, unknown> = { format: { type: 'json_schema', schema: IA_SCHEMA } };
   if (!/haiku-4|sonnet-4-5/i.test(model)) outputConfig.effort = EFFORT();
   // Fallback del servidor ante refusal: solo en los modelos que lo aceptan (Opus 5/5.5, Fable 5.1, Sonnet 5.5).
