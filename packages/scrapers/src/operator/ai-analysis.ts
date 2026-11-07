@@ -6,7 +6,10 @@ import { SectionKind, SectionStatus, buildValuation, type Report, type IaAnalysi
  * compra, recomendación, banderas priorizadas y un comentario de precio. Llamada directa a la
  * Messages API por `fetch` (el motor ya usa fetch para todo lo externo; el deploy no corre
  * `npm install`, así que no se agrega el SDK). Structured output (`output_config.format`)
- * garantiza JSON válido; sin thinking (el esquema ya acota la salida → rápido y predecible).
+ * garantiza JSON válido. Modelo por defecto: Claude Opus 5.5 (thinking adaptativo siempre activo; la
+ * profundidad se controla con `effort`, perilla `ANTHROPIC_EFFORT`, default "high"). Si Claude declina
+ * por política (refusal), el fallback del servidor (`fallbacks: "default"`) reintenta con otro modelo
+ * dentro de la misma llamada.
  *
  * PRIVACIDAD: se envía un resumen DE-IDENTIFICADO (sin nombres ni DNI de terceros), solo
  * hechos de riesgo (marca/año, banderas, montos, fechas, estados). Menos PII y menos tokens.
@@ -15,7 +18,8 @@ import { SectionKind, SectionStatus, buildValuation, type Report, type IaAnalysi
  * sale sin la sección IA en vez de romperse; se activa agregando la clave (patrón "solo env").
  */
 const API_KEY = () => process.env.ANTHROPIC_API_KEY ?? '';
-const MODEL = () => process.env.ANTHROPIC_MODEL ?? 'claude-opus-4-8';
+const MODEL = () => process.env.ANTHROPIC_MODEL ?? 'claude-opus-5-5';
+const EFFORT = () => process.env.ANTHROPIC_EFFORT ?? 'high';
 const BASE = () => (process.env.ANTHROPIC_BASE_URL ?? 'https://api.anthropic.com').replace(/\/+$/, '');
 const OPENAI_KEY = () => process.env.OPENAI_API_KEY ?? '';
 const OPENAI_MODEL = () => process.env.OPENAI_MODEL ?? 'gpt-4o';
@@ -193,19 +197,27 @@ function buildSummary(report: Report): Record<string, unknown> {
 /** Llama a Anthropic (Messages API) con structured output. Devuelve el texto JSON + el modelo. */
 async function callAnthropic(userText: string, signal: AbortSignal): Promise<{ text: string; model: string }> {
   const model = MODEL();
-  // `effort` NO existe en Haiku 4.5 ni Sonnet 4.5 (devuelven 400). Se envía solo si el modelo
-  // lo soporta (Opus 4.5+/4.6+/4.7/4.8, Sonnet 4.6, Fable 5) → basta cambiar ANTHROPIC_MODEL.
+  // `effort` NO existe en Haiku 4.5 ni Sonnet 4.5 (devuelven 400). Se envía solo si el modelo lo soporta.
+  // En Opus 5.5 el default es "medium": se fija explícito (ANTHROPIC_EFFORT) porque la valorización y el
+  // cruce de fuentes ganan con más razonamiento.
   const outputConfig: Record<string, unknown> = { format: { type: 'json_schema', schema: IA_SCHEMA } };
-  if (!/haiku|sonnet-4-5/i.test(model)) outputConfig.effort = 'medium';
+  if (!/haiku-4|sonnet-4-5/i.test(model)) outputConfig.effort = EFFORT();
+  // Fallback del servidor ante refusal: solo en los modelos que lo aceptan (Opus 5/5.5, Fable 5.1, Sonnet 5.5).
+  const fallback = /opus-5|fable-5-1|sonnet-5-5/i.test(model) && process.env.ANTHROPIC_FALLBACK !== '0';
+  const headers: Record<string, string> = { 'x-api-key': API_KEY(), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' };
+  if (fallback) headers['anthropic-beta'] = 'server-side-fallback-2026-07-01';
   const res = await fetch(`${BASE()}/v1/messages`, {
-    method: 'POST', signal,
-    headers: { 'x-api-key': API_KEY(), 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
-    body: JSON.stringify({ model, max_tokens: 4000, output_config: outputConfig, system: SYSTEM, messages: [{ role: 'user', content: userText }] }),
+    method: 'POST', signal, headers,
+    // max_tokens incluye el razonamiento (thinking) además del JSON → margen amplio.
+    body: JSON.stringify({ model, max_tokens: 16000, output_config: outputConfig, ...(fallback ? { fallbacks: 'default' } : {}), system: SYSTEM, messages: [{ role: 'user', content: userText }] }),
   });
   if (!res.ok) { console.warn(`[ia] Anthropic ${res.status}: ${(await res.text().catch(() => '')).slice(0, 300)}`); return { text: '', model }; }
-  const data = (await res.json()) as { stop_reason?: string; content?: Array<{ type: string; text?: string }> };
-  if (data.stop_reason === 'refusal') { console.warn('[ia] la IA declinó el análisis (refusal)'); return { text: '', model }; }
-  return { text: (data.content ?? []).find((b) => b.type === 'text')?.text ?? '', model };
+  const data = (await res.json()) as { model?: string; stop_reason?: string; content?: Array<{ type: string; text?: string }>; usage?: { input_tokens?: number; output_tokens?: number } };
+  const served = data.model ?? model;
+  if (data.stop_reason === 'refusal') { console.warn('[ia] la IA declinó el análisis (refusal)'); return { text: '', model: served }; }
+  if (data.stop_reason === 'max_tokens') { console.warn('[ia] respuesta cortada por max_tokens'); return { text: '', model: served }; }
+  console.log(`[ia] ${served} · in=${data.usage?.input_tokens ?? '?'} out=${data.usage?.output_tokens ?? '?'} tokens`);
+  return { text: (data.content ?? []).find((b) => b.type === 'text')?.text ?? '', model: served };
 }
 
 /** Llama a OpenAI (Chat Completions) con structured output (json_schema strict). */
@@ -248,7 +260,7 @@ export async function analyzeReportWithAI(report: Report): Promise<IaAnalysis | 
     + `impedimento para valorar el precio.\n\nDATOS (JSON):\n${JSON.stringify(summary, null, 2)}`;
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 90_000);
+  const timer = setTimeout(() => controller.abort(), 180_000); // con thinking, Opus puede tardar >90 s
   try {
     const { text, model } = anthropic ? await callAnthropic(userText, controller.signal) : await callOpenai(userText, controller.signal);
     if (!text) { console.warn('[ia] respuesta vacía'); return null; }

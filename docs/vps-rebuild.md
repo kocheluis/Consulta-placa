@@ -83,7 +83,7 @@ Checklist de dónde recuperar cada secreto:
 | `SPRL_USER/PASS` (y `_2`, `_3`) | tus cuentas SPRL (saintagain1, laurabravo, 3ª) |
 | `OPERATOR_PREVIEW_TOKEN` | **cópialo de Vercel** (Settings → Env Vars) — debe COINCIDIR con la web; no lo regeneres |
 | `WEB_REPORT_URL` | la URL base de la web (https://placape.pe) |
-| `OPENAI_API_KEY/BASE_URL/MODEL` | los de la IA ULTRA que tenías |
+| `ANTHROPIC_API_KEY` | IA del reporte ULTRA (Claude): console.anthropic.com → API Keys. Verifica con `placape-ops ia-check`. `OPENAI_API_KEY` queda solo como respaldo |
 | `SATT_DNI/CELULAR/CORREO` | identidad de respaldo del registro SATT (empresa) |
 | `FISE_RELAY_TOKEN` | **genera uno nuevo**: `openssl rand -hex 16` → y actualízalo en el celular (paso 6) |
 
