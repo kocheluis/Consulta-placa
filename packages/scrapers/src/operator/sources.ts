@@ -186,6 +186,7 @@ export async function runCallao(
       await wait(300);
       const body = (await page.locator('body').innerText().catch(() => '')).replace(/[ \t]+/g, ' ');
       if (ERR.test(body) || /captcha|seguridad/i.test(dialog)) continue;
+      await cerrarModalCallao(page); // el comunicado reaparece tras buscar y tapaba el resultado en la captura
       await page.screenshot({ path: shot, fullPage: true }).catch(() => {});
       if (NODATA.test(body)) return { ...base, status: 'SIN_REGISTRO', summary: 'Sin papeletas en Callao', data: { total: '0.00', count: 0, captcha: cap }, screenshot: shot, ms: Date.now() - t0 };
       // Estructura real (tabla #dataTable): pie "Total : S/ <deuda> S/ <con beneficio>" +
