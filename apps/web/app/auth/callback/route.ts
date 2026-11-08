@@ -2,6 +2,7 @@ import { redirect } from 'next/navigation';
 import type { NextRequest } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
+import { safeNext } from '@/lib/next-path';
 
 export const dynamic = 'force-dynamic';
 
@@ -13,8 +14,8 @@ export const dynamic = 'force-dynamic';
 export async function GET(request: NextRequest) {
   const { searchParams } = new URL(request.url);
   const code = searchParams.get('code');
-  const rawNext = searchParams.get('next') ?? '/cuenta';
-  const next = rawNext.startsWith('/') ? rawNext : '/cuenta';
+  // safeNext: solo rutas INTERNAS ("/x", nunca "//dominio" ni "/dominio") → sin open redirect.
+  const next = safeNext(searchParams.get('next')) ?? '/cuenta';
 
   if (isSupabaseConfigured && code) {
     const supabase = await createClient();

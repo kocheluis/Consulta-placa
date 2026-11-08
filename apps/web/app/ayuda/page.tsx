@@ -135,9 +135,6 @@ export default function AyudaPage() {
               <Button variant="accent" block icon="mail" href="mailto:soporte@placape.pe">
                 Escribir un correo
               </Button>
-              <Button variant="secondary" block icon="call" href="tel:+5117000000">
-                +51 1 700 0000
-              </Button>
             </div>
             <div className="mt-4 flex items-center gap-2 border-t border-border pt-4">
               <Icon name="schedule" className="text-[18px] text-muted" />

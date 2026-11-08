@@ -60,14 +60,14 @@ const CHECKS = [
 
 const STEPS = [
   { icon: 'search', t: 'Ingresa la placa', d: 'Solo los dígitos. Sin registros largos.' },
-  { icon: 'analytics', t: 'Analizamos las fuentes', d: 'SUNARP, SAT, SBS, MTC y más, en segundos.' },
+  { icon: 'analytics', t: 'Analizamos las fuentes', d: 'SUNARP, SAT, SBS, MTC y más, en minutos.' },
   { icon: 'description', t: 'Recibe tu reporte', d: 'Semáforo de riesgo y veredicto claro.' },
 ];
 
 const FEATURES = [
   { icon: 'account_balance', title: 'Fuentes oficiales', desc: 'Datos directos de los registros públicos nacionales.' },
-  { icon: 'lock', title: 'Seguridad de datos', desc: 'Cifrado de extremo a extremo y pago protegido.' },
-  { icon: 'bolt', title: 'Resultado en 30 seg', desc: 'Consolidación automática, sin esperas ni trámites.' },
+  { icon: 'lock', title: 'Seguridad de datos', desc: 'Conexión cifrada (HTTPS) y datos de terceros enmascarados.' },
+  { icon: 'bolt', title: 'Reporte en minutos', desc: 'Consolidación automática; te avisamos por correo cuando está listo.' },
   { icon: 'support_agent', title: 'Soporte dedicado', desc: 'Te acompañamos antes y después de tu compra.' },
 ];
 

@@ -35,12 +35,12 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
 
   // Modo operador: ?preview=TOKEN devuelve el reporte COMPLETO sin recortar por tier, para
   // previsualizarlo en la consola. Preferido: token FIRMADO con expiración (verifyPreviewToken,
-  // ligado a la placa → un enlace filtrado muere al expirar). Fallback legacy: match exacto del
-  // secreto crudo (compat; nuestro código ya no lo pone en URLs, así que no se filtra por logs).
+  // ligado a la placa → un enlace filtrado muere al expirar). Sin fallback al secreto crudo: era un
+  // bearer eterno para cualquier placa; la consola ya firma todos sus enlaces.
   const preview = new URL(req.url).searchParams.get('preview');
   const opToken = process.env.OPERATOR_PREVIEW_TOKEN;
   const operatorPreview = !!opToken && !!preview &&
-    (verifyPreviewToken(placa, preview, opToken) || preview === opToken);
+    verifyPreviewToken(placa, preview, opToken);
 
   let tier: 'BASIC' | 'PRO' | 'ULTRA' = 'BASIC';
   try { tier = await getPaidTier(placa); } catch { /* anónimo → BASIC */ }
