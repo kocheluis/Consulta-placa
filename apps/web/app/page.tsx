@@ -85,10 +85,10 @@ const PLANS = [
 // atendidas por nosotros a pedido). Feedback real: los reportes fueron útiles y revelaron papeletas
 // o avisos de cambio de motor que el solicitante no conocía. Sin plataformas externas inventadas.
 const TESTIMONIALS = [
-  { name: 'Christopher V.', role: 'Solicitó su reporte · marcha blanca', text: 'Pedí el reporte de una camioneta antes de comprarla. Tenía varias papeletas que el vendedor no mencionó. Renegocié con eso en la mano.' },
-  { name: 'Laura B.', role: 'Solicitó su reporte · marcha blanca', text: 'El reporte marcó un aviso de cambio de motor que no coincidía con SUNARP. Por mi cuenta jamás lo habría notado.' },
-  { name: 'Jose S.', role: 'Solicitó su reporte · marcha blanca', text: 'Muy útil: en minutos vi SOAT, revisión técnica y multas juntas. Me evitó ir portal por portal.' },
-  { name: 'Gerardo C.', role: 'Solicitó su reporte · marcha blanca', text: 'Le muestro el reporte limpio a los interesados en mi auto y genero confianza. Cierro la venta más rápido.' },
+  { name: 'Christopher V.', role: 'Solicitó su reporte', text: 'Pedí el reporte de una camioneta antes de comprarla. Tenía varias papeletas que el vendedor no mencionó. Renegocié con eso en la mano.' },
+  { name: 'Laura B.', role: 'Solicitó su reporte', text: 'El reporte marcó un aviso de cambio de motor que no coincidía con SUNARP. Por mi cuenta jamás lo habría notado.' },
+  { name: 'Jose S.', role: 'Solicitó su reporte', text: 'Muy útil: en minutos vi SOAT, revisión técnica y multas juntas. Me evitó ir portal por portal.' },
+  { name: 'Gerardo C.', role: 'Solicitó su reporte', text: 'Le muestro el reporte limpio a los interesados en mi auto y genero confianza. Cierro la venta más rápido.' },
 ];
 
 // Ejemplos ILUSTRATIVOS de hallazgos que el reporte revela (renderizados con nuestro diseño, no
@@ -102,13 +102,18 @@ const SPECIAL_CASES: { icon: string; sev: 'alert' | 'warn'; tag: string; title: 
   { icon: 'local_gas_station', sev: 'warn', tag: 'GNV', title: 'Crédito de conversión GNV pendiente', desc: 'Deuda del crédito de conversión a gas (FISE) que no ha sido cancelada.', source: 'FISE' },
 ];
 
-function TrialTag() {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full border border-warning/40 bg-warning-bg px-2.5 py-1 font-mono text-[11px] font-bold uppercase tracking-wide text-warning-fg">
-      <Icon name="science" className="text-[14px]" /> Trial · marcha blanca
-    </span>
-  );
-}
+// Cifras REALES del cierre de la marcha blanca (26-jun → 7-nov-2026), calculadas por `placape-ops stats`
+// sobre los 158 reportes publicados (1 por vehículo, su última generación). Congeladas a esa fecha: si se
+// actualizan, recalcular con el mismo comando y cambiar la fecha de corte.
+const MARCHA_BLANCA = {
+  corte: '7 de noviembre de 2026',
+  stats: [
+    { value: '158', label: 'vehículos analizados', icon: 'directions_car' },
+    { value: '45%', label: 'registraban accidentes SOAT o un siniestro', icon: 'car_crash' },
+    { value: '15%', label: 'tenían un gravamen o prenda vigente', icon: 'gavel' },
+    { value: '10%', label: 'tenían papeletas pendientes', icon: 'receipt_long' },
+  ],
+};
 
 function Avatar({ name }: { name: string }) {
   const initials = name
@@ -206,21 +211,30 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ---------- Valoración de la app (marcha blanca) ---------- */}
-      {/* Las estrellas se refieren SOLO a la app PlacaPe (no tenemos otra plataforma); reflejan el
-          feedback de quienes solicitaron su reporte en la marcha blanca: reportes muy útiles. */}
+      {/* ---------- Resultados de la marcha blanca (cifras reales) ---------- */}
       <section className="border-y border-border bg-surface">
-        <div className="mx-auto flex max-w-[1180px] flex-wrap items-center justify-center gap-x-6 gap-y-3 px-6 py-6 sm:px-8">
-          <TrialTag />
-          <div className="flex items-center gap-1.5">
-            {[0, 1, 2, 3, 4].map((i) => (
-              <Icon key={i} name="star" fill className="text-[18px] text-[#F0A91C]" />
+        <div className="mx-auto max-w-[1180px] px-6 py-8 sm:px-8">
+          <p className="mb-5 text-center font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
+            Lo que encontramos en nuestra marcha blanca
+          </p>
+          <div className="grid grid-cols-2 gap-x-6 gap-y-6 lg:grid-cols-4">
+            {MARCHA_BLANCA.stats.map((s) => (
+              <div key={s.label} className="flex items-start gap-3">
+                <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-azul-50">
+                  <Icon name={s.icon} className="text-[22px] text-primary" />
+                </div>
+                <div>
+                  <p className="font-heading text-[28px] font-extrabold leading-none tracking-tight text-foreground tabular-nums">
+                    {s.value}
+                  </p>
+                  <p className="mt-1 font-body text-[13.5px] leading-snug text-muted">{s.label}</p>
+                </div>
+              </div>
             ))}
-            <span className="ml-1.5 font-body text-sm font-bold text-foreground">PlacaPe</span>
           </div>
-          <span className="font-body text-sm text-muted">
-            Reportes calificados como muy útiles por quienes los solicitaron en la marcha blanca.
-          </span>
+          <p className="mt-5 text-center font-body text-[12px] text-slate-500">
+            Sobre los reportes generados del 26 de junio al {MARCHA_BLANCA.corte}. Cada vehículo se cuenta una vez.
+          </p>
         </div>
       </section>
 
@@ -348,7 +362,7 @@ export default function HomePage() {
           </h2>
           <p className="mx-auto mt-2 max-w-[560px] font-body text-[15px] leading-relaxed text-muted">
             Ejemplos ilustrativos de cómo se ve un hallazgo en el reporte. Casos reales que hemos
-            detectado en la marcha blanca.
+            detectado en nuestros reportes.
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -439,11 +453,8 @@ export default function HomePage() {
         </div>
       </section>
 
-      {/* ---------- Testimonios (trial) ---------- */}
+      {/* ---------- Testimonios ---------- */}
       <section className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
-        <div className="mb-4 flex justify-center">
-          <TrialTag />
-        </div>
         <div className="mb-11 text-center">
           <h2 className="font-heading text-[28px] font-bold tracking-tight text-foreground sm:text-[34px]">
             Compras protegidas, de verdad

@@ -34,7 +34,7 @@ const FAQS = [
   },
   {
     q: '¿Puedo pagar con Yape?',
-    a: 'Sí. Aceptaremos Yape y tarjetas Visa/Mastercard/Amex/Diners a través de IziPay. El pago será seguro y el acceso al reporte inmediato. (Pagos en integración durante la marcha blanca.)',
+    a: 'Sí. Aceptaremos Yape y tarjetas Visa/Mastercard/Amex/Diners a través de IziPay. El pago será seguro y el acceso al reporte inmediato. (Los pagos en línea se están activando.)',
   },
   {
     q: '¿Los packs por volumen vencen?',

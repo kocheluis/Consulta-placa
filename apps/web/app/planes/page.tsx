@@ -630,7 +630,7 @@ function SuccessView({ planId, onRestart }: { planId: PlanId; onRestart: () => v
         <Icon name="check_circle" fill className="text-[56px] text-success" />
       </div>
       <Badge tone="neutral" icon="visibility">
-        Vista de ejemplo · marcha blanca
+        Vista de ejemplo
       </Badge>
       <h1 className="mt-4 font-heading text-[32px] font-extrabold tracking-tight text-foreground">
         Así confirmamos tu pago

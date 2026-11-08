@@ -136,7 +136,7 @@ export default function ReporteEjemploPage() {
       {/* Aviso de ejemplo */}
       <div className="border-b border-warning/30 bg-warning-bg px-4 py-2 text-center font-body text-[13px] font-semibold text-warning-fg">
         <Icon name="science" className="mr-1 align-[-3px] text-[15px]" />
-        Reporte de ejemplo · datos de demostración (marcha blanca)
+        Reporte de ejemplo · datos de demostración
       </div>
 
       {/* Barra del reporte: placa + control de plan + PDF */}
