@@ -13,7 +13,7 @@ import { Pipeline, type PipelineJob } from './operator/pipeline.js';
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
-import { publishReport, fetchReport, fetchReportsMeta } from './operator/report-store.js';
+import { publishReport, fetchReport, fetchReportsMeta, fetchPublishedReports } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.js';
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
@@ -1247,6 +1247,27 @@ const server = createServer(async (req, res) => {
       const durs = list.map((p) => (p.startedAt && p.finishedAt ? (Date.parse(p.finishedAt) - Date.parse(p.startedAt)) / 1000 : 0)).filter((d) => d > 0).sort((a, b) => a - b);
       const placas = [...new Set(list.map((p) => norm(String(p.placa))))];
       const clientes = new Set(list.filter((p) => String(p.origin ?? '') !== 'operador').map((p) => String(p.userId || p.email || p.whatsapp || '')).filter(Boolean));
+      // HALLAZGOS desde los reportes PUBLICADOS en Supabase (sobreviven a la reconstrucción del VPS; el disco no).
+      const pubs = await fetchPublishedReports().catch(() => [] as Report[]);
+      const hallPub = { reportes: pubs.length, papeletas: 0, ordenCaptura: 0, gravamenVigente: 0, siniestro: 0, alertaRobo: 0, cambioMotor: 0, historialConBanderas: 0, conAlgunaAlerta: 0, conAnalisisIa: 0 };
+      for (const rep of pubs) {
+        const sec = (k: string) => rep.sections?.find((x) => x.kind === k && x.status === 'AVAILABLE');
+        const pl = (k: string) => (sec(k)?.payload ?? {}) as Record<string, unknown>;
+        const actos = ((pl('HISTORIAL').events ?? []) as Array<{ acciones?: Array<{ act?: unknown }> }>).flatMap((e) => (e.acciones ?? []).map((a) => String(a.act ?? '')));
+        const flags = (pl('HISTORIAL').flags ?? {}) as Record<string, unknown>;
+        const f = {
+          papeletas: Number(pl('PAPELETAS').total) > 0,
+          ordenCaptura: Boolean(pl('CAPTURA').hasCapture),
+          gravamenVigente: Boolean(pl('GRAVAMENES').hasLiens),
+          siniestro: Boolean(pl('SINIESTRALIDAD').hasSiniestro) || Boolean(pl('SINIESTRALIDAD').perdidaTotal),
+          alertaRobo: Boolean(rep.vehicle?.stolenAlert),
+          cambioMotor: actos.some((a) => /cambio de motor|rectificaci[oó]n de (no.?s*)?motor/i.test(a)),
+          historialConBanderas: Object.values(flags).some(Boolean),
+        };
+        for (const [k, v] of Object.entries(f)) if (v) { const h = hallPub as Record<string, number>; h[k] = (h[k] ?? 0) + 1; }
+        if (Object.values(f).some(Boolean)) hallPub.conAlgunaAlerta++;
+        if (sec('IA')) hallPub.conAnalisisIa++;
+      }
       const hall = { conReporte: 0, papeletas: 0, ordenCaptura: 0, garantiaSigm: 0, remateSiniestro: 0, creditoGnv: 0, historialConBanderas: 0, conAlgunaAlerta: 0 };
       const fuenteOk: Record<string, { ok: number; total: number }> = {};
       await Promise.all(placas.map(async (pl) => {
@@ -1273,7 +1294,9 @@ const server = createServer(async (req, res) => {
         placasDistintas: placas.length,
         clientesDistintos: clientes.size,
         duracionSeg: durs.length ? { mediana: Math.round(durs[Math.floor(durs.length / 2)]!), p90: Math.round(durs[Math.floor(durs.length * 0.9)]!) } : null,
-        hallazgos: { ...hall, pctConAlgunaAlerta: pct(hall.conAlgunaAlerta, hall.conReporte) },
+        hallazgos: { ...hallPub, pctConAlgunaAlerta: pct(hallPub.conAlgunaAlerta, hallPub.reportes) },
+        // Del disco del VPS (solo las generaciones posteriores a su reconstrucción).
+        hallazgosDisco: { ...hall, pctConAlgunaAlerta: pct(hall.conAlgunaAlerta, hall.conReporte) },
         exitoPorFuente: Object.fromEntries(Object.entries(fuenteOk).sort().map(([k, v]) => [k, `${pct(v.ok, v.total)}% (${v.ok}/${v.total})`])),
       });
     }

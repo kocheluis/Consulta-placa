@@ -109,3 +109,26 @@ export async function publishReport(
     return false;
   }
 }
+
+/**
+ * Todos los reportes publicados (1 fila por placa = su última generación), paginado. Solo para
+ * estadísticas AGREGADAS (/api/stats): quien llama no debe exponer placas ni titulares.
+ */
+export async function fetchPublishedReports(max = 20000): Promise<Report[]> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return [];
+  const headers = { apikey: key, Authorization: `Bearer ${key}` };
+  const out: Report[] = [];
+  const page = 200;
+  for (let from = 0; from < max; from += page) {
+    const r = await fetch(`${url.replace(/\/$/, '')}/rest/v1/reportes?select=report&order=placa.asc`, {
+      headers: { ...headers, Range: `${from}-${from + page - 1}` },
+    });
+    if (!r.ok) throw new Error(`reportes GET ${r.status}`);
+    const rows = (await r.json()) as Array<{ report?: Report | null }>;
+    for (const row of rows) if (row.report) out.push(row.report);
+    if (rows.length < page) break;
+  }
+  return out;
+}
