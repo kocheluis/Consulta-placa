@@ -41,6 +41,7 @@ placape-ops — comandos permitidos (todo queda auditado):
   fise-token [rotate]            genera el token del relay FISE (si no hay) y lo muestra 1 vez para el celular
   fise-status                    estado del relay FISE (¿celular latiendo? ¿listener :3011 abierto?)
   web-check                      ¿la web (Vercel) acepta el token del VPS? (no envía nada)
+  stats                          estadísticas agregadas de todas las consultas (sin PII)
   ia-check                       ¿la ANTHROPIC_API_KEY es válida y ve el modelo? (no gasta tokens)
   health | health-run            ver / lanzar el chequeo diario (fuentes + infra + seguridad)
   alerts                         reportes con error entregados a clientes (recientes)
@@ -150,6 +151,10 @@ EOF
       *) echo "respuesta inesperada: HTTP $code";;
     esac
     if grep -qE '^OPENAI_API_KEY=.' "$ENV_FILE"; then echo "nota: también hay OPENAI_API_KEY; se usa Claude (tiene prioridad)"; fi
+    ;;
+  stats)
+    # Estadísticas AGREGADAS de todas las consultas (sin correos, placas ni titulares).
+    curl -s -m 120 "$CONSOLE/api/stats"; echo
     ;;
   health-run)
     curl -s -m 10 -X POST "$CONSOLE/api/health/run"; echo

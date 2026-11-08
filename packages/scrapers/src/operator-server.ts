@@ -1236,6 +1236,47 @@ const server = createServer(async (req, res) => {
       metricsCache = { at: Date.now(), data: { events, generatedAt: new Date().toISOString() } };
       return sendJson(res, 200, metricsCache.data);
     }
+    // ESTADÍSTICAS AGREGADAS (sin PII: ni correos, ni placas, ni titulares) de todas las consultas
+    // registradas → para publicar cifras reales (p. ej. el cierre de la marcha blanca) y para `placape-ops stats`.
+    // Hallazgos = sobre la ÚLTIMA generación (reporte.json) de cada placa distinta consultada.
+    if (path === '/api/stats' && req.method === 'GET') {
+      const list = await queue.history(20000);
+      const norm = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const count = <T,>(arr: T[], key: (x: T) => string) => arr.reduce<Record<string, number>>((m, x) => { const k = key(x); m[k] = (m[k] ?? 0) + 1; return m; }, {});
+      const ts = list.map((p) => (p.createdAt ? Date.parse(p.createdAt) : 0)).filter(Boolean).sort((a, b) => a - b);
+      const durs = list.map((p) => (p.startedAt && p.finishedAt ? (Date.parse(p.finishedAt) - Date.parse(p.startedAt)) / 1000 : 0)).filter((d) => d > 0).sort((a, b) => a - b);
+      const placas = [...new Set(list.map((p) => norm(String(p.placa))))];
+      const clientes = new Set(list.filter((p) => String(p.origin ?? '') !== 'operador').map((p) => String(p.userId || p.email || p.whatsapp || '')).filter(Boolean));
+      const hall = { conReporte: 0, papeletas: 0, ordenCaptura: 0, garantiaSigm: 0, remateSiniestro: 0, creditoGnv: 0, historialConBanderas: 0, conAlgunaAlerta: 0 };
+      const fuenteOk: Record<string, { ok: number; total: number }> = {};
+      await Promise.all(placas.map(async (pl) => {
+        let rs: OperatorSourceResult[];
+        try { rs = (JSON.parse(await readFile(join(plateDir(pl), 'reporte.json'), 'utf8')) as { results?: OperatorSourceResult[] }).results ?? []; } catch { return; }
+        if (!rs.length) return;
+        hall.conReporte++;
+        const id = (r: OperatorSourceResult) => r.source.toLowerCase().replace(/_/g, '-');
+        const found = (rx: RegExp) => rs.some((r) => rx.test(id(r)) && r.status === 'ENCONTRADO');
+        const f = {
+          papeletas: found(/papeletas/), ordenCaptura: found(/captura/), garantiaSigm: found(/sigm/),
+          remateSiniestro: found(/superbid/), creditoGnv: found(/fise/),
+          historialConBanderas: rs.some((r) => /historial/.test(id(r)) && r.status === 'ENCONTRADO' && !/sin banderas/i.test(String(r.summary ?? ''))),
+        };
+        for (const [k, v] of Object.entries(f)) if (v) { const h = hall as Record<string, number>; h[k] = (h[k] ?? 0) + 1; }
+        if (Object.values(f).some(Boolean)) hall.conAlgunaAlerta++;
+        for (const r of rs) { const s = (fuenteOk[id(r)] ??= { ok: 0, total: 0 })!; s.total++; if (r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO') s.ok++; }
+      }));
+      const pct = (a: number, b: number) => (b ? Math.round((a / b) * 1000) / 10 : 0);
+      return sendJson(res, 200, {
+        generatedAt: new Date().toISOString(),
+        periodo: { desde: ts[0] ? new Date(ts[0]).toISOString() : null, hasta: ts.length ? new Date(ts[ts.length - 1]!).toISOString() : null },
+        pedidos: { total: list.length, posibleTope: list.length >= 1000 && list.length % 1000 === 0, porEstado: count(list, (p) => String(p.estado)), porNivel: count(list, (p) => String(p.tier ?? 'PRO')), porOrigen: count(list, (p) => String(p.origin ?? 'servicio')) },
+        placasDistintas: placas.length,
+        clientesDistintos: clientes.size,
+        duracionSeg: durs.length ? { mediana: Math.round(durs[Math.floor(durs.length / 2)]!), p90: Math.round(durs[Math.floor(durs.length * 0.9)]!) } : null,
+        hallazgos: { ...hall, pctConAlgunaAlerta: pct(hall.conAlgunaAlerta, hall.conReporte) },
+        exitoPorFuente: Object.fromEntries(Object.entries(fuenteOk).sort().map(([k, v]) => [k, `${pct(v.ok, v.total)}% (${v.ok}/${v.total})`])),
+      });
+    }
     // Resultados crudos de un pedido (reporte.json de su placa) para ver fuentes + logs. Con `id` →
     // el SNAPSHOT de esa generación (reporte-<id>.json); sin id → el reporte.json vivo (última generación).
     if (path === '/api/pedido-report' && req.method === 'GET') {
