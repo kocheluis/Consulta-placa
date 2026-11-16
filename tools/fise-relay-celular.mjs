@@ -33,8 +33,9 @@ const RELAY_ID = (ID_ARG || process.env.FISE_RELAY_ID || 'celular').toLowerCase(
 const RELAY_PRIO = Number(PRIO_ARG || process.env.FISE_RELAY_PRIO || (RELAY_ID === 'pc' ? 1 : 2)) || 2;
 const RELAY_LABEL = process.env.FISE_RELAY_LABEL || (RELAY_ID === 'pc' ? 'PC de casa' : RELAY_ID === 'celular' ? 'Celular' : RELAY_ID);
 
-const PAGE = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
-const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
+// nov-2026: FISE se mudó a consultas.fise.pe (el dominio viejo redirige y el POST con 307 no se seguía).
+const PAGE = 'https://consultas.fise.pe/consulta-taller/pages/consultaTaller/inicio';
+const ENDPOINT = 'https://consultas.fise.pe/consulta-taller/pages/consultaTaller/buscarSaldo';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const ts = () => new Date().toISOString().slice(11, 19);
 

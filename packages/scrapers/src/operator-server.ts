@@ -794,7 +794,7 @@ function relayHealthChecks(): InfraCheck[] {
     const hace = r ? `sin señal hace ${Math.max(1, Math.round(r.lastSeenAgoS / 60))} min` : 'nunca conectó';
     return { id: `relay-${id}`, label, severity: 'warn', detail: hace, fix: RELAY_ACTIVAR[id] };
   });
-  if (!st.alive) out.unshift({ id: 'relay', label: 'Relay FISE', severity: 'warn', detail: 'NINGÚN relay late (ni PC ni celular) → FISE falla en todos los reportes a gas' });
+  if (!st.alive) out.unshift({ id: 'relay', label: 'Relay FISE', severity: 'warn', detail: 'ningún relay de respaldo late (ni PC ni celular): FISE depende solo de la consulta directa del VPS' });
   return out;
 }
 
@@ -2102,7 +2102,7 @@ function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).th
   if(HTIMER){clearTimeout(HTIMER);HTIMER=null;}
   if(d.running)HTIMER=setTimeout(function(){if(document.getElementById('tab-health').style.display!=='none')loadHealth();},15000);
   var run=d.running||d.last,h='';
-  if((d.relays||[]).length)h+='<div class="mcard"><h3>Relays FISE · en vivo</h3><div class="msub">FISE solo responde a internet de casa: la PC atiende primero y el celular es el respaldo. Si un equipo está caído, abajo está el comando para reactivarlo.</div>'+d.relays.map(hrow).join('')+'</div>';
+  if((d.relays||[]).length)h+='<div class="mcard"><h3>Relays FISE · en vivo</h3><div class="msub">FISE se consulta directo desde el VPS (dominio consultas.fise.pe). Si el VPS no lo alcanza, responde la PC y, si ella no late, el celular. Si un equipo está caído, abajo está el comando para reactivarlo.</div>'+d.relays.map(hrow).join('')+'</div>';
   if(d.running)h+='<div class="webnote" style="margin-bottom:10px">⟳ Chequeo en curso desde '+esc(fmtTime(d.running.startedAt))+' — '+esc((d.running.pedidos||[]).map(function(x){return x.placa+': '+x.estado}).join(' · ')||'revisando infraestructura…')+'</div>';
   if(!run){h+='<div class="mcard"><div class="msub">Aún no hay chequeos. Configura las placas testigo y pulsa "Correr chequeo ahora".</div></div>';document.getElementById('h-body').innerHTML=h;return;}
   if(!d.running){var ov=HOV[run.overall]||HOV.alerta;h+='<div class="mcard"><h3><span class="pill '+ov[1]+'">'+ov[0]+'</span> '+esc(run.headline)+'</h3><div class="msub">'+(run.trigger==='manual'?'Manual':'Diario')+' · '+esc(fmtTime(run.startedAt))+(run.finishedAt?' → '+esc(fmtTime(run.finishedAt)):'')+' · placas: '+esc((run.plates||[]).join(', ')||'—')+'</div>'+(run.note?'<div class="webnote" style="margin-top:8px">'+esc(run.note)+'</div>':'')+'</div>';}

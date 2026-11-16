@@ -17,8 +17,9 @@
 // Si no late (>2 min sin poll), la fuente falla AL INSTANTE en vez de quemar los ~200s de la
 // cadena de egresos muerta. Endpoints deshabilitados si no hay FISE_RELAY_TOKEN en el env.
 import { timingSafeEqual } from 'node:crypto';
+import { request as httpsRequest } from 'node:https';
 import type { CaptchaSolver } from '../captcha/index.js';
-import { parseFiseSaldo, FISE_SITEKEY, FISE_PAGE_URL, type OperatorSourceResult } from './sources.js';
+import { parseFiseSaldo, FISE_SITEKEY, FISE_PAGE_URL, FISE_ENDPOINT, type OperatorSourceResult } from './sources.js';
 
 export interface RelayOutcome {
   ok: boolean;
@@ -189,10 +190,81 @@ export async function runFiseViaRelay(
     let j: { status?: number; rows?: Array<Record<string, unknown>> } | null = null;
     try { j = JSON.parse(out.bodyText ?? ''); } catch { /* HTML / no-JSON (token rechazado) */ }
     if (!j || j.status !== 0 || !Array.isArray(j.rows)) {
-      log(`intento ${i}/2: respuesta no válida (http ${out.httpStatus ?? '?'}, status=${j?.status ?? '?'}) → token fresco`);
+      log(`intento ${i}/${MAX}: respuesta no válida (http ${out.httpStatus ?? '?'}, status=${j?.status ?? '?'}) → token fresco`);
       continue;
     }
     return parseFiseSaldo(j.rows[0] ?? null, base, t0);
   }
   return { ...base, status: 'ERROR', summary: fiseRelayAlive() ? 'relay residencial sin resultado (token v3 rechazado o el equipo no respondió)' : 'relay residencial (PC y celular) sin señal — FISE bloquea la IP del VPS', ms: Date.now() - t0 };
+}
+
+/* ───────────── FISE DIRECTO desde el VPS (nov-2026: el dominio nuevo no bloquea al VPS) ───────────── */
+
+interface HttpRes { status: number; headers: Record<string, string | string[] | undefined>; text: string }
+
+/** HTTPS con tiempo límite. rejectUnauthorized:false igual que el worker (FISE ha servido certificados
+ *  sin cadena intermedia); los datos son públicos y no viaja ningún secreto. */
+function fiseHttp(url: string, opts: { method?: string; headers?: Record<string, string>; body?: string; timeoutMs?: number } = {}): Promise<HttpRes> {
+  return new Promise((resolve, reject) => {
+    const req = httpsRequest(url, { method: opts.method ?? 'GET', headers: opts.headers ?? {}, rejectUnauthorized: false, timeout: opts.timeoutMs ?? 20_000 }, (res) => {
+      const chunks: Buffer[] = [];
+      res.on('data', (c: Buffer) => chunks.push(c));
+      res.on('end', () => resolve({ status: res.statusCode ?? 0, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') }));
+    });
+    req.on('timeout', () => req.destroy(new Error('timeout')));
+    req.on('error', reject);
+    if (opts.body) req.write(opts.body);
+    req.end();
+  });
+}
+
+/** GET de la página de consulta siguiendo redirecciones y juntando cookies (JSESSIONID, cookiesession1). */
+async function fiseSession(): Promise<{ cookies: string[]; consultaId: string; pageUrl: string }> {
+  const cookies: string[] = [];
+  let url = FISE_PAGE_URL;
+  let page: HttpRes | null = null;
+  for (let hop = 0; hop < 4; hop++) {
+    page = await fiseHttp(url, { headers: cookies.length ? { Cookie: cookies.join('; ') } : {} });
+    const sc = page.headers['set-cookie'];
+    for (const c of Array.isArray(sc) ? sc : sc ? [sc] : []) cookies.push(c.split(';')[0]!);
+    const loc = page.headers.location;
+    if (page.status >= 300 && page.status < 400 && typeof loc === 'string') { url = new URL(loc, url).href; continue; }
+    break;
+  }
+  if (!page || page.status !== 200) throw new Error(`página FISE HTTP ${page?.status ?? '?'}`);
+  const consultaId = /id="consultaId"[^>]*value="([^"]*)"/.exec(page.text)?.[1] ?? /name="consultaId"[^>]*value="([^"]*)"/.exec(page.text)?.[1] ?? '';
+  return { cookies, consultaId, pageUrl: url };
+}
+
+/**
+ * FISE directo desde el VPS: sesión + POST buscarSaldo con el token v3 (CapSolver). Devuelve null si la RED
+ * falla (bloqueo/timeout) para que el llamador pase a los relays; un ERROR de captcha también cae al relay.
+ */
+export async function runFiseDirect(plate: string, solver: CaptchaSolver, log: (m: string) => void): Promise<OperatorSourceResult | null> {
+  const t0 = Date.now();
+  const base = { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV' };
+  let sess: { cookies: string[]; consultaId: string; pageUrl: string };
+  try { sess = await fiseSession(); }
+  catch (e) { log(`directo: el VPS no alcanza FISE (${(e as Error).message}) → relays`); return null; }
+  for (let i = 1; i <= 3; i++) {
+    let token = '';
+    try { token = await solver.solveRecaptchaV3(FISE_SITEKEY, FISE_PAGE_URL, 'consulta'); }
+    catch (e) { log(`directo ${i}/3: captcha falló (${(e as Error).message})`); continue; }
+    let res: HttpRes;
+    try {
+      res = await fiseHttp(FISE_ENDPOINT, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Requested-With': 'XMLHttpRequest', Referer: sess.pageUrl, Cookie: sess.cookies.join('; ') },
+        body: JSON.stringify({ placaVehiculo: plate, consultaId: sess.consultaId, codigoVerificacion: token, tiempoSession: 8, countBusqueda: i }),
+      });
+    } catch (e) { log(`directo ${i}/3: red (${(e as Error).message}) → relays`); return null; }
+    let j: { status?: number; rows?: Array<Record<string, unknown>> } | null = null;
+    try { j = JSON.parse(res.text); } catch { /* HTML / redirección */ }
+    if (j && j.status === 0 && Array.isArray(j.rows)) {
+      log(`directo ${i}/3: respuesta OK desde el VPS`);
+      return parseFiseSaldo(j.rows[0] ?? null, base, t0);
+    }
+    log(`directo ${i}/3: respuesta no válida (HTTP ${res.status}${res.headers.location ? ` → ${String(res.headers.location)}` : ''}, status=${j?.status ?? '?'})`);
+  }
+  return { ...base, status: 'ERROR', summary: 'FISE rechazó la verificación anti-robot (3 intentos desde el VPS)', ms: Date.now() - t0 };
 }

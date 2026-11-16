@@ -1390,9 +1390,12 @@ export function isGasVehicle(fuel: string | null | undefined): boolean {
 //        montoDeudaVencido, montoCuotasTeorico, esPerdidaDescuentoProvincia('S'/'N'), recaudos[] }] }
 // numeroDocumento null = el vehículo NO tuvo crédito de conversión (SIN_REGISTRO). El reCAPTCHA es v3
 // (score): desde IP datacenter puede rechazar (como ATU) → status!=0; se reintenta y, si persiste, error.
-export const FISE_SITEKEY = '6LcSA7wUAAAAANXcrpjhO3zy5UPsRYWlWGPRk5w1';
-export const FISE_PAGE_URL = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
-export const FISE_ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
+// ★ nov-2026: FISE se mudó a consultas.fise.pe (puerto 443). El dominio viejo fise.minem.gob.pe:23308
+// redirige (302 el GET, 307 el POST) y cambió la sitekey del reCAPTCHA v3. El dominio NUEVO sí responde
+// a la IP del VPS (validado 16-nov) → FISE vuelve a consultarse DIRECTO; los relays quedan de respaldo.
+export const FISE_SITEKEY = '6LdwgpotAAAAAKTe3AUyYrgXrhW9u0O7q3wVTDhx';
+export const FISE_PAGE_URL = 'https://consultas.fise.pe/consulta-taller/pages/consultaTaller/inicio';
+export const FISE_ENDPOINT = 'https://consultas.fise.pe/consulta-taller/pages/consultaTaller/buscarSaldo';
 
 /** Interpreta la fila de `buscarSaldo` → resultado de la fuente. COMPARTIDO entre el runner
  *  headless (abajo) y el relay residencial (fise-relay.ts): misma respuesta, mismo parseo. */

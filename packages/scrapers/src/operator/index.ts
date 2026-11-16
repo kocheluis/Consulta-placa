@@ -19,7 +19,7 @@ import { peruStamp } from './time.js';
 import { sprlSlots } from './sprl-slots.js';
 import { parseProxy, proxyForSource, withStickySession, type ProxyConfig } from './proxy.js';
 import { sharedForwarderArg } from './proxy-forwarder.js';
-import { fiseRelayAlive, runFiseViaRelay } from './fise-relay.js';
+import { fiseRelayAlive, runFiseViaRelay, runFiseDirect } from './fise-relay.js';
 import {
   runSatCaptura,
   runCallao,
@@ -236,13 +236,19 @@ export async function runSingleSource(
   // RESIDENCIAL (celular Termux con polling, ver fise-relay.ts). Si el celular no late, falla AL
   // INSTANTE en vez de quemar los ~200s de la cadena muerta; la cadena headless queda solo como
   // rescate opt-in con FISE_CHAIN_FALLBACK=1 (por si algún día cambia el bloqueo).
+  // ★ nov-2026: FISE se mudó a consultas.fise.pe y ese dominio SÍ responde al VPS → orden: DIRECTO desde
+  // el VPS → relay de la PC (prioridad 1) → relay del celular (prioridad 2). Los relays quedan de respaldo
+  // por si el MINEM vuelve a filtrar la IP. FISE_DIRECT=0 salta el directo.
   if (sourceId === 'fise-gnv' && process.env.FISE_CHAIN_FALLBACK !== '1') {
+    const log = (m: string) => logLine(opts.outDir, sourceId, m);
+    const direct = process.env.FISE_DIRECT === '0' ? null : await runFiseDirect(plate, solver, log);
+    if (direct && direct.status !== 'ERROR') { logLine(opts.outDir, sourceId, resultLog(direct)); return direct; }
     if (fiseRelayAlive()) {
-      const r = await runFiseViaRelay(plate, solver, (m) => logLine(opts.outDir, sourceId, m));
+      const r = await runFiseViaRelay(plate, solver, log);
       logLine(opts.outDir, sourceId, resultLog(r));
       return r;
     }
-    const r: OperatorSourceResult = { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV', status: 'ERROR', summary: 'relay residencial (celular) sin señal — FISE bloquea la IP del VPS', ms: 0 };
+    const r: OperatorSourceResult = direct ?? { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV', status: 'ERROR', summary: 'FISE no respondió al VPS y no hay relay (PC/celular) latiendo', ms: 0 };
     logLine(opts.outDir, sourceId, resultLog(r));
     return r;
   }
