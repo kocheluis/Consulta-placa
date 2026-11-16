@@ -16,6 +16,18 @@ export default function PrivacidadPage() {
           prevenir abusos del servicio.
         </p>
         <p>
+          <strong className="text-foreground">Identificador del dispositivo (prueba gratis).</strong> Para que el
+          reporte Completo gratuito se use una sola vez por persona, al activarlo guardamos un identificador
+          aleatorio en una cookie y en el almacenamiento de tu navegador, y una huella técnica del equipo (un
+          código cifrado e irreversible calculado a partir de datos como la pantalla, la zona horaria y el
+          navegador), junto con tu cuenta y la dirección IP. No guardamos esos datos técnicos por separado, solo
+          el código resultante, y los usamos únicamente para evitar que la prueba se repita creando varias cuentas.
+        </p>
+        <p>
+          <strong className="text-foreground">Historial de reportes.</strong> Guardamos una copia de cada reporte
+          que consultas para que puedas volver a verlo durante 30 días; luego se elimina automáticamente.
+        </p>
+        <p>
           Si eres titular de un vehículo y deseas ejercer tus derechos (acceso, rectificación,
           cancelación u oposición), puedes{' '}
           <a href="/legal/solicitar-datos" className="text-accent hover:underline">
