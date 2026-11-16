@@ -570,10 +570,12 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       } as GravamenItem;
     });
     const gravVigentes = gravItems.filter((it) => it.status !== 'LEVANTADO').length;
+    const histParcial = ((hd.titulosEstado ?? []) as Array<{ estado?: string }>).some((e) => e.estado && e.estado !== 'ok');
     const grav: GravamenesPayload = {
       hasLiens: gravVigentes > 0,
       total: gravItems.length,
       items: gravItems,
+      ...(histParcial ? { partialHistory: true } : {}),
     };
     // SIGM manda SOLO si ÉL encontró cargas (trae el detalle del RMC). Si SIGM vino vacío, el
     // historial de la partida vehicular es la fuente: detecta la garantía inscrita en el Registro de

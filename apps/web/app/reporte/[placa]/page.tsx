@@ -1842,6 +1842,11 @@ function GravamenesBody({ section, onRetry }: { section: SectionResult; onRetry:
         <StatusLine tone="success" icon="verified">
           Garantía mobiliaria cancelada — el vehículo quedó libre de esa carga
         </StatusLine>
+      ) : g.partialHistory ? (
+        <StatusLine tone="warning" icon="report">
+          Sin gravámenes en los asientos que se pudieron leer — el historial quedó incompleto, así que una carga podría
+          estar en un título no leído. Confírmalo con la partida completa en SUNARP antes de comprar.
+        </StatusLine>
       ) : (
         <StatusLine tone="success" icon="verified">Sin gravámenes ni cargas vigentes</StatusLine>
       )}

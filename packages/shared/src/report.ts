@@ -446,6 +446,8 @@ export interface GravamenesPayload {
   hasLiens: boolean;
   total: number;
   items: GravamenItem[];
+  /** true = el historial registral quedó PARCIAL (títulos no leídos): "sin cargas" vale solo para lo leído. */
+  partialHistory?: boolean;
 }
 
 /** Una acción/acto individual dentro de un asiento registral. */
