@@ -9,8 +9,12 @@ import type { PurchaseNotice } from './notifications';
 
 export type PaidTier = 'PRO' | 'ULTRA';
 
-/** Precios de lanzamiento (S/). Fuente de verdad del monto cobrado. */
-export const TIER_PRICE: Record<PaidTier, number> = { PRO: 15.9, ULTRA: 19.9 };
+/**
+ * Precio del reporte suelto (S/). Fuente de verdad del monto cobrado. Desde nov-2026 hay UN solo reporte
+ * de pago: el COMPLETO (= nivel 'ULTRA': todas las fuentes + IA + valorización) a S/ 9.90. 'PRO' queda
+ * solo por compatibilidad con compras antiguas; una compra nueva siempre es ULTRA (ver checkout).
+ */
+export const TIER_PRICE: Record<PaidTier, number> = { PRO: 9.9, ULTRA: 9.9 };
 
 export async function createPendingPurchase(p: {
   userId: string;
@@ -64,11 +68,11 @@ export async function enqueueReportForPurchase(orderId: string): Promise<void> {
     const sb = createAdminClient();
     const { data: purchase } = await sb
       .from('purchases')
-      .select('user_id, plate')
+      .select('user_id, plate, tier')
       .eq('id', orderId)
       .maybeSingle();
     if (!purchase) return;
-    const p = purchase as { user_id: string; plate: string };
+    const p = purchase as { user_id: string; plate: string; tier?: string };
 
     const { data: existing } = await sb
       .from('pedidos')
@@ -85,6 +89,8 @@ export async function enqueueReportForPurchase(orderId: string): Promise<void> {
       email: u?.user?.email ?? null,
       user_id: p.user_id,
       estado: 'pendiente',
+      // Sin esto el pedido nacía con el default de la tabla (PRO) y el Completo no corría la IA.
+      tier: p.tier === 'PRO' ? 'PRO' : 'ULTRA',
     });
   } catch (e) {
     console.error('[pedidos] enqueue falló (no bloquea el pago):', (e as Error).message);

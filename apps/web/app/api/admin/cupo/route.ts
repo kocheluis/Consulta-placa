@@ -2,7 +2,7 @@ import { NextResponse } from 'next/server';
 import { createClient } from '@/lib/supabase/server';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { isAdminEmail } from '@/lib/admin';
-import { listCupoUsers, setCupo, type SetCupoInput } from '@/lib/admin-cupo';
+import { listCupoUsers, setCupo, activatePack, type SetCupoInput } from '@/lib/admin-cupo';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';

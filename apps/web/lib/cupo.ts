@@ -10,12 +10,24 @@ import { createClient } from './supabase/server';
 
 export type CupoTier = 'PRO' | 'ULTRA';
 
+/** Paquete MENSUAL (migración 0012): N consultas Completo que vencen a los 30 días, no acumulables. */
+export interface CupoPack {
+  name: string;
+  total: number;
+  startsAt: string;
+  expiresAt: string;
+}
+
 export interface CupoAccess {
   enabled: boolean;
   quotaHour: number;
   quotaDay: number;
   quotaWeek: number;
   tier: CupoTier;
+  /** Paquete activo o vencido (null = cupo clásico por hora/día/semana, sin paquete). */
+  pack: CupoPack | null;
+  /** true si el paquete ya venció (la cuenta queda sin cupo hasta activar otro). */
+  packExpired?: boolean;
 }
 export interface CupoWindows { hour: number; day: number; week: number }
 export interface CupoStatus {
@@ -24,6 +36,8 @@ export interface CupoStatus {
   limits: CupoWindows;
   used: CupoWindows;
   remaining: CupoWindows;
+  /** Paquete mensual: usadas/restantes y vencimiento. */
+  pack?: (CupoPack & { used: number; remaining: number; expired: boolean }) | null;
 }
 
 const HOUR = 3_600_000;
@@ -34,19 +48,27 @@ const WEEK = 7 * DAY;
 export async function getUserCupo(userId: string): Promise<CupoAccess | null> {
   try {
     const sb = createAdminClient();
-    const { data, error } = await sb
-      .from('profiles')
-      .select('consulta_enabled, quota_hour, quota_day, quota_week, consulta_tier')
-      .eq('id', userId)
-      .maybeSingle();
+    const BASE = 'consulta_enabled, quota_hour, quota_day, quota_week, consulta_tier';
+    // Con paquete (0012); si esa migración aún no está, cae al cupo clásico (0009) sin romperse.
+    let res = await sb.from('profiles').select(`${BASE}, pack_name, pack_total, pack_starts_at, pack_expires_at`).eq('id', userId).maybeSingle();
+    if (res.error) res = await sb.from('profiles').select(BASE).eq('id', userId).maybeSingle();
+    const { data, error } = res;
     if (error || !data) return null; // columnas sin migrar (error) o sin perfil → sin cupo
     const d = data as Record<string, unknown>;
+    const total = Number(d.pack_total ?? 0);
+    const pack: CupoPack | null = total > 0 && d.pack_starts_at && d.pack_expires_at
+      ? { name: String(d.pack_name ?? `${total} consultas`), total, startsAt: String(d.pack_starts_at), expiresAt: String(d.pack_expires_at) }
+      : null;
+    const packExpired = !!pack && Date.parse(pack.expiresAt) <= Date.now();
     return {
-      enabled: Boolean(d.consulta_enabled),
+      // Un paquete VENCIDO deja la cuenta sin cupo (no se acumula ni se arrastra al mes siguiente).
+      enabled: Boolean(d.consulta_enabled) && !packExpired,
       quotaHour: Number(d.quota_hour ?? 5),
       quotaDay: Number(d.quota_day ?? 20),
       quotaWeek: Number(d.quota_week ?? 100),
       tier: d.consulta_tier === 'ULTRA' ? 'ULTRA' : 'PRO',
+      pack,
+      packExpired,
     };
   } catch {
     return null;
@@ -77,11 +99,23 @@ async function hitAges(userId: string): Promise<number[]> {
 
 const countIn = (ages: number[], windowMs: number): number => ages.filter((a) => a <= windowMs).length;
 
+/** Consultas hechas DENTRO del paquete actual (desde que se activó). */
+async function packHits(userId: string, pack: CupoPack): Promise<number> {
+  const { count } = await createAdminClient()
+    .from('consulta_hits')
+    .select('id', { count: 'exact', head: true })
+    .eq('user_id', userId)
+    .gte('created_at', pack.startsAt);
+  return count ?? 0;
+}
+
 /** Estado del cupo para la UI (NO consume). */
 export async function getCupoStatus(userId: string, access: CupoAccess): Promise<CupoStatus> {
   const ages = await hitAges(userId);
   const used = { hour: countIn(ages, HOUR), day: countIn(ages, DAY), week: countIn(ages, WEEK) };
+  const packUsed = access.pack ? await packHits(userId, access.pack) : 0;
   return {
+    pack: access.pack ? { ...access.pack, used: packUsed, remaining: Math.max(0, access.pack.total - packUsed), expired: !!access.packExpired } : null,
     enabled: access.enabled,
     tier: access.tier,
     limits: { hour: access.quotaHour, day: access.quotaDay, week: access.quotaWeek },
@@ -96,7 +130,7 @@ export async function getCupoStatus(userId: string, access: CupoAccess): Promise
 
 export interface CupoCheck {
   ok: boolean;
-  window?: 'hora' | 'día' | 'semana';
+  window?: 'hora' | 'día' | 'semana' | 'paquete';
   resetInMin?: number;
   remaining?: CupoWindows;
 }
@@ -120,6 +154,11 @@ export async function checkAndRecordCupo(userId: string, access: CupoAccess, pla
     const oldest = inWin.length ? Math.max(...inWin) : 0;
     return Math.max(1, Math.ceil((windowMs - oldest) / 60_000));
   };
+  if (access.pack) {
+    // Paquete mensual: tope = consultas del paquete; vencido = sin cupo (no se acumula).
+    if (access.packExpired) return { ok: false, window: 'paquete' };
+    if ((await packHits(userId, access.pack)) >= access.pack.total) return { ok: false, window: 'paquete' };
+  }
   if (hour >= access.quotaHour) return { ok: false, window: 'hora', resetInMin: resetMin(HOUR) };
   if (day >= access.quotaDay) return { ok: false, window: 'día', resetInMin: resetMin(DAY) };
   if (week >= access.quotaWeek) return { ok: false, window: 'semana', resetInMin: resetMin(WEEK) };

@@ -15,9 +15,12 @@ export interface CupoUser {
   quotaHour: number;
   quotaDay: number;
   quotaWeek: number;
+  /** Paquete mensual (migración 0012). null = sin paquete. */
+  pack: { name: string; total: number; startsAt: string | null; expiresAt: string | null } | null;
 }
 
-const COLS = 'id, email, full_name, consulta_enabled, consulta_tier, quota_hour, quota_day, quota_week';
+const BASE_COLS = 'id, email, full_name, consulta_enabled, consulta_tier, quota_hour, quota_day, quota_week';
+const COLS = `${BASE_COLS}, pack_name, pack_total, pack_starts_at, pack_expires_at`;
 
 function toCupoUser(d: Record<string, unknown>): CupoUser {
   return {
@@ -29,6 +32,9 @@ function toCupoUser(d: Record<string, unknown>): CupoUser {
     quotaHour: Number(d.quota_hour ?? 5),
     quotaDay: Number(d.quota_day ?? 20),
     quotaWeek: Number(d.quota_week ?? 100),
+    pack: Number(d.pack_total ?? 0) > 0
+      ? { name: String(d.pack_name ?? ''), total: Number(d.pack_total), startsAt: (d.pack_starts_at as string) ?? null, expiresAt: (d.pack_expires_at as string) ?? null }
+      : null,
   };
 }
 
@@ -39,12 +45,13 @@ function toCupoUser(d: Record<string, unknown>): CupoUser {
 export async function listCupoUsers(q?: string): Promise<{ migrated: boolean; users: CupoUser[] }> {
   const sb = createAdminClient();
   const term = (q ?? '').trim();
-  const query = term
-    ? sb.from('profiles').select(COLS).ilike('email', `%${term}%`).order('email', { ascending: true }).limit(50)
-    : sb.from('profiles').select(COLS).eq('consulta_enabled', true).order('email', { ascending: true }).limit(100);
-  const { data, error } = await query;
+  const run = (cols: string) => (term
+    ? sb.from('profiles').select(cols).ilike('email', `%${term}%`).order('email', { ascending: true }).limit(50)
+    : sb.from('profiles').select(cols).eq('consulta_enabled', true).order('email', { ascending: true }).limit(100));
+  let { data, error } = await run(COLS);
+  if (error) ({ data, error } = await run(BASE_COLS)); // 0012 aún sin migrar → sin datos de paquete
   if (error) return { migrated: false, users: [] }; // columnas sin migrar u otro error
-  return { migrated: true, users: ((data ?? []) as Record<string, unknown>[]).map(toCupoUser) };
+  return { migrated: true, users: ((data ?? []) as unknown as Record<string, unknown>[]).map(toCupoUser) };
 }
 
 export interface SetCupoInput {
@@ -73,6 +80,35 @@ export async function setCupo(input: SetCupoInput): Promise<{ ok: boolean; error
     .select(COLS)
     .maybeSingle();
   if (error) return { ok: false, error: error.message };
+  if (!data) return { ok: false, error: 'Usuario no encontrado.' };
+  return { ok: true, user: toCupoUser(data as Record<string, unknown>) };
+}
+
+/**
+ * Activa un PAQUETE MENSUAL de consultas Completo (lo pidió por WhatsApp y pagó). NO se acumula:
+ * reemplaza cualquier paquete anterior y el conteo empieza de cero; vence a los 30 días. Topes por
+ * hora/día como freno anti-abuso (un paquete no debe gastarse en ráfagas automáticas).
+ */
+export async function activatePack(userId: string, consultas: number, dias = 30): Promise<{ ok: boolean; error?: string; user?: CupoUser }> {
+  const n = Math.max(1, Math.min(1000, Math.floor(consultas)));
+  const now = new Date();
+  const { data, error } = await createAdminClient()
+    .from('profiles')
+    .update({
+      consulta_enabled: true,
+      consulta_tier: 'ULTRA',
+      pack_name: `${n} consultas`,
+      pack_total: n,
+      pack_starts_at: now.toISOString(),
+      pack_expires_at: new Date(now.getTime() + dias * 86_400_000).toISOString(),
+      quota_hour: Math.min(n, 10),
+      quota_day: n,
+      quota_week: n,
+    })
+    .eq('id', userId)
+    .select(COLS)
+    .maybeSingle();
+  if (error) return { ok: false, error: /pack_/.test(error.message) ? 'Falta aplicar la migración 0012 en Supabase.' : error.message };
   if (!data) return { ok: false, error: 'Usuario no encontrado.' };
   return { ok: true, user: toCupoUser(data as Record<string, unknown>) };
 }

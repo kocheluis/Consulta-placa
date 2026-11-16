@@ -16,10 +16,12 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: Request) {
   const body = (await request.json().catch(() => ({}))) as { plate?: string; tier?: string };
   const plate = String(body.plate ?? '').toUpperCase().trim();
-  const tier: PaidTier | null = body.tier === 'ULTRA' ? 'ULTRA' : body.tier === 'PRO' ? 'PRO' : null;
+  // Un solo reporte de pago: el COMPLETO (nivel ULTRA). Un 'PRO' (UI antigua en caché) también se vende
+  // como Completo, al mismo precio.
+  const tier: PaidTier | null = body.tier === 'ULTRA' || body.tier === 'PRO' || body.tier === 'COMPLETO' ? 'ULTRA' : null;
 
   if (!plate || !tier) {
-    return NextResponse.json({ error: 'Indica placa y plan (PRO/ULTRA).' }, { status: 400 });
+    return NextResponse.json({ error: 'Indica la placa.' }, { status: 400 });
   }
 
   // Sin Supabase configurado: modo demostración (no se registra ni se cobra nada).

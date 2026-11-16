@@ -5,6 +5,7 @@ import Link from 'next/link';
 import { Button } from '@/components/ui/Button';
 import { Icon } from '@/components/ui/Icon';
 import type { CupoUser } from '@/lib/admin-cupo';
+import { PAQUETES, soles } from '@/lib/planes';
 
 function NumField({ label, value, onChange }: { label: string; value: number; onChange: (v: number) => void }) {
   return (
@@ -54,6 +55,29 @@ function UserRow({ u }: { u: CupoUser }) {
     }
   };
 
+  // Paquete mensual (pedido por WhatsApp): activa N consultas Completo por 30 días, reemplazando el anterior.
+  const activar = async (consultas: number) => {
+    if (!confirm(`¿Activar el paquete de ${consultas} consultas para ${d.email ?? 'esta cuenta'}? Reemplaza cualquier paquete anterior (no se acumula) y vence en 30 días.`)) return;
+    setSaving(true);
+    setErr(null);
+    try {
+      const r = await fetch('/api/admin/cupo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ userId: d.id, action: 'pack', consultas }),
+      });
+      const j = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string; user?: CupoUser };
+      if (!r.ok || !j.ok || !j.user) { setErr(j.error ?? 'No se pudo activar.'); return; }
+      setD(j.user);
+      setSaved(true);
+    } catch {
+      setErr('Error de red.');
+    } finally {
+      setSaving(false);
+    }
+  };
+  const packVence = d.pack?.expiresAt ? new Date(d.pack.expiresAt) : null;
+  const packVencido = !!packVence && packVence.getTime() <= Date.now();
+
   return (
     <div className={`rounded-xl border bg-surface p-4 shadow-sm ${d.enabled ? 'border-teal-700/40' : 'border-border'}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -65,6 +89,21 @@ function UserRow({ u }: { u: CupoUser }) {
           <input type="checkbox" checked={d.enabled} onChange={(e) => set({ enabled: e.target.checked })} className="h-4 w-4 accent-primary" />
           Cupo activo
         </label>
+      </div>
+
+      <div className="mt-3 flex flex-wrap items-center gap-2 rounded-lg bg-azul-50 px-3 py-2">
+        <span className="text-[13px] font-semibold text-foreground">
+          {d.pack
+            ? `Paquete ${d.pack.name} · ${packVencido ? 'VENCIDO' : 'vence'} ${packVence?.toLocaleDateString('es-PE') ?? ''}`
+            : 'Sin paquete'}
+        </span>
+        <span className="ml-auto flex gap-2">
+          {PAQUETES.map((p) => (
+            <Button key={p.id} size="sm" variant="secondary" onClick={() => activar(p.consultas)} disabled={saving}>
+              Activar {p.consultas} · {soles(p.precio)}
+            </Button>
+          ))}
+        </span>
       </div>
 
       <div className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-4">

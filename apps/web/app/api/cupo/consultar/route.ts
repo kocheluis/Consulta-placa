@@ -30,7 +30,9 @@ export async function POST(req: Request) {
   const q = await checkAndRecordCupo(cupo.userId, cupo.access, placa);
   if (!q.ok) {
     return NextResponse.json(
-      { ok: false, error: `Alcanzaste tu tope por ${q.window}. Se libera en ~${q.resetInMin} min.`, window: q.window, resetInMin: q.resetInMin },
+      { ok: false, error: q.window === 'paquete'
+          ? (cupo.access.packExpired ? 'Tu paquete venció. Pide uno nuevo por WhatsApp para seguir consultando.' : 'Usaste todas las consultas de tu paquete. Pide uno nuevo por WhatsApp.')
+          : `Alcanzaste tu tope por ${q.window}. Se libera en ~${q.resetInMin} min.`, window: q.window, resetInMin: q.resetInMin },
       { status: 429 },
     );
   }
