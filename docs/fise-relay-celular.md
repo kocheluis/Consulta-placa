@@ -132,6 +132,10 @@ node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
 
 ## PC de casa como relay principal (nov-2026)
 
+> **★ 16-nov-2026: FISE se mudó a `consultas.fise.pe` y ese dominio SÍ responde al VPS → hoy FISE se consulta
+> DIRECTO desde el VPS.** La PC y el celular quedan como RESPALDO automático por si el MINEM vuelve a filtrar la IP
+> (orden: VPS directo → PC → celular). El texto de abajo describe ese respaldo.
+
 FISE rechaza la IP del VPS (validado otra vez el 16-nov-2026 desde el VPS actual: conexión rechazada al
 instante en el puerto 23308, mientras que desde internet de casa responde normal). Por eso hay **dos relays**:
 
