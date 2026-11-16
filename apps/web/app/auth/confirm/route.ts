@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import type { EmailOtpType } from '@supabase/supabase-js';
 import { isSupabaseConfigured } from '@/lib/supabase/config';
 import { createClient } from '@/lib/supabase/server';
+import { safeNext } from '@/lib/next-path';
 
 export const dynamic = 'force-dynamic';
 
@@ -15,8 +16,8 @@ export async function GET(request: Request) {
   const { searchParams, origin } = new URL(request.url);
   const tokenHash = searchParams.get('token_hash');
   const type = searchParams.get('type') as EmailOtpType | null;
-  const rawNext = searchParams.get('next') ?? '/auth/confirmado';
-  const next = rawNext.startsWith('/') ? rawNext : '/auth/confirmado';
+  
+  const next = safeNext(searchParams.get('next')) ?? '/auth/confirmado';
 
   // En Vercel el host público viene en x-forwarded-host.
   const forwardedHost = request.headers.get('x-forwarded-host');

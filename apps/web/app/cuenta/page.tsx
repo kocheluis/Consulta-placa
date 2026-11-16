@@ -347,10 +347,23 @@ export default function CuentaPage() {
     setNotice(null);
 
     if (view === 'forgot') {
-      // La recuperación por correo se habilita al migrar a Supabase Auth.
-      setNotice(
-        'La recuperación por correo se habilitará muy pronto. Por ahora escríbenos a soporte@placape.pe y te ayudamos.',
-      );
+      // Enlace de recuperación por Resend (/api/auth/recuperar). La respuesta es la misma exista o no la
+      // cuenta (no revela correos registrados); si la cuenta es de Google/Facebook, el correo lo explica.
+      setBusy(true);
+      try {
+        const res = await fetch('/api/auth/recuperar', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email }),
+        });
+        if (res.status === 400) setError('Revisa el correo: no parece válido.');
+        else if (!res.ok) setError('No pudimos enviar el enlace ahora. Inténtalo en unos minutos o escríbenos a soporte@placape.pe.');
+        else setNotice(`Si ${email} tiene una cuenta PlacaPe, te enviamos un enlace para crear una nueva contraseña. Revisa también la carpeta de spam.`);
+      } catch {
+        setError('Sin conexión. Inténtalo de nuevo.');
+      } finally {
+        setBusy(false);
+      }
       return;
     }
 

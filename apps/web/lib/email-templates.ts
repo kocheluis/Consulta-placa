@@ -210,3 +210,32 @@ export function yapeReceivedEmail(input: YapeReceivedInput): { subject: string; 
 
   return { subject: `Tu pedido PlacaPe de la placa ${plate} · completa tu pago con Yape`, html };
 }
+
+/** Correo de recuperación de contraseña (lo envía la app con Resend, no el SMTP de Supabase). */
+export function passwordResetEmail(input: { link: string }): { subject: string; html: string } {
+  return {
+    subject: 'Restablece tu contraseña de PlacaPe',
+    html: emailLayout({
+      preheader: 'Crea una nueva contraseña para tu cuenta.',
+      heading: 'Restablece tu contraseña',
+      bodyHtml: `<p style="margin:0">Recibimos un pedido para cambiar la contraseña de tu cuenta PlacaPe. Pulsa el botón para crear una nueva. El enlace vence en 1 hora y solo sirve una vez.</p>
+        ${button(input.link, 'Crear nueva contraseña')}
+        <p style="margin:0;font-size:13px">Si no lo pediste, ignora este correo: tu contraseña sigue igual.</p>`,
+    }),
+  };
+}
+
+/** Cuenta creada solo con Google/Facebook: no tiene contraseña que recuperar. */
+export function socialOnlyAccountEmail(input: { providers: string[]; loginUrl: string }): { subject: string; html: string } {
+  const names = input.providers.map((p) => (p === 'google' ? 'Google' : p === 'facebook' ? 'Facebook' : p)).join(' o ');
+  return {
+    subject: 'Tu cuenta PlacaPe usa ' + names,
+    html: emailLayout({
+      preheader: `Ingresa con ${names}; tu cuenta no tiene contraseña.`,
+      heading: `Tu cuenta se creó con ${names}`,
+      bodyHtml: `<p style="margin:0">Pediste restablecer la contraseña, pero tu cuenta PlacaPe no tiene una: la creaste con <strong>${names}</strong>. Para entrar, usa el botón "Continuar con ${names}".</p>
+        ${button(input.loginUrl, 'Ir a iniciar sesión')}
+        <p style="margin:0;font-size:13px">Si no lo pediste, ignora este correo.</p>`,
+    }),
+  };
+}

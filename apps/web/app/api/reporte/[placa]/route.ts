@@ -3,7 +3,8 @@ import { createAdminClient, isAdminConfigured } from '@/lib/supabase/admin';
 import { getPaidTier } from '@/lib/payments';
 import { getSessionCupo, refundCupoHits } from '@/lib/cupo';
 import { verifyPreviewToken } from '@/lib/preview-token';
-import { stripByTier } from '@/lib/report-tier';
+import { stripByTier, maskOwnerForAnon } from '@/lib/report-tier';
+import { createClient as createServerClient } from '@/lib/supabase/server';
 import {
   TIER_RANK, ReportTier, ReportStatus, DISCLAIMER_TEXT,
   type Report,
@@ -70,10 +71,16 @@ export async function GET(req: Request, { params }: { params: Promise<{ placa: s
     // Placa INEXISTENTE + usuario con CUPO → reembolsa la consulta: una placa que no existe NO debe
     // consumir cupo (el consumo ocurrió en el submit, antes de saberlo). Idempotente y fail-safe.
     if (full.plateNotFound && cupo?.access.enabled) { await refundCupoHits(cupo.userId, placa); }
-    // El titular ACTUAL se sirve COMPLETO (decisión de producto 30-jul-2026: dato registral público
-    // de SUNARP y valor central del reporte). La minimización de PII aplica a los TERCEROS del
+    // El titular ACTUAL se sirve COMPLETO a usuarios con sesión (decisión de producto 30-jul-2026: dato
+    // registral público de SUNARP y valor central del reporte); a anónimos, enmascarado. La minimización de PII aplica a los TERCEROS del
     // HISTORIAL (dueños anteriores, enmascarados en origen por el transform) y al titular de ATU.
-    const report = operatorPreview ? full : stripByTier(full, tier);
+    // Sin sesión → titular enmascarado (anti-cosecha de nombres recorriendo placas).
+    let signedIn = false;
+    if (!operatorPreview) {
+      try { signedIn = Boolean((await (await createServerClient()).auth.getUser()).data.user); } catch { /* anónimo */ }
+    }
+    const tiered = operatorPreview ? full : stripByTier(full, tier);
+    const report = operatorPreview || signedIn ? tiered : maskOwnerForAnon(tiered);
     // Devolvemos el `tier` efectivo (pago + CUPO) para que el candado de la UI use la MISMA fuente de
     // verdad con que recortamos los datos — si no, el cliente re-resolvía con solo `purchases` y a un
     // usuario con cupo le mostraba el candado + Yape aunque el reporte ya viniera con datos PRO/ULTRA.
