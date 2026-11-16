@@ -1,4 +1,5 @@
 /* eslint-disable no-console */
+import { safeFetch } from './http.js';
 import {
   pedidoCreate, pedidoGet, pedidoNext, pedidoClaimBatch, pedidoBoard, pedidoHistory,
   pedidoRequeue, pedidoRequeueStuck,
@@ -91,19 +92,19 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     origin: (r.origin as string) ?? 'servicio',
   });
   const patch = async (id: Pedido['id'], body: Record<string, unknown>) => {
-    const r = await fetch(`${base}?id=eq.${id}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
+    const r = await safeFetch(`${base}?id=eq.${id}`, { method: 'PATCH', headers, body: JSON.stringify(body) });
     if (!r.ok) throw new Error(`supabase PATCH ${r.status}: ${await r.text()}`);
   };
   return {
     kind: 'supabase',
     async enqueue(p) {
-      const r = await fetch(base, { method: 'POST', headers: { ...headers, Prefer: 'return=representation' },
+      const r = await safeFetch(base, { method: 'POST', headers: { ...headers, Prefer: 'return=representation' },
         body: JSON.stringify({ placa: p.placa, whatsapp: p.whatsapp ?? null, email: p.email ?? null, tier: p.tier ?? 'PRO', origin: p.origin ?? 'servicio', estado: 'pendiente' }) });
       if (!r.ok) throw new Error(`supabase POST ${r.status}: ${await r.text()}`);
       return map((await r.json())[0]);
     },
     async next() {
-      const r = await fetch(`${base}?estado=eq.pendiente&order=created_at.asc&limit=1`, { headers });
+      const r = await safeFetch(`${base}?estado=eq.pendiente&order=created_at.asc&limit=1`, { headers });
       if (!r.ok) throw new Error(`supabase GET ${r.status}`);
       const rows = (await r.json()) as Record<string, unknown>[];
       return rows[0] ? map(rows[0]) : null;
@@ -111,26 +112,26 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
     async claimBatch(n) {
       // Claim atómico en el servidor: PATCH con order+limit marca hasta N pendientes como
       // 'procesando' y los devuelve (PostgREST permite UPDATE limitado con order+limit).
-      const r = await fetch(`${base}?estado=eq.pendiente&order=created_at.asc&limit=${Math.max(1, n)}`, {
+      const r = await safeFetch(`${base}?estado=eq.pendiente&order=created_at.asc&limit=${Math.max(1, n)}`, {
         method: 'PATCH', headers: { ...headers, Prefer: 'return=representation' },
         body: JSON.stringify({ estado: 'procesando', started_at: now() }),
-      });
+      }, { retries: 0 }); // NO reintentar: si el 1er intento sí reclamó, un 2º reclamaría OTRO lote
       if (!r.ok) throw new Error(`supabase claimBatch ${r.status}: ${await r.text()}`);
       return ((await r.json()) as Record<string, unknown>[]).map(map);
     },
     async board() {
-      const r = await fetch(`${base}?estado=in.(pendiente,procesando)&order=created_at.asc`, { headers });
+      const r = await safeFetch(`${base}?estado=in.(pendiente,procesando)&order=created_at.asc`, { headers });
       if (!r.ok) throw new Error(`supabase GET ${r.status}`);
       return ((await r.json()) as Record<string, unknown>[]).map(map);
     },
     async history(limit = 100) {
-      const r = await fetch(`${base}?order=created_at.desc&limit=${limit}`, { headers });
+      const r = await safeFetch(`${base}?order=created_at.desc&limit=${limit}`, { headers });
       if (!r.ok) throw new Error(`supabase GET ${r.status}`);
       return ((await r.json()) as Record<string, unknown>[]).map(map);
     },
     async requeue(id) { await patch(id, { estado: 'pendiente', started_at: null, error: null }); },
     async requeueStuck() {
-      const r = await fetch(`${base}?estado=eq.procesando`, { method: 'PATCH',
+      const r = await safeFetch(`${base}?estado=eq.procesando`, { method: 'PATCH',
         headers: { ...headers, Prefer: 'return=representation' }, body: JSON.stringify({ estado: 'pendiente', started_at: null }) });
       if (!r.ok) throw new Error(`supabase PATCH ${r.status}: ${await r.text()}`);
       return ((await r.json()) as unknown[]).length;
@@ -143,7 +144,7 @@ function supabaseQueue(url: string, key: string): PedidoQueue {
       // ¿El mismo user_id ya tiene un pedido listo/entregado de esta placa (distinto del actual)?
       const q = `user_id=eq.${encodeURIComponent(userId)}&placa=eq.${encodeURIComponent(placa)}`
         + `&estado=in.(listo,entregado)&id=neq.${encodeURIComponent(String(excludeId))}&limit=1`;
-      const r = await fetch(`${base}?${q}`, { headers });
+      const r = await safeFetch(`${base}?${q}`, { headers });
       if (!r.ok) return false;
       return ((await r.json()) as unknown[]).length > 0;
     },

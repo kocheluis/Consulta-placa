@@ -13,6 +13,7 @@ import { Pipeline, type PipelineJob } from './operator/pipeline.js';
 import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
+import { safeFetch } from './operator/http.js';
 import { publishReport, fetchReport, fetchReportsMeta, fetchPublishedReports } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.js';
@@ -409,11 +410,11 @@ async function notifyReady(p: Pedido, tier: string): Promise<void> {
   // placa testigo del chequeo diario) le mandaría correo/WhatsApp a un cliente real. Solo con contacto explícito.
   if (!isClientOrigin(p.origin) && !p.email && !p.whatsapp) return;
   try {
-    const r = await fetch(`${WEB_REPORT_URL}/api/notify-ready`, {
+    const r = await safeFetch(`${WEB_REPORT_URL}/api/notify-ready`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', 'x-operator-token': OPERATOR_PREVIEW_TOKEN },
       body: JSON.stringify({ placa: p.placa, email: p.email ?? undefined, whatsapp: p.whatsapp ?? undefined, tier }),
-    });
+    }, { timeoutMs: 30_000 }); // POST no idempotente (manda correo) → sin reintento, solo tiempo límite
     console.log(`[entrega] notify-ready ${p.placa}: HTTP ${r.status}`);
     if (r.ok) await queue.setDelivered(p.id);
   } catch (e) {
@@ -497,8 +498,8 @@ async function processPedido(p: Pedido): Promise<void> {
       await notifyReady(p, tier);
       if (N8N_WEBHOOK) {
         try {
-          await fetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ plate: p.placa, whatsapp: p.whatsapp, email: p.email, results: job.results, at: new Date().toISOString() }) });
+          await safeFetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ plate: p.placa, whatsapp: p.whatsapp, email: p.email, results: job.results, at: new Date().toISOString() }) }, { timeoutMs: 30_000 });
           await queue.setDelivered(p.id);
           console.log(`[motor-auto] pedido ${p.id} ENTREGADO (n8n)`);
         } catch (e) { console.warn('[motor-auto] entrega n8n falló:', (e as Error).message); }
@@ -842,7 +843,7 @@ async function sendHealthAlert(run: HealthRun): Promise<void> {
   if (!(onlyIssues && run.overall === 'ok')) await sendOpsMail('salud', emailList(process.env.HEALTH_ALERT_EMAIL), mail);
   if (process.env.HEALTH_WEBHOOK_URL) {
     try {
-      await fetch(process.env.HEALTH_WEBHOOK_URL, { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      await fetch(process.env.HEALTH_WEBHOOK_URL, { method: 'POST', signal: AbortSignal.timeout(15_000), headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ kind: 'daily', ...run, subject: mail.subject, text: mail.text }) });
     } catch (e) { console.warn('[salud] webhook falló:', (e as Error).message); }
   }
@@ -1432,7 +1433,7 @@ const server = createServer(async (req, res) => {
       let sent = false;
       if (N8N_WEBHOOK) {
         try {
-          const r = await fetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
+          const r = await safeFetch(N8N_WEBHOOK, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) }, { timeoutMs: 30_000 });
           sent = r.ok;
           console.log(`[operador] enviado a n8n (${r.status})`);
         } catch (e) { console.warn('[operador] n8n falló:', (e as Error).message); }

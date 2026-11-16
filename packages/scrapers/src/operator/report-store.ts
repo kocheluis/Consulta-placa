@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 import type { Report } from '@app/shared';
+import { safeFetch } from './http.js';
 
 /**
  * Publica el `Report` normalizado en Supabase (tabla `reportes`) para que la web lo lea
@@ -19,7 +20,7 @@ export async function fetchReport(placa: string): Promise<{ report: Report; upda
   if (!url || !key) return null;
   const headers = { apikey: key, Authorization: `Bearer ${key}` };
   try {
-    const r = await fetch(
+    const r = await safeFetch(
       `${url.replace(/\/$/, '')}/rest/v1/reportes?placa=eq.${encodeURIComponent(norm(placa))}&select=report,updated_at,user_id,pedido_id&limit=1`,
       { headers },
     );
@@ -64,7 +65,7 @@ export async function fetchReportsMeta(placas: string[]): Promise<Map<string, Re
   const headers = { apikey: key, Authorization: `Bearer ${key}` };
   try {
     const inList = unique.map((p) => `"${p}"`).join(',');
-    const r = await fetch(
+    const r = await safeFetch(
       `${url.replace(/\/$/, '')}/rest/v1/reportes?placa=in.(${encodeURIComponent(inList)})&select=placa,pedido_id,updated_at`,
       { headers },
     );
@@ -99,9 +100,9 @@ export async function publishReport(
     updated_at: new Date().toISOString(),
   };
   try {
-    const r = await fetch(`${url.replace(/\/$/, '')}/rest/v1/reportes?on_conflict=placa`, {
+    const r = await safeFetch(`${url.replace(/\/$/, '')}/rest/v1/reportes?on_conflict=placa`, {
       method: 'POST', headers, body: JSON.stringify(row),
-    });
+    }, { idempotent: true, timeoutMs: 30_000 });
     if (!r.ok) { console.warn(`[reportes] publish ${r.status}: ${await r.text()}`); return false; }
     return true;
   } catch (e) {
@@ -122,7 +123,7 @@ export async function fetchPublishedReports(max = 20000): Promise<Report[]> {
   const out: Report[] = [];
   const page = 200;
   for (let from = 0; from < max; from += page) {
-    const r = await fetch(`${url.replace(/\/$/, '')}/rest/v1/reportes?select=report&order=placa.asc`, {
+    const r = await safeFetch(`${url.replace(/\/$/, '')}/rest/v1/reportes?select=report&order=placa.asc`, {
       headers: { ...headers, Range: `${from}-${from + page - 1}` },
     });
     if (!r.ok) throw new Error(`reportes GET ${r.status}`);
