@@ -358,5 +358,12 @@ function fechaMs(f: string): number {
 
 /** Ordena los asientos cronológicamente (por fecha de presentación) → línea de tiempo. */
 export function construirTimeline(asientos: AsientoRecord[]): AsientoRecord[] {
-  return [...asientos].sort((a, b) => fechaMs(a.fechaPresentacion) - fechaMs(b.fechaPresentacion));
+  // Sin fecha legible (asiento ilegible) → se ubica por el AÑO de su título (AAAA-NNNN), no al inicio de todo.
+  const orden = (a: AsientoRecord): number => {
+    const ms = fechaMs(a.fechaPresentacion);
+    if (ms) return ms;
+    const y = /^(\d{4})-/.exec(String(a.titulo ?? ''))?.[1];
+    return y ? Date.UTC(Number(y), 0, 1) : 0;
+  };
+  return [...asientos].sort((a, b) => orden(a) - orden(b));
 }

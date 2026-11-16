@@ -1,7 +1,8 @@
 /* eslint-disable no-console */
 import { spawn } from 'node:child_process';
-import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, writeFileSync, unlinkSync, mkdirSync } from 'node:fs';
+import { join, dirname } from 'node:path';
+import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
 import crypto from 'node:crypto';
 import { chromium, type Page, type Locator, type Browser, type BrowserContext, type Response } from 'playwright';
 import { parseAsientos, parseCaracteristicas, pdfBytesToText, construirTimeline, type AsientoRecord } from './asiento-parser.js';
@@ -63,7 +64,45 @@ export interface HistorialResult {
    *  MUY antiguas). Es un error DE SUNARP, no nuestro: la partida existe pero no deja ver los asientos → se
    *  reporta "solo propietario actual (de la Consulta Vehicular), sin histórico" en vez de un ERROR. */
   partidaIncompleta?: boolean;
+  /** Estado de CADA título consultado en Síguelo (leído, ilegible o fallido) + el PDF del asiento guardado.
+   *  Un título fallido ya no desaparece en silencio: el reporte avisa "X de N títulos leídos". */
+  titulosEstado?: TituloEstado[];
 }
+
+export interface TituloEstado {
+  titulo: string;
+  /** ok = leído · no_legible = el PDF llegó pero su texto no se pudo interpretar · fallo = Síguelo no lo entregó. */
+  estado: 'ok' | 'no_legible' | 'fallo';
+  /** Paso en que falló (p. ej. turnstile-sin-resolver, sin-respuesta-listarAsientos). */
+  detalle?: string;
+  /** Nombre del PDF del asiento guardado en <outDir>/asientos/ (solo consola: trae datos de terceros). */
+  pdf?: string | null;
+}
+
+/** Texto de un PDF con pdf.js (maneja hex/TJ/ToUnicode, que el extractor casero no entiende). */
+async function pdfjsText(bytes: number[]): Promise<string> {
+  const doc = await getDocument({ data: new Uint8Array(bytes), verbosity: 0 }).promise;
+  const parts: string[] = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const tc = await (await doc.getPage(p)).getTextContent();
+    let lastY: number | null = null;
+    for (const it of tc.items) {
+      if (!('str' in it)) continue;
+      const y = (it.transform as number[])[5] ?? 0;
+      if (lastY !== null && Math.abs(y - lastY) > 2) parts.push('\n');
+      parts.push(it.str);
+      lastY = y;
+    }
+    parts.push('\n');
+  }
+  return parts.join(' ').replace(/ *\n */g, '\n');
+}
+
+const NO_LEGIBLE_RX = /^Asiento no legible$/;
+const esIlegible = (text: string): boolean => {
+  const recs = parseAsientos(text);
+  return !recs.length || recs.some((x) => NO_LEGIBLE_RX.test(String(x.acto || x.tipo || '')));
+};
 
 function sgDecrypt(b64: string): string | null {
   try {
@@ -579,9 +618,12 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
     // ficha moderna (VIN/versión — p. ej. EGU257, 1998), igual se captura el asiento más reciente y NO
     // se cae al fallback de la captura de SUNARP. Se renderiza UNA sola vez, al final del Síguelo.
     let shotCandidate: { bytes: number[]; quality: number; recency: number } | null = null;
+    const asientoPdf = new Map<string, string>(); // título → nombre del PDF guardado
     // DIAGNÓSTICO de un intento fallido de Síguelo: en qué paso quedó + captura. Antes cada `return null`
     // era silencioso → "sin asiento" sin pista (CCI581/CHU444 en el VPS nuevo, oct-2026).
+    const failStep = new Map<string, string>(); // título → último paso fallido (para titulosEstado)
     async function sigueloDiag(pg: Page, tit: string, t0: number, step: string): Promise<void> {
+      failStep.set(tit, step);
       const opts2 = await pg.locator('#cboOficina option').count().catch(() => -1);
       const ofi = await pg.locator('#cboOficina').evaluate((el) => (el as HTMLSelectElement).selectedOptions[0]?.textContent ?? '').catch(() => '?');
       const ts = (await pg.locator('input[name="cf-turnstile-response"]').first().inputValue({ timeout: 800 }).catch(() => '')).length;
@@ -649,7 +691,26 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       if (process.env.SIGUELO_DEBUG && dec) log(`  [DEBUG listarAsientos ${anioT}-${numeroT}] ${dec.replace(/"paginaAsiento":\s*\[[-\d,\s]*\]/g, '"paginaAsiento":"<bytes>"').slice(0, 4000)} [/DEBUG]`);
       const obj = dec ? (JSON.parse(dec) as { list?: Array<{ paginaAsiento?: number[] }> }) : null;
       const bytes = obj?.list?.[0]?.paginaAsiento;
-      const text = Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
+      let text = Array.isArray(bytes) ? pdfBytesToText(bytes) : null;
+      if (Array.isArray(bytes)) {
+        // Guarda el PDF de CADA asiento (consola: el operador lo abre y verifica; trae datos de terceros →
+        // nunca va al cliente). Es barato: son los bytes que ya llegaron.
+        if (opts.shotPath) {
+          try {
+            const dir = join(dirname(opts.shotPath), 'asientos');
+            mkdirSync(dir, { recursive: true });
+            writeFileSync(join(dir, `${tit}.pdf`), Buffer.from(bytes));
+            asientoPdf.set(tit, `${tit}.pdf`);
+          } catch { /* best-effort */ }
+        }
+        // El extractor casero solo entiende literales "( ) Tj": si el asiento sale ILEGIBLE, se reintenta
+        // con pdf.js (hex, TJ, fuentes CID/ToUnicode). Solo como respaldo → los asientos que ya se leían
+        // bien no cambian (el parser está afinado sobre el texto del extractor casero).
+        if (text && esIlegible(text)) {
+          const alt = await pdfjsText(bytes).catch(() => '');
+          if (alt && !esIlegible(alt)) { text = alt; log(`  ${tit}: leído con pdf.js (el extractor básico no pudo)`); }
+        }
+      }
       // Candidato a captura: el asiento CON ficha (calidad 2) gana sobre cualquiera (calidad 1); a igual
       // calidad, el más reciente. Se guarda solo el mejor (bytes) y se rasteriza UNA vez al final. Así
       // funciona en secuencial y en paralelo, y los autos antiguos sin ficha igual capturan un asiento.
@@ -666,8 +727,14 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
 
     const valid = titulos.map((t) => t.split('-')).filter((p) => p[0] && p[1]) as Array<[string, string]>;
     const records: AsientoRecord[] = [];
+    const titulosEstado: TituloEstado[] = [];
     const procesar = (text: string | null, tit: string) => {
-      if (!text) return;
+      if (!text) {
+        titulosEstado.push({ titulo: tit, estado: 'fallo', detalle: failStep.get(tit) ?? 'sin-asiento', pdf: asientoPdf.get(tit) ?? null });
+        log(`  ${tit}: NO LEÍDO (${failStep.get(tit) ?? 'sin asiento'}) → queda marcado en el reporte`);
+        return;
+      }
+      titulosEstado.push({ titulo: tit, estado: esIlegible(text) ? 'no_legible' : 'ok', pdf: asientoPdf.get(tit) ?? null });
       // Depuración (SIGUELO_DEBUG=1): vuelca SOLO el texto legible del asiento para afinar el parser.
       // `pdfBytesToText` deja una cola de bytes de la imagen del PDF (basura `ÿÿÿ`/`�`); el `�` (U+FFFD)
       // aparece SOLO en esa cola → cortamos ahí, quitamos lo no imprimible y acotamos. Antes volcaba
@@ -698,7 +765,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
           const pg = await ctx.newPage();
           try {
             let text = await searchSiguelo(pg, aT, nT).catch(() => null);
-            if (!text) text = await searchSiguelo(pg, aT, nT).catch(() => null);
+            if (!text) { await wait(3000); text = await searchSiguelo(pg, aT, nT).catch(() => null); }
             log(`  ${aT}-${nT}: ${text ? 'asiento OK' : 'sin asiento'}`);
             return { tit: `${aT}-${nT}`, text };
           }
@@ -708,11 +775,19 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       }
     } else {
       // SECUENCIAL (default, validado): una sola pestaña reutilizada.
-      const sg = await ctx.newPage();
+      let sg = await ctx.newPage();
       for (const [aT, nT] of valid) {
         log(`Síguelo ${aT}-${nT}…`);
         let text = await searchSiguelo(sg, aT, nT).catch(() => null);
-        if (!text) { log(`  ${aT}-${nT}: sin asiento → reintento`); text = await searchSiguelo(sg, aT, nT).catch(() => null); }
+        // Reintentos (2) en PESTAÑA NUEVA y con pausa creciente: la pestaña que se colgó (p. ej. 172 s sin
+        // listarAsientos) suele quedar en mal estado y el Turnstile no vuelve a emitir token en ella.
+        for (let k = 1; !text && k <= 2; k++) {
+          log(`  ${aT}-${nT}: sin asiento → reintento ${k}/2 (pestaña nueva)`);
+          await sg.close().catch(() => {});
+          await wait(2500 * k);
+          sg = await ctx.newPage();
+          text = await searchSiguelo(sg, aT, nT).catch(() => null);
+        }
         procesar(text, `${aT}-${nT}`);
       }
       await sg.close().catch(() => {});
@@ -745,7 +820,7 @@ export async function runHistorialRegistral(plateRaw: string, opts: HistorialOpt
       gravamen: records.some((r) => r.flags.gravamen),
       embargo: records.some((r) => r.flags.embargo),
     };
-    return { ok: records.length > 0, sede: oficina, vehiculo, titulos, timeline, caracteristicas, flags };
+    return { ok: records.length > 0, sede: oficina, vehiculo, titulos, timeline, caracteristicas, flags, titulosEstado };
   } catch (e) {
     const msg = (e as Error).message;
     // LOG del error (antes solo se devolvía en `error` → invisible en el .log de la fuente, sobre todo en

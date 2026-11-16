@@ -1458,6 +1458,19 @@ const server = createServer(async (req, res) => {
       } catch { res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }); return res.end('(sin log todavía)'); }
     }
 
+    // PDF de un asiento de Síguelo guardado por el historial (<out>/<PLACA>/asientos/<título>.pdf). Solo
+    // consola (escucha en 127.0.0.1): trae nombres/DNI de terceros → nunca se expone al cliente.
+    if (path.startsWith('/asiento/') && req.method === 'GET') {
+      const parts = path.split('/').filter(Boolean);
+      const plate = (parts[1] ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+      const file = (parts[2] ?? '').replace(/[^0-9-]/g, '');
+      if (!plate || !/^\d{4}-\d+$/.test(file)) return sendJson(res, 404, { error: 'no encontrado' });
+      try {
+        const buf = await readFile(join(OUT_BASE, plate, 'asientos', `${file}.pdf`));
+        res.writeHead(200, { 'Content-Type': 'application/pdf', 'Content-Disposition': `inline; filename="${plate}-${file}.pdf"` });
+        return res.end(buf);
+      } catch { return sendJson(res, 404, { error: 'asiento no guardado' }); }
+    }
     if (path.startsWith('/shot/') && req.method === 'GET') {
       const parts = path.split('/').filter(Boolean);
       const plate = (parts[1] ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '');
@@ -2298,6 +2311,15 @@ function renderFuentes(pl,rep,results,cj,expected,oldGen){var d=document.getElem
     var col=(cls==='err')?'var(--err)':((cls==='run')?'var(--run)':'var(--ok)'),u='/shot/'+encodeURIComponent(pl)+'/'+id+'.png?t='+Date.now();
     return '<div class="shotc" onclick="lbOpenImg(\\''+u+'\\',\\''+id+' · '+esc(pl)+'\\')"><img src="'+u+'" onerror="this.parentNode.style.display=\\'none\\'"><div class="cc"><span>'+esc(id)+'</span><span class="dd" style="background:'+col+'"></span></div></div>';
   }).join('');
+  // Títulos del historial (Síguelo): estado de cada uno + su PDF (y la captura del fallo si no se leyó).
+  var hEst=(!oldGen&&byId['historial']&&byId['historial'].data&&byId['historial'].data.titulosEstado)||[];
+  var asientosBlock=hEst.length?('<div class="lh" style="margin-top:16px">📄 Asientos del historial · '+hEst.filter(function(e){return e.estado==='ok';}).length+' de '+hEst.length+' leídos</div><div class="loglinks2">'+hEst.map(function(e){
+    var c=e.estado==='ok'?'var(--ok)':(e.estado==='no_legible'?'var(--run)':'var(--err)');
+    var lab=e.estado==='ok'?'leído':(e.estado==='no_legible'?'ilegible':('falló'+(e.detalle?(' · '+esc(e.detalle)):'')));
+    var pdf=e.pdf?('<a href="/asiento/'+encodeURIComponent(pl)+'/'+encodeURIComponent(e.titulo)+'" target="_blank">'+esc(e.titulo)+' (PDF)</a>'):('<span>'+esc(e.titulo)+'</span>');
+    var diag=e.estado==='fallo'?(' <a href="#" onclick="lbOpenImg(\\'/shot/'+encodeURIComponent(pl)+'/siguelo-'+encodeURIComponent(e.titulo)+'.png?t='+Date.now()+'\\',\\''+esc(e.titulo)+'\\');return false">captura</a>'):'';
+    return '<span style="display:inline-flex;gap:6px;align-items:center">'+pdf+' <b style="color:'+c+'">'+lab+'</b>'+diag+'</span>';
+  }).join(''))+'</div>':'';
   var shotBlock=shots?('<div class="lh" style="margin-top:16px">📸 Capturas por fuente · clic para ampliar</div><div class="shotgrid">'+shots+'</div>'):'';
   var logsBlock=oldGen?'':('<div class="lh" style="margin-top:16px">Logs por fuente</div><div class="loglinks2">'+order.map(function(id){return '<a href="/log/'+encodeURIComponent(pl)+'/'+id+'" target="_blank">'+esc(id)+'</a>';}).join('')+'</div>');
   var note=oldGen?('<div class="webnote" style="margin-bottom:10px">📌 <b>Generación anterior</b>'+(rep.generatedAt?(' · '+esc(fmtTime(rep.generatedAt))):'')+' — estas son sus fuentes. Las capturas y logs solo se guardan de la corrida <b>más reciente</b> de la placa.'+(rep.stale?' <b style="color:var(--warn)">(snapshot no disponible; se muestra la última)</b>':'')+'</div>'):'';
@@ -2308,7 +2330,7 @@ function renderFuentes(pl,rep,results,cj,expected,oldGen){var d=document.getElem
   var retryList=oldGen?[]:order.filter(function(id){return RETRYING[pl+'|'+id];});
   var rbanner=retryList.length?('<div class="retrybanner"><span class="spin"></span>Reintentando '+retryList.length+' fuente(s): <b>'+esc(retryList.join(', '))+'</b> … corre en el servidor, puede tardar unos minutos.</div>'):'';
   var meta='<div class="pmeta">'+order.length+' fuentes · <span style="color:var(--ok)">'+okN+' ok</span>'+(retryN?' · <span style="color:var(--run)">'+retryN+' reintentando</span>':'')+(runN?' · <span style="color:var(--run)">'+runN+' corriendo</span>':'')+(errN?' · <span style="color:var(--err)">'+errN+' con error</span>':'')+(missN?' · <span style="color:var(--warn)">'+missN+' sin resultado</span>':'')+((probN&&!oldGen)?' <button class="reintall" onclick="retryFailed()">↻ Reintentar '+probN+'</button>':'')+(cj?' · '+pct+'%':(rep.generatedAt?' · generado '+esc(fmtTime(rep.generatedAt)):''))+'</div>';
-  var body=order.length?(note+rbanner+meta+'<div style="margin-top:8px">'+bars+'</div>'+shotBlock+logsBlock):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
+  var body=order.length?(note+rbanner+meta+'<div style="margin-top:8px">'+bars+'</div>'+asientosBlock+shotBlock+logsBlock):('<div class="pmeta">'+(cj?('Procesando… '+pct+'%'):'Aún sin reporte para esta placa.')+'</div>');
   d.innerHTML=hHeader(pl)+detailTabs()+body;}
 // ── Pestaña REPORTE AL USUARIO: el Report normalizado (lo que ve el cliente) ──
 // Render NATIVO local por defecto: lee el reporte.json del propio VPS (/api/pedido-webreport)

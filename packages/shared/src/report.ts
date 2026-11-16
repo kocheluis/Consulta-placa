@@ -497,6 +497,11 @@ export interface HistorialPayload {
   partidaIncompleta?: boolean;
   /** Propietario ACTUAL (de la Consulta Vehicular SUNARP) — se muestra cuando la partida está incompleta. */
   currentOwner?: string | null;
+  /** Títulos que se pudieron leer de SUNARP (de `totalTitulos`). Si es menor, el historial es PARCIAL:
+   *  conteos, gravámenes y dueños se calculan solo sobre lo leído. */
+  titlesRead?: number;
+  /** Títulos que SUNARP no entregó o cuyo asiento no se pudo leer (con el motivo, en lenguaje claro). */
+  unreadable?: Array<{ title: string; reason: string }>;
 }
 
 /** Una bandera de riesgo priorizada por la IA. */

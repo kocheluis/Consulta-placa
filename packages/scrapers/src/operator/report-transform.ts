@@ -605,12 +605,21 @@ export function toWebReport(plate: string, results: OperatorSourceResult[], gene
       (n, g) => n + g.acciones.filter((a) => /compra\s*-?\s*venta|adjudicaci[oó]n/i.test(String(a.acto ?? ''))).length,
       0,
     );
+    // Títulos NO leídos (Síguelo no los entregó o su asiento salió ilegible): se declaran en el reporte en
+    // vez de desaparecer → el cliente sabe que el historial es parcial (conteos y cargas sobre lo leído).
+    const estados = (hd.titulosEstado ?? []) as Array<{ titulo?: string; estado?: string; detalle?: string }>;
+    const motivo = (e: { estado?: string; detalle?: string }) => e.estado === 'no_legible'
+      ? 'SUNARP entregó el asiento pero su contenido no se pudo leer'
+      : /turnstile/i.test(e.detalle ?? '') ? 'SUNARP no completó la verificación de seguridad'
+      : 'SUNARP no respondió la consulta de este título';
+    const unreadable = estados.filter((e) => e.titulo && e.estado !== 'ok').map((e) => ({ title: String(e.titulo), reason: motivo(e) }));
     const histPay: HistorialPayload = {
       totalAsientos: grupos.length,
       totalTitulos: titulos.length,
       transfers,
       flags: { aseguradora: Boolean(histFlags.aseguradora), remate: Boolean(histFlags.remate), financiera: Boolean(histFlags.financiera), gravamen: (grav.total ?? 0) > 0 },
       events,
+      ...(estados.length ? { titlesRead: estados.filter((e) => e.estado === 'ok').length, unreadable } : {}),
     };
     src.push({ kind: SectionKind.HISTORIAL, source: SourceId.SUNARP, status: SectionStatus.AVAILABLE, fetchedAt: at, payload: histPay });
 

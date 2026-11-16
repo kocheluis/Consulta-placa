@@ -507,7 +507,7 @@ async function runHistorialSource(
       const flagTxt = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.financiera && 'FINANCIERA', r.flags.gravamen && 'GRAVAMEN', r.flags.embargo && 'EMBARGO'].filter(Boolean).join('/');
       const summary = `${r.timeline.length} asientos · ${r.titulos.length} títulos${flagTxt ? ` · ⚠ ${flagTxt}` : ' · sin banderas'}`;
       logLine(outDir, 'historial', `RESULTADO ${summary} · ${Date.now() - t0}ms`);
-      return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas }, screenshot: shotPath, ms: Date.now() - t0 };
+      return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas, titulosEstado: r.titulosEstado ?? [] }, screenshot: shotPath, ms: Date.now() - t0 };
     }
     // Partida INCOMPLETA en SUNARP (error de SUNARP, no nuestro; placa antigua) → NO es ERROR: se reporta
     // "solo propietario actual, sin histórico". SIN_REGISTRO (ámbar, no rojo) + flag para el transform.
@@ -537,7 +537,7 @@ export function mapHistorial(r: HistorialResult, ms: number, shotPath?: string):
   if (r.ok) {
     const flagTxt = [r.flags.aseguradora && 'ASEGURADORA', r.flags.remate && 'REMATE', r.flags.financiera && 'FINANCIERA', r.flags.gravamen && 'GRAVAMEN', r.flags.embargo && 'EMBARGO'].filter(Boolean).join('/');
     const summary = `${r.timeline.length} asientos · ${r.titulos.length} títulos${flagTxt ? ` · ⚠ ${flagTxt}` : ' · sin banderas'}`;
-    return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas }, ...(shotPath ? { screenshot: shotPath } : {}), ms };
+    return { ...base, status: 'ENCONTRADO', summary, data: { sede: r.sede, titulos: r.titulos, flags: r.flags, timeline: r.timeline, vehiculo: r.vehiculo, caracteristicas: r.caracteristicas, titulosEstado: r.titulosEstado ?? [] }, ...(shotPath ? { screenshot: shotPath } : {}), ms };
   }
   // Partida incompleta en SUNARP (no nuestro error): SIN_REGISTRO + propietario actual, sin histórico.
   if (r.partidaIncompleta) {

@@ -2019,7 +2019,19 @@ function HistorialBody({ section, onRetry }: { section: SectionResult; onRetry: 
         <Badge tone="neutral" size="sm" icon="description">
           {h.totalAsientos} asiento(s)
         </Badge>
+        {h.unreadable && h.unreadable.length > 0 && (
+          <Badge tone="warning" size="sm" icon="warning">
+            {h.titlesRead ?? h.totalTitulos - h.unreadable.length} de {h.totalTitulos} títulos leídos
+          </Badge>
+        )}
       </div>
+      {h.unreadable && h.unreadable.length > 0 && (
+        <StatusLine tone="warning" icon="report">
+          Historial parcial: {h.unreadable.length === 1 ? 'un título no se pudo leer' : `${h.unreadable.length} títulos no se pudieron leer`} en SUNARP
+          ({h.unreadable.map((u) => `${u.title}: ${u.reason}`).join(' · ')}). Las transferencias, cargas y dueños se calculan solo
+          con lo leído; para confirmarlos, pide la partida completa en SUNARP o vuelve a consultar más tarde.
+        </StatusLine>
+      )}
       {perdidaTotal && (
         <StatusLine tone="danger" icon="car_crash">
           {h.flags.aseguradora
