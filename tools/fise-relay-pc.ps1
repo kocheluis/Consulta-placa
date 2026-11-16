@@ -1,4 +1,4 @@
-<#
+﻿<#
   Relay RESIDENCIAL de FISE en la PC de casa (Windows) — PlacaPe.
 
   FISE (fise.minem.gob.pe:23308) solo responde a internet doméstico peruano: rechaza la IP del VPS. Esta
@@ -72,6 +72,9 @@ if (-not (Test-Path $src)) { throw "No encuentro $src (corre el script desde la 
 
 # ── Configuración (el token solo se pide la primera vez) ─────────────────
 New-Item -ItemType Directory -Force -Path $Dir | Out-Null
+# SID del usuario actual (el nombre en %USERNAME% no siempre coincide con la cuenta: cuentas Microsoft).
+$Sid = [System.Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+if (Test-Path $Conf) { icacls $Conf /grant:r "*${Sid}:(F)" | Out-Null } # repara permisos de una versión anterior
 $c = Read-Conf
 if (-not $Vps) { $Vps = $c.vps }
 if (-not $Token) { $Token = $c.token }
@@ -79,7 +82,7 @@ if (-not $Vps -or -not $Token) { throw 'Primera vez: indica -Vps http://IP-DEL-V
 $Vps = $Vps.TrimEnd('/')
 @{ vps = $Vps; token = $Token } | ConvertTo-Json | Set-Content -Path $Conf -Encoding UTF8
 # Solo tu usuario puede leer la configuración (lleva el token).
-icacls $Conf /inheritance:r /grant:r "$($env:USERNAME):(F)" | Out-Null
+icacls $Conf /inheritance:r /grant:r "*${Sid}:(F)" | Out-Null
 
 Copy-Item $src $Worker -Force
 
