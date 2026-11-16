@@ -17,6 +17,8 @@ import { safeFetch } from './operator/http.js';
 import { publishReport, fetchReport, fetchReportsMeta, fetchPublishedReports, saveUserSnapshot, purgeExpiredSnapshots } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.js';
+/** Identidad del relay que hace poll (PC / celular): ?relay=pc&prio=1&label=PC. */
+const relayMeta = (u: URL) => ({ id: u.searchParams.get('relay'), prio: u.searchParams.get('prio'), label: u.searchParams.get('label') });
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
 import { metaGet, metaSet } from './db/repo.js';
 import {
@@ -765,6 +767,37 @@ let healthCurrent: HealthRun | null = null;
 const HEALTH_WAIT_MS = Math.max(10 * 60_000, Number(process.env.HEALTH_TIMEOUT_MS ?? 60 * 60_000));
 const HEALTH_MIN_BALANCE = Number(process.env.HEALTH_MIN_BALANCE ?? 3);
 
+/**
+ * Relays residenciales de FISE (PC = principal, celular = respaldo): un renglón por equipo con su estado
+ * y, si está caído, CÓMO reactivarlo (`fix`). FISE solo falla si NINGUNO late. Sin el token del relay
+ * en los comandos: el correo de salud sale del VPS y el token vive en cada equipo (config local).
+ */
+const RELAY_ACTIVAR: Record<string, string> = {
+  pc: 'En la PC (PowerShell, carpeta del proyecto): powershell -ExecutionPolicy Bypass -File tools\\fise-relay-pc.ps1   · estado: ... -File tools\\fise-relay-pc.ps1 -Estado',
+  celular: 'En el celular (Termux): sh ~/.termux/boot/fise-relay   · instalación desde cero: curl -fsSL https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-setup.sh | sh -s -- http://IP-DEL-VPS:3011 TOKEN',
+};
+function relayHealthChecks(): InfraCheck[] {
+  const st = fiseRelayStatus() as { enabled?: boolean; alive?: boolean; active?: string | null; relays?: Array<{ id: string; label: string; prio: number; alive: boolean; lastSeenAgoS: number; done: number; fails: number }> };
+  if (!st.enabled) return [{ id: 'relay', label: 'Relay FISE', severity: 'warn', detail: 'FISE_RELAY_TOKEN sin configurar → FISE fallará', fix: 'placape-ops fise-token' }];
+  const conocidos = new Map((st.relays ?? []).map((r) => [r.id, r]));
+  // Siempre se listan los dos equipos esperados (aunque uno nunca haya conectado), más cualquier otro.
+  const ids = [...new Set(['pc', 'celular', ...conocidos.keys()])];
+  const out: InfraCheck[] = ids.map((id) => {
+    const r = conocidos.get(id);
+    const nombre = r?.label ?? (id === 'pc' ? 'PC de casa' : id === 'celular' ? 'Celular' : id);
+    const rol = (r?.prio ?? (id === 'pc' ? 1 : 2)) === 1 ? 'principal' : 'respaldo';
+    const label = `Relay FISE · ${nombre} (${rol})`;
+    if (r?.alive) {
+      const uso = st.active === id ? 'atendiendo FISE' : 'en espera';
+      return { id: `relay-${id}`, label, severity: 'ok', detail: `latiendo · ${uso} · ${r.done} ok / ${r.fails} fallas` };
+    }
+    const hace = r ? `sin señal hace ${Math.max(1, Math.round(r.lastSeenAgoS / 60))} min` : 'nunca conectó';
+    return { id: `relay-${id}`, label, severity: 'warn', detail: hace, fix: RELAY_ACTIVAR[id] };
+  });
+  if (!st.alive) out.unshift({ id: 'relay', label: 'Relay FISE', severity: 'warn', detail: 'NINGÚN relay late (ni PC ni celular) → FISE falla en todos los reportes a gas' });
+  return out;
+}
+
 async function infraChecks(): Promise<InfraCheck[]> {
   const out: InfraCheck[] = [];
   out.push(autoEngine
@@ -799,12 +832,7 @@ async function infraChecks(): Promise<InfraCheck[]> {
       }
     } catch (e) { out.push({ id: 'captcha', label: 'Saldo CapSolver', severity: 'warn', detail: `no pude consultar: ${(e as Error).message.slice(0, 120)}` }); }
   }
-  const relay = fiseRelayStatus() as { enabled?: boolean; alive?: boolean; lastSeenAgoS?: number | null };
-  out.push(relay.alive
-    ? { id: 'relay', label: 'Relay FISE (celular)', severity: 'ok', detail: 'latiendo' }
-    : { id: 'relay', label: 'Relay FISE (celular)', severity: 'warn', detail: relay.enabled
-      ? `sin señal${relay.lastSeenAgoS != null ? ` hace ${Math.round(relay.lastSeenAgoS / 60)} min` : ' (nunca conectó)'} → FISE fallará (docs/fise-relay-celular.md)`
-      : 'FISE_RELAY_TOKEN sin configurar → FISE fallará' });
+  out.push(...relayHealthChecks());
   return out;
 }
 
@@ -1079,12 +1107,12 @@ const server = createServer(async (req, res) => {
     // Relay residencial de FISE (celular Termux, ver operator/fise-relay.ts): el worker hace
     // polling aquí con su token (env FISE_RELAY_TOKEN; sin él los endpoints quedan deshabilitados).
     if (path === '/api/fise-relay/next' && req.method === 'GET') {
-      const r = relayNext(url.searchParams.get('token') ?? req.headers['x-relay-token']);
+      const r = relayNext(url.searchParams.get('token') ?? req.headers['x-relay-token'], relayMeta(url));
       return sendJson(res, r.code, r.body);
     }
     if (path === '/api/fise-relay/result' && req.method === 'POST') {
       const body = await readBody(req);
-      const r = relayResult(url.searchParams.get('token') ?? req.headers['x-relay-token'] ?? body.token, body);
+      const r = relayResult(url.searchParams.get('token') ?? req.headers['x-relay-token'] ?? body.token, body, relayMeta(url));
       return sendJson(res, r.code, r.body);
     }
     if (path === '/api/fise-relay/status' && req.method === 'GET') return sendJson(res, 200, fiseRelayStatus());
@@ -1117,6 +1145,7 @@ const server = createServer(async (req, res) => {
     if (path === '/api/health' && req.method === 'GET') {
       return sendJson(res, 200, {
         cfg: healthCfg, running: healthCurrent, last: metaGet('health_last'), history: metaGet('health_history') ?? [],
+        relays: relayHealthChecks(),
         alerts: { email: !!(process.env.RESEND_API_KEY && process.env.HEALTH_ALERT_EMAIL), webhook: !!process.env.HEALTH_WEBHOOK_URL,
           client: ALERTS_ON && !!(process.env.RESEND_API_KEY && (process.env.ALERT_EMAIL || process.env.HEALTH_ALERT_EMAIL)) },
         clients24h: summarizeClients(metaGet<ClientOutcome[]>('client_outcomes') ?? [], Date.now() - 86_400_000),
@@ -1565,12 +1594,12 @@ if (process.env.FISE_RELAY_TOKEN) {
     try {
       const url = new URL(req.url ?? '/', `http://localhost:${RELAY_PORT}`);
       if (url.pathname === '/api/fise-relay/next' && req.method === 'GET') {
-        const r = relayNext(url.searchParams.get('token') ?? req.headers['x-relay-token']);
+        const r = relayNext(url.searchParams.get('token') ?? req.headers['x-relay-token'], relayMeta(url));
         return sendJson(res, r.code, r.body);
       }
       if (url.pathname === '/api/fise-relay/result' && req.method === 'POST') {
         const body = await readBody(req);
-        const r = relayResult(url.searchParams.get('token') ?? req.headers['x-relay-token'] ?? body.token, body);
+        const r = relayResult(url.searchParams.get('token') ?? req.headers['x-relay-token'] ?? body.token, body, relayMeta(url));
         return sendJson(res, r.code, r.body);
       }
       if (url.pathname === '/api/fise-relay/status' && req.method === 'GET') return sendJson(res, 200, fiseRelayStatus());
@@ -2064,6 +2093,7 @@ var HV={ok:['OK','#15803D','#DCFCE7'],intermitente:['Intermitente','#B45309','#F
 var HSEV={ok:['✓','var(--ok)'],warn:['⚠','var(--warn)'],fail:['✕','var(--err)']};
 var HOV={ok:['Todo en orden','p-listo'],alerta:['Alerta','p-procesando'],critico:['Crítico','p-error']};
 var HCFG_LOADED=false,HTIMER=null;
+function hrow(c){var s=HSEV[c.severity]||HSEV.warn;return '<div class="hrow"><b style="color:'+s[1]+'">'+s[0]+'</b> <b>'+esc(c.label)+'</b> <span class="meta">'+esc(c.detail)+'</span>'+(c.fix?'<div style="margin:4px 0 2px 22px"><code style="display:block;white-space:pre-wrap;word-break:break-all;background:#0E1B22;color:#D7F3EE;padding:6px 8px;border-radius:6px;font-size:12px">'+esc(c.fix)+'</code></div>':'')+'</div>';}
 function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).then(function(d){
   if(!HCFG_LOADED){HCFG_LOADED=true;var hs=document.getElementById('h-hour'),o='';for(var i=0;i<24;i++)o+='<option value="'+i+'">'+(i<10?'0':'')+i+':00</option>';hs.innerHTML=o;hs.value=String(d.cfg.hour);
     document.getElementById('h-plates').value=(d.cfg.plates||[]).join(', ');document.getElementById('h-on').checked=!!d.cfg.enabled;}
@@ -2072,6 +2102,7 @@ function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).th
   if(HTIMER){clearTimeout(HTIMER);HTIMER=null;}
   if(d.running)HTIMER=setTimeout(function(){if(document.getElementById('tab-health').style.display!=='none')loadHealth();},15000);
   var run=d.running||d.last,h='';
+  if((d.relays||[]).length)h+='<div class="mcard"><h3>Relays FISE · en vivo</h3><div class="msub">FISE solo responde a internet de casa: la PC atiende primero y el celular es el respaldo. Si un equipo está caído, abajo está el comando para reactivarlo.</div>'+d.relays.map(hrow).join('')+'</div>';
   if(d.running)h+='<div class="webnote" style="margin-bottom:10px">⟳ Chequeo en curso desde '+esc(fmtTime(d.running.startedAt))+' — '+esc((d.running.pedidos||[]).map(function(x){return x.placa+': '+x.estado}).join(' · ')||'revisando infraestructura…')+'</div>';
   if(!run){h+='<div class="mcard"><div class="msub">Aún no hay chequeos. Configura las placas testigo y pulsa "Correr chequeo ahora".</div></div>';document.getElementById('h-body').innerHTML=h;return;}
   if(!d.running){var ov=HOV[run.overall]||HOV.alerta;h+='<div class="mcard"><h3><span class="pill '+ov[1]+'">'+ov[0]+'</span> '+esc(run.headline)+'</h3><div class="msub">'+(run.trigger==='manual'?'Manual':'Diario')+' · '+esc(fmtTime(run.startedAt))+(run.finishedAt?' → '+esc(fmtTime(run.finishedAt)):'')+' · placas: '+esc((run.plates||[]).join(', ')||'—')+'</div>'+(run.note?'<div class="webnote" style="margin-top:8px">'+esc(run.note)+'</div>':'')+'</div>';}
@@ -2080,7 +2111,7 @@ function loadHealth(){fetch('/api/health').then(function(r){return r.json()}).th
     '<div class="hrow"><b>'+cl.total+'</b> entregas · <b style="color:#15803D">'+cl.ok+'</b> completas · <b style="color:#B45309">'+cl.conError+'</b> con error · <b style="color:#B91C1C">'+cl.sinReporte+'</b> sin reporte · pagadas '+cl.pagados+' ('+cl.pagadosConProblema+' con problema)</div>'+
     ((cl.top||[]).length?'<div class="hrow meta">Fuentes que más fallaron a clientes: '+esc(cl.top.map(function(t){return t.source+' ×'+t.count}).join(', '))+'</div>':'')+
     (cl.problemas||[]).slice(0,10).map(function(o){return '<div class="hrow"><b>'+esc(o.placa)+'</b> <span class="meta">'+esc(o.tier+' · '+o.origin+' · '+o.contact+' · '+fmtTime(o.at))+'</span> — <span style="color:'+(o.fatal?'#B91C1C':'#B45309')+'">'+(o.fatal?'SIN REPORTE: '+esc(o.fatalMsg||''):esc(o.failed.map(function(f){return f.source}).join(', ')))+'</span></div>'}).join('')+'</div>';}
-  h+='<div class="mcard"><h3>Infraestructura</h3>'+(run.infra||[]).map(function(c){var s=HSEV[c.severity]||HSEV.warn;return '<div class="hrow"><b style="color:'+s[1]+'">'+s[0]+'</b> <b>'+esc(c.label)+'</b> <span class="meta">'+esc(c.detail)+'</span></div>';}).join('')+'</div>';
+  h+='<div class="mcard"><h3>Infraestructura</h3>'+(run.infra||[]).filter(function(c){return !/^relay/.test(c.id);}).map(hrow).join('')+'</div>';
   if((run.security||[]).length){var kf=run.security.some(function(c){return c.id==='sec-keys'&&c.severity==='fail'});
     h+='<div class="mcard"><h3>Seguridad del VPS</h3>'+run.security.map(function(c){var s=HSEV[c.severity]||HSEV.warn;return '<div class="hrow"><b style="color:'+s[1]+'">'+s[0]+'</b> <b>'+esc(c.label)+'</b> <span class="meta">'+esc(c.detail)+'</span></div>';}).join('')+
     (kf?'<div style="margin-top:8px"><button class="sec" onclick="haccept()">Aceptar llaves actuales (las agregué yo)</button></div>':'')+'</div>';}

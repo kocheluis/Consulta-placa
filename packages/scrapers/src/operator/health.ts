@@ -31,7 +31,7 @@ export interface HealthSourceRow {
 }
 
 export type InfraSeverity = 'ok' | 'warn' | 'fail';
-export interface InfraCheck { id: string; label: string; severity: InfraSeverity; detail: string }
+export interface InfraCheck { id: string; label: string; severity: InfraSeverity; detail: string; /** Cómo arreglarlo (comando o pasos), si aplica. */ fix?: string }
 
 export type Overall = 'ok' | 'alerta' | 'critico';
 

@@ -13,7 +13,10 @@
 //   curl -O https://raw.githubusercontent.com/kocheluis/Consulta-placa/main/tools/fise-relay-celular.mjs
 //
 // USO:
-//   node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
+//   node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN [id] [prioridad]
+//   id/prioridad: quién es este relay. Celular = "celular" 2 (default, respaldo); PC de casa = "pc" 1
+//   (principal). El VPS manda cada consulta al relay vivo de mejor prioridad y cae al otro si no responde.
+//   También por env: FISE_RELAY_ID, FISE_RELAY_PRIO, FISE_RELAY_LABEL.
 //   (el token debe coincidir con FISE_RELAY_TOKEN en /root/placape.env del VPS)
 //   ⚠ Puerto 3011 = listener PÚBLICO del relay (el 3010 es la consola, solo loopback/túnel SSH).
 //
@@ -25,7 +28,10 @@
 import { request as httpsRequest } from 'node:https';
 import { spawn } from 'node:child_process';
 
-const [, , BASE_RAW, TOKEN] = process.argv;
+const [, , BASE_RAW, TOKEN, ID_ARG, PRIO_ARG] = process.argv;
+const RELAY_ID = (ID_ARG || process.env.FISE_RELAY_ID || 'celular').toLowerCase().replace(/[^a-z0-9-]/g, '') || 'celular';
+const RELAY_PRIO = Number(PRIO_ARG || process.env.FISE_RELAY_PRIO || (RELAY_ID === 'pc' ? 1 : 2)) || 2;
+const RELAY_LABEL = process.env.FISE_RELAY_LABEL || (RELAY_ID === 'pc' ? 'PC de casa' : RELAY_ID === 'celular' ? 'Celular' : RELAY_ID);
 
 const PAGE = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/inicio';
 const ENDPOINT = 'https://fise.minem.gob.pe:23308/consulta-taller/pages/consultaTaller/buscarSaldo';
@@ -137,6 +143,8 @@ if (!BASE_RAW || !TOKEN) {
   process.exit(1);
 }
 const BASE = BASE_RAW.replace(/\/+$/, '');
+// Identidad en cada llamada → el VPS sabe qué equipo late y a cuál mandar cada consulta.
+const WHO = `&relay=${encodeURIComponent(RELAY_ID)}&prio=${RELAY_PRIO}&label=${encodeURIComponent(RELAY_LABEL)}`;
 
 // Consulta FISE completa: GET inicio (cookies de sesión + consultaId) → POST buscarSaldo con el
 // token v3 que ya resolvió el VPS. Devuelve el JSON crudo; el parseo de montos vive en el VPS.
@@ -158,12 +166,12 @@ async function consulta(job) {
 }
 
 acquireWakeLock();
-console.log(`[${ts()}] worker FISE encendido → ${BASE} (Ctrl+C para salir)`);
+console.log(`[${ts()}] worker FISE "${RELAY_LABEL}" (id ${RELAY_ID}, prioridad ${RELAY_PRIO}) encendido → ${BASE} (Ctrl+C para salir)`);
 let errStreak = 0;
 let lastBeat = Date.now();
 for (;;) {
   try {
-    const res = await fetch(`${BASE}/api/fise-relay/next?token=${encodeURIComponent(TOKEN)}`, { signal: AbortSignal.timeout(15000) });
+    const res = await fetch(`${BASE}/api/fise-relay/next?token=${encodeURIComponent(TOKEN)}${WHO}`, { signal: AbortSignal.timeout(15000) });
     if (res.status === 403) { console.error(`[${ts()}] token RECHAZADO por el VPS — revisa FISE_RELAY_TOKEN en /root/placape.env`); process.exit(1); }
     const { job } = await res.json();
     if (errStreak) { console.log(`[${ts()}] VPS de vuelta en línea`); errStreak = 0; }
@@ -172,7 +180,7 @@ for (;;) {
       let out;
       try { out = { id: job.id, ok: true, ...(await consulta(job)) }; }
       catch (e) { out = { id: job.id, ok: false, error: errDetail(e) }; }
-      await fetch(`${BASE}/api/fise-relay/result?token=${encodeURIComponent(TOKEN)}`, {
+      await fetch(`${BASE}/api/fise-relay/result?token=${encodeURIComponent(TOKEN)}${WHO}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(out),

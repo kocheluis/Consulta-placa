@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { relayNext, relayResult, relayEnqueue, fiseRelayAlive, fiseRelayStatus } from './fise-relay.js';
+import { relayNext, relayResult, relayEnqueue, fiseRelayAlive, fiseRelayStatus, aliveRelays } from './fise-relay.js';
 
 // La cola es estado de módulo (igual que en producción): los tests van en orden y cada uno
 // deja la cola vacía (consume lo que encola).
@@ -64,5 +64,35 @@ describe('fise-relay (cola del relay residencial)', () => {
     const out = await p;
     expect(out.ok).toBe(false);
     expect(out.error).toContain('sin datos móviles');
+  });
+});
+
+describe('fise-relay · varios relays con prioridad (PC principal, celular respaldo)', () => {
+  beforeEach(() => { process.env.FISE_RELAY_TOKEN = TOKEN; });
+
+  it('ordena los relays vivos por prioridad y entrega cada consulta solo a su destinatario', async () => {
+    relayNext(TOKEN, { id: 'celular', prio: 2 });
+    relayNext(TOKEN, { id: 'pc', prio: 1, label: 'PC de casa' });
+    expect(aliveRelays().map((r) => r.id)).toEqual(['pc', 'celular']);
+
+    const p = relayEnqueue('PCX123', 'tok', 5000, 'pc');
+    // El celular pide trabajo: la consulta es de la PC → no la recibe.
+    expect((relayNext(TOKEN, { id: 'celular', prio: 2 }).body as { job: unknown }).job).toBeNull();
+    const job = (relayNext(TOKEN, { id: 'pc', prio: 1 }).body as { job: { id: string; plate: string } }).job;
+    expect(job.plate).toBe('PCX123');
+    relayResult(TOKEN, { id: job.id, ok: true, bodyText: '{}' }, { id: 'pc', prio: 1 });
+    expect((await p).ok).toBe(true);
+
+    const st = fiseRelayStatus() as { active: string; relays: Array<{ id: string; done: number }> };
+    expect(st.active).toBe('pc');
+    expect(st.relays.find((r) => r.id === 'pc')?.done).toBe(1);
+  });
+
+  it('si la PC no responde a tiempo, cuenta la falla (el runner pasa al celular)', async () => {
+    relayNext(TOKEN, { id: 'pc', prio: 1 });
+    const out = await relayEnqueue('PCY456', 'tok', 50, 'pc'); // la PC no hace poll en 50 ms
+    expect(out.ok).toBe(false);
+    const st = fiseRelayStatus() as { relays: Array<{ id: string; fails: number }> };
+    expect(st.relays.find((r) => r.id === 'pc')!.fails).toBeGreaterThanOrEqual(1);
   });
 });

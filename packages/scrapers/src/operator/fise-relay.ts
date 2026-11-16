@@ -33,15 +33,49 @@ interface RelayJob {
   plate: string;
   captchaToken: string;
   createdAt: number;
+  /** Relay al que va dirigido (id). undefined = cualquiera. */
+  target?: string;
+  /** Relay que lo tomó (para contar éxitos/fallas por equipo). */
+  takenBy?: string;
   resolve: (r: RelayOutcome) => void;
 }
 
-const pending: RelayJob[] = []; // aún no entregados al celular
+/**
+ * VARIOS RELAYS con PRIORIDAD (nov-2026): la PC de casa (prioridad 1) y el celular de respaldo
+ * (prioridad 2). Cada worker se identifica al hacer poll (relay, prio, label); el VPS dirige cada
+ * consulta al relay VIVO de mejor prioridad y, si no responde a tiempo, la reintenta en el siguiente.
+ * Un worker antiguo que no se identifica cuenta como "celular" (prioridad 2).
+ */
+export interface RelayMeta { id?: unknown; prio?: unknown; label?: unknown }
+interface RelayInfo { id: string; label: string; prio: number; lastSeen: number; served: number; done: number; fails: number }
+
+const relays = new Map<string, RelayInfo>();
+const pending: RelayJob[] = []; // aún no entregados a un relay
 const inFlight = new Map<string, RelayJob>(); // entregados, esperando resultado
-let lastSeen = 0; // último poll del celular (heartbeat)
-let served = 0;
-let done = 0;
 let seq = 0;
+
+function touchRelay(meta?: RelayMeta): RelayInfo {
+  const id = String(meta?.id ?? '').toLowerCase().replace(/[^a-z0-9-]/g, '').slice(0, 20) || 'celular';
+  const prioN = Number(meta?.prio);
+  const prio = Number.isFinite(prioN) && prioN >= 1 && prioN <= 9 ? Math.floor(prioN) : (id === 'pc' ? 1 : 2);
+  const label = String(meta?.label ?? '').replace(/[^A-Za-z0-9ÁÉÍÓÚáéíóúÑñ ._-]/g, '').slice(0, 30)
+    || (id === 'pc' ? 'PC de casa' : id === 'celular' ? 'Celular' : id);
+  const cur = relays.get(id) ?? { id, label, prio, lastSeen: 0, served: 0, done: 0, fails: 0 };
+  cur.label = label;
+  cur.prio = prio;
+  cur.lastSeen = Date.now();
+  relays.set(id, cur);
+  return cur;
+}
+
+const aliveMs = (): number => Math.max(15_000, Number(process.env.FISE_RELAY_ALIVE_MS ?? 120_000));
+const isAlive = (r: RelayInfo): boolean => Date.now() - r.lastSeen < aliveMs();
+
+/** Relays vivos, del de mejor prioridad al peor (a igual prioridad, el que latió más reciente). */
+export function aliveRelays(): Array<{ id: string; label: string; prio: number }> {
+  return [...relays.values()].filter(isAlive).sort((a, b) => a.prio - b.prio || b.lastSeen - a.lastSeen)
+    .map(({ id, label, prio }) => ({ id, label, prio }));
+}
 
 function tokenOk(t: unknown): boolean {
   const want = process.env.FISE_RELAY_TOKEN ?? '';
@@ -51,40 +85,50 @@ function tokenOk(t: unknown): boolean {
   try { return timingSafeEqual(Buffer.from(got), Buffer.from(want)); } catch { return false; }
 }
 
-/** ¿El celular dio señales de vida hace poco? (default 2 min; knob FISE_RELAY_ALIVE_MS). */
+/** ¿Algún relay (PC o celular) dio señales de vida hace poco? (default 2 min; knob FISE_RELAY_ALIVE_MS). */
 export function fiseRelayAlive(): boolean {
-  const maxAge = Math.max(15_000, Number(process.env.FISE_RELAY_ALIVE_MS ?? 120_000));
-  return Date.now() - lastSeen < maxAge;
+  return [...relays.values()].some(isAlive);
 }
 
 export function fiseRelayStatus(): Record<string, unknown> {
+  const all = [...relays.values()].sort((a, b) => a.prio - b.prio);
+  const last = Math.max(0, ...all.map((r) => r.lastSeen));
+  const active = aliveRelays()[0] ?? null;
   return {
     enabled: !!process.env.FISE_RELAY_TOKEN,
     alive: fiseRelayAlive(),
-    lastSeenAgoS: lastSeen ? Math.round((Date.now() - lastSeen) / 1000) : null,
-    pending: pending.length, inFlight: inFlight.size, served, done,
+    lastSeenAgoS: last ? Math.round((Date.now() - last) / 1000) : null,
+    active: active ? active.id : null,
+    relays: all.map((r) => ({
+      id: r.id, label: r.label, prio: r.prio, alive: isAlive(r),
+      lastSeenAgoS: Math.round((Date.now() - r.lastSeen) / 1000), served: r.served, done: r.done, fails: r.fails,
+    })),
+    pending: pending.length, inFlight: inFlight.size,
   };
 }
 
-/** GET /api/fise-relay/next — el celular pide trabajo (y de paso late el heartbeat). */
-export function relayNext(token: unknown): { code: number; body: unknown } {
+/** GET /api/fise-relay/next — un relay pide trabajo (y de paso late su heartbeat). */
+export function relayNext(token: unknown, meta?: RelayMeta): { code: number; body: unknown } {
   if (!tokenOk(token)) return { code: 403, body: { error: 'token inválido o relay deshabilitado' } };
-  lastSeen = Date.now();
-  const job = pending.shift();
-  if (!job) return { code: 200, body: { job: null } };
+  const me = touchRelay(meta);
+  const idx = pending.findIndex((j) => !j.target || j.target === me.id);
+  if (idx < 0) return { code: 200, body: { job: null } };
+  const job = pending.splice(idx, 1)[0]!;
+  job.takenBy = me.id;
   inFlight.set(job.id, job);
-  served++;
+  me.served++;
   return { code: 200, body: { job: { id: job.id, plate: job.plate, captchaToken: job.captchaToken } } };
 }
 
-/** POST /api/fise-relay/result — el celular devuelve el resultado de un job. */
-export function relayResult(token: unknown, body: Record<string, unknown>): { code: number; body: unknown } {
+/** POST /api/fise-relay/result — un relay devuelve el resultado de un job. */
+export function relayResult(token: unknown, body: Record<string, unknown>, meta?: RelayMeta): { code: number; body: unknown } {
   if (!tokenOk(token)) return { code: 403, body: { error: 'token inválido o relay deshabilitado' } };
-  lastSeen = Date.now();
+  const me = touchRelay(meta);
   const job = inFlight.get(String(body.id ?? ''));
   if (!job) return { code: 200, body: { ok: false, error: 'job desconocido (¿expiró el tope y ya se resolvió como timeout?)' } };
   inFlight.delete(job.id);
-  done++;
+  const who = relays.get(job.takenBy ?? me.id) ?? me;
+  if (body.ok === true) who.done++; else who.fails++;
   job.resolve({
     ok: body.ok === true,
     httpStatus: Number(body.httpStatus ?? 0) || undefined,
@@ -95,17 +139,19 @@ export function relayResult(token: unknown, body: Record<string, unknown>): { co
 }
 
 /** Encola una consulta y espera el resultado del celular (o expira sin colgar el reporte). */
-export function relayEnqueue(plate: string, captchaToken: string, timeoutMs: number): Promise<RelayOutcome> {
+export function relayEnqueue(plate: string, captchaToken: string, timeoutMs: number, target?: string): Promise<RelayOutcome> {
   return new Promise((resolve) => {
     const id = `f${Date.now().toString(36)}-${(seq++).toString(36)}`;
     let settled = false;
     const finish = (r: RelayOutcome): void => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
-    const job: RelayJob = { id, plate, captchaToken, createdAt: Date.now(), resolve: finish };
+    const job: RelayJob = { id, plate, captchaToken, createdAt: Date.now(), target, resolve: finish };
     const timer = setTimeout(() => {
       const idx = pending.indexOf(job);
       if (idx >= 0) pending.splice(idx, 1);
       inFlight.delete(id);
-      finish({ ok: false, error: `relay sin respuesta en ${Math.round(timeoutMs / 1000)}s (¿celular dormido / sin red?)` });
+      const who = relays.get(job.takenBy ?? target ?? '');
+      if (who) who.fails++;
+      finish({ ok: false, error: `relay ${who?.label ?? target ?? ''} sin respuesta en ${Math.round(timeoutMs / 1000)}s (¿equipo dormido / sin red?)` });
     }, timeoutMs);
     pending.push(job);
   });
@@ -120,15 +166,24 @@ export async function runFiseViaRelay(
   const t0 = Date.now();
   const base = { source: 'FISE_GNV', label: 'FISE · Deuda de conversión GNV', category: 'GNV' };
   const timeoutMs = Math.max(20_000, Number(process.env.FISE_RELAY_TIMEOUT_MS ?? 45_000));
-  for (let i = 1; i <= 2; i++) {
+  // Prioridad: PC → celular. Con respaldo disponible, el relay actual tiene menos tiempo (30 s): si no
+  // responde, el siguiente intento va al respaldo sin que el reporte espere de más.
+  const tried = new Set<string>();
+  const MAX = 3;
+  for (let i = 1; i <= MAX; i++) {
+    const vivos = aliveRelays();
+    if (!vivos.length) { log('ningún relay vivo (PC ni celular) → FISE no disponible'); break; }
+    const relay = vivos.find((x) => !tried.has(x.id)) ?? vivos[0]!;
+    const hayRespaldo = vivos.some((x) => x.id !== relay.id && !tried.has(x.id));
+    const tope = hayRespaldo ? Math.min(timeoutMs, 30_000) : timeoutMs;
     let token = '';
     try { token = await solver.solveRecaptchaV3(FISE_SITEKEY, FISE_PAGE_URL, 'consulta'); }
-    catch (e) { log(`intento ${i}/2: captcha falló (${(e as Error).message})`); continue; }
-    log(`intento ${i}/2: token v3 listo → encolado al relay del celular (tope ${Math.round(timeoutMs / 1000)}s)`);
-    const out = await relayEnqueue(plate, token, timeoutMs);
+    catch (e) { log(`intento ${i}/${MAX}: captcha falló (${(e as Error).message})`); continue; }
+    log(`intento ${i}/${MAX}: token v3 listo → relay "${relay.label}" (prioridad ${relay.prio}, tope ${Math.round(tope / 1000)}s)`);
+    const out = await relayEnqueue(plate, token, tope, relay.id);
     if (!out.ok) {
-      log(`intento ${i}/2: ${out.error ?? 'el celular reportó fallo'}`);
-      if (!fiseRelayAlive()) break; // el celular se cayó a mitad de camino: no insistir
+      log(`intento ${i}/${MAX}: ${out.error ?? `${relay.label} reportó fallo`}`);
+      tried.add(relay.id); // el siguiente intento prueba el respaldo (si lo hay)
       continue;
     }
     let j: { status?: number; rows?: Array<Record<string, unknown>> } | null = null;
@@ -139,5 +194,5 @@ export async function runFiseViaRelay(
     }
     return parseFiseSaldo(j.rows[0] ?? null, base, t0);
   }
-  return { ...base, status: 'ERROR', summary: 'relay celular sin resultado (token v3 rechazado o celular sin señal)', ms: Date.now() - t0 };
+  return { ...base, status: 'ERROR', summary: fiseRelayAlive() ? 'relay residencial sin resultado (token v3 rechazado o el equipo no respondió)' : 'relay residencial (PC y celular) sin señal — FISE bloquea la IP del VPS', ms: Date.now() - t0 };
 }

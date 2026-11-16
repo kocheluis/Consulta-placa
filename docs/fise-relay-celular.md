@@ -129,3 +129,30 @@ node fise-relay-celular.mjs http://IP-DEL-VPS:3011 EL_TOKEN
   `alive` y `lastSeenAgoS` para confirmar desde el VPS.
 - FISE sale `token v3 rechazado` → CapSolver devolvió un token de score bajo; el motor ya
   reintenta 1 vez con token fresco. Si persiste en todas las placas, revisar saldo CapSolver.
+
+## PC de casa como relay principal (nov-2026)
+
+FISE rechaza la IP del VPS (validado otra vez el 16-nov-2026 desde el VPS actual: conexión rechazada al
+instante en el puerto 23308, mientras que desde internet de casa responde normal). Por eso hay **dos relays**:
+
+| Equipo | id | Prioridad | Rol |
+|---|---|---|---|
+| PC de casa (Windows) | `pc` | 1 | Principal: atiende todas las consultas mientras late |
+| Celular (Termux) | `celular` | 2 | Respaldo: solo recibe consultas si la PC no late o no respondió a tiempo (30 s) |
+
+**Instalar / reactivar la PC** (PowerShell, en la carpeta del proyecto):
+
+```powershell
+# primera vez (el token se guarda en %USERPROFILE%\.placape, solo para tu usuario)
+powershell -ExecutionPolicy Bypass -File tools\fise-relay-pc.ps1 -Vps http://IP-DEL-VPS:3011 -Token EL_TOKEN
+# reactivar / actualizar el worker
+powershell -ExecutionPolicy Bypass -File tools\fise-relay-pc.ps1
+# ver estado (tarea + si el VPS la ve latiendo + log)
+powershell -ExecutionPolicy Bypass -File tools\fise-relay-pc.ps1 -Estado
+```
+
+Queda como tarea programada **"PlacaPe FISE relay"**: arranca sola al iniciar sesión, oculta, y se relanza
+si se cae. Si la PC se suspende, deja de latir y el celular toma el relevo (`-SinSuspension` lo evita).
+
+**Consola → Salud → "Relays FISE · en vivo"** muestra cada equipo (latiendo / sin señal, cuál atiende,
+consultas ok y fallas) y, si uno está caído, el comando exacto para reactivarlo.
