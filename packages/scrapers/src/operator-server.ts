@@ -14,7 +14,7 @@ import { killEngineChrome } from './operator/chrome-path.js';
 import { getQueue, type Pedido } from './operator/queue.js';
 import { toWebReport } from './operator/report-transform.js';
 import { safeFetch } from './operator/http.js';
-import { publishReport, fetchReport, fetchReportsMeta, fetchPublishedReports } from './operator/report-store.js';
+import { publishReport, fetchReport, fetchReportsMeta, fetchPublishedReports, saveUserSnapshot, purgeExpiredSnapshots } from './operator/report-store.js';
 import { scrapeSunarpViaCdp } from './operator/cdp-sunarp.js';
 import { relayNext, relayResult, fiseRelayStatus } from './operator/fise-relay.js';
 import { analyzeReportWithAI, attachIaSection, attachValuationSection } from './operator/ai-analysis.js';
@@ -405,6 +405,9 @@ async function reuseDelayFor(p: Pedido): Promise<number> {
  * aviso salió. No-op si falta WEB_REPORT_URL / OPERATOR_PREVIEW_TOKEN. Nunca rompe el flujo.
  */
 async function notifyReady(p: Pedido, tier: string): Promise<void> {
+  // Historial del usuario: copia CONGELADA de lo que se le entregó (todas las rutas de entrega pasan por aquí,
+  // después de publicar). Va antes de los return de aviso: se guarda aunque no haya correo/WhatsApp.
+  if (p.userId) await saveUserSnapshot(p, tier);
   if (!WEB_REPORT_URL || !OPERATOR_PREVIEW_TOKEN) return;
   // Sin contacto, la web avisa al ÚLTIMO LEAD de esa placa → un pedido de prueba de la consola (o una
   // placa testigo del chequeo diario) le mandaría correo/WhatsApp a un cliente real. Solo con contacto explícito.
@@ -2528,3 +2531,7 @@ function renderMDerived(){
 }
 showTab('hist');loadEngine();loadHistory();loadAutoSources();loadMemory();loadRelay();setInterval(loadEngine,3000);setInterval(loadHistory,6000);setInterval(loadRelay,5000);
 </script></body></html>`;
+
+// Historial de usuarios: borra los snapshots de más de 30 días (al arrancar y cada 6 h).
+void purgeExpiredSnapshots();
+setInterval(() => { void purgeExpiredSnapshots(); }, 6 * 3600_000).unref();

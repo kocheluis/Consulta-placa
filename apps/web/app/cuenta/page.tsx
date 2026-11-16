@@ -137,14 +137,8 @@ const fmtDate = (iso: string): string => {
     return iso;
   }
 };
-const STATUS: Record<string, { tone: 'success' | 'warning' | 'danger'; label: string }> = {
-  paid: { tone: 'success', label: 'Pagado' },
-  pending: { tone: 'warning', label: 'Pendiente' },
-  failed: { tone: 'danger', label: 'Fallido' },
-};
-
 function ReportRow({ r }: { r: ReportHistoryItem }) {
-  const st = STATUS[r.status] ?? STATUS.pending;
+  const days = Math.max(0, Math.ceil((Date.parse(r.expiresAt) - Date.now()) / 86_400_000));
   return (
     <div className="flex items-center gap-3 border-t border-border px-4 py-3 first:border-t-0">
       <div className="grid h-10 w-10 flex-none place-items-center rounded-lg bg-azul-50">
@@ -153,20 +147,17 @@ function ReportRow({ r }: { r: ReportHistoryItem }) {
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-bold tracking-wide text-foreground">{r.plate}</span>
-          <Badge tone={r.tier === 'ULTRA' ? 'brand' : 'info'} size="sm" icon={r.tier === 'ULTRA' ? 'bolt' : null}>
-            {r.tier === 'ULTRA' ? 'Ultra' : 'Pro'}
+          <Badge tone={r.tier === 'ULTRA' ? 'brand' : r.tier === 'PRO' ? 'info' : 'neutral'} size="sm" icon={r.tier === 'ULTRA' ? 'bolt' : null}>
+            {r.tier === 'ULTRA' ? 'Ultra' : r.tier === 'PRO' ? 'Pro' : 'Básico'}
           </Badge>
         </div>
-        <p className="mt-0.5 font-body text-[13px] text-muted">{fmtDate(r.createdAt)}</p>
+        <p className="mt-0.5 font-body text-[13px] text-muted">
+          {fmtDate(r.createdAt)} · {days <= 1 ? 'vence hoy' : `disponible ${days} días más`}
+        </p>
       </div>
-      <Badge tone={st.tone} size="sm" icon={null}>
-        {st.label}
-      </Badge>
-      {r.status === 'paid' && (
-        <Button variant="ghost" size="sm" iconRight="arrow_forward" href={`/reporte/${r.plate}`}>
-          Ver
-        </Button>
-      )}
+      <Button variant="ghost" size="sm" iconRight="arrow_forward" href={`/reporte/${r.plate}?snap=${r.id}`}>
+        Ver
+      </Button>
     </div>
   );
 }
@@ -185,7 +176,7 @@ function AccountView({ account, onLogout }: { account: Account; onLogout: () => 
   }, []);
 
   const firstName = account.fullName?.trim().split(/\s+/)[0];
-  const paid = (reports ?? []).filter((r) => r.status === 'paid');
+  const paid = reports ?? [];
 
   return (
     <div className="mx-auto max-w-[960px] px-4 py-12 sm:px-6">
@@ -215,9 +206,9 @@ function AccountView({ account, onLogout }: { account: Account; onLogout: () => 
                 <div className="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-azul-50">
                   <Icon name="description" className="text-[24px] text-primary" />
                 </div>
-                <p className="font-body font-semibold text-foreground">Aún no tienes reportes comprados</p>
+                <p className="font-body font-semibold text-foreground">Aún no tienes consultas en tu historial</p>
                 <p className="mx-auto mt-1 max-w-xs font-body text-sm text-muted">
-                  Cuando compres un reporte Pro o Ultra, aparecerá aquí para volver a verlo.
+                  Cada reporte que consultes queda guardado aquí, tal como salió, durante 30 días.
                 </p>
                 <div className="mt-4">
                   <Button variant="accent" size="sm" href="/" iconRight="arrow_forward">

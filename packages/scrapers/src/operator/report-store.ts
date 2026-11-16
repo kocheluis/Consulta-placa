@@ -133,3 +133,45 @@ export async function fetchPublishedReports(max = 20000): Promise<Report[]> {
   }
   return out;
 }
+
+/**
+ * Guarda la COPIA CONGELADA del reporte entregado a un usuario (tabla `reportes_usuario`, migración
+ * 0011): su historial muestra exactamente lo que obtuvo al consultar, aunque la placa se regenere
+ * después. Toma el reporte publicado en ese momento. Idempotente por `pedido_id`. Best-effort.
+ */
+export async function saveUserSnapshot(p: { id: string | number; placa: string; userId?: string | null }, tier: string): Promise<void> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key || !p.userId) return;
+  const isUuid = /^[0-9a-f-]{36}$/i.test(String(p.id));
+  try {
+    const pub = await fetchReport(p.placa);
+    if (!pub?.report || pub.report.plateNotFound) return;
+    const row = {
+      user_id: p.userId, pedido_id: isUuid ? String(p.id) : null, placa: norm(p.placa),
+      tier: ['BASIC', 'PRO', 'ULTRA'].includes(tier) ? tier : 'PRO', report: pub.report,
+    };
+    const r = await safeFetch(`${url.replace(/\/$/, '')}/rest/v1/reportes_usuario?on_conflict=pedido_id`, {
+      method: 'POST',
+      headers: { apikey: key, Authorization: `Bearer ${key}`, 'Content-Type': 'application/json', Prefer: 'resolution=ignore-duplicates' },
+      body: JSON.stringify(row),
+    }, { idempotent: true, timeoutMs: 30_000 });
+    if (!r.ok) console.warn(`[historial-usuario] snapshot ${r.status}: ${(await r.text()).slice(0, 200)}`);
+  } catch (e) {
+    console.warn('[historial-usuario] snapshot falló:', (e as Error).message);
+  }
+}
+
+/** Borra los snapshots vencidos (más de 30 días). Best-effort; lo llama el motor periódicamente. */
+export async function purgeExpiredSnapshots(): Promise<void> {
+  const url = process.env.SUPABASE_URL;
+  const key = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (!url || !key) return;
+  try {
+    await safeFetch(`${url.replace(/\/$/, '')}/rest/v1/reportes_usuario?expires_at=lt.${encodeURIComponent(new Date().toISOString())}`, {
+      method: 'DELETE', headers: { apikey: key, Authorization: `Bearer ${key}` },
+    });
+  } catch (e) {
+    console.warn('[historial-usuario] purga falló:', (e as Error).message);
+  }
+}

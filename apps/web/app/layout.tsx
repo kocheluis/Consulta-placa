@@ -114,7 +114,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
 
         {/* Nav (frosted, claro) */}
-        <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur-md">
+        <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur-md print:hidden">
           <div className="mx-auto flex max-w-[1180px] items-center gap-8 px-6 py-3.5 sm:px-8">
             <Link href="/" aria-label="PlacaPe — inicio" className="flex items-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -146,7 +146,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <main className="flex-1">{children}</main>
 
         {/* Footer (oscuro) */}
-        <footer className="mt-16 bg-azul-950 text-azul-200">
+        <footer className="mt-16 bg-azul-950 text-azul-200 print:hidden">
           <div className="mx-auto grid max-w-[1180px] gap-8 px-6 py-14 sm:px-8 md:grid-cols-[1.6fr_1fr_1fr_1fr]">
             <div>
               {/* eslint-disable-next-line @next/next/no-img-element */}

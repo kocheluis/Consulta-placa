@@ -33,7 +33,7 @@ import {
   TIER_RANK,
   ReportTier,
 } from '@app/shared';
-import { useConsulta, type CupoInfo } from '@/lib/use-consulta';
+import { useConsulta, type CupoInfo, type SnapshotInfo } from '@/lib/use-consulta';
 import { getPaidTier, buyReport, getAccount, type Tier } from '@/lib/account';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
@@ -116,8 +116,14 @@ export default function ReportePage() {
   // Modo operador: ?preview=TOKEN muestra el reporte COMPLETO (sin candado ni lead gate)
   // para incrustarlo en la consola del operador; el token lo valida el route handler.
   const [preview, setPreview] = useState<string | undefined>(undefined);
+  // Historial: ?snap=<id> abre la copia CONGELADA de una consulta pasada (no se regenera).
+  const [snap, setSnap] = useState<string | undefined>(undefined);
   useEffect(() => {
-    try { setPreview(new URLSearchParams(window.location.search).get('preview') || undefined); } catch { /* noop */ }
+    try {
+      const qs = new URLSearchParams(window.location.search);
+      setPreview(qs.get('preview') || undefined);
+      setSnap(qs.get('snap') || undefined);
+    } catch { /* noop */ }
   }, []);
   // ACCESO OBLIGATORIO: toda consulta requiere cuenta (antes: lead gate de correo en localStorage).
   // null = verificando la sesión; false = pedir login/registro; true = puede ver (o preview de operador).
@@ -127,7 +133,7 @@ export default function ReportePage() {
     getAccount().then((a) => setUnlocked(!!a)).catch(() => setUnlocked(false));
   }, [preview]);
   // Sin sesión NO se consulta nada (ni se encola): primero la cuenta.
-  const state = useConsulta(placa, refreshToken, PRO_ENABLED && unlocked === true, preview);
+  const state = useConsulta(placa, refreshToken, PRO_ENABLED && unlocked === true, preview, snap);
   const actualizar = () => setRefreshToken((n) => n + 1);
   // Reintento SOLO-ERRORES: encola en el backend la re-corrida de las fuentes que fallaron (el motor
   // reusa las buenas y repara las malas). Distinto de `actualizar`, que solo RE-LEE el reporte cacheado.
@@ -251,6 +257,7 @@ export default function ReportePage() {
       serverTier={state.tier}
       serverCupo={state.cupo}
       generating={state.generating}
+      snapshot={state.snapshot}
     />
   );
 }
@@ -360,10 +367,10 @@ const KIND_TIER = new Map<string, ReportTier>();
 for (const e of SECTION_CATALOG) if (e.dataKind) KIND_TIER.set(e.dataKind, e.tier);
 
 function ReportView({
-  report, cached, onRetry, onRetryErrors, preview, serverTier, serverCupo, generating,
+  report, cached, onRetry, onRetryErrors, preview, serverTier, serverCupo, generating, snapshot,
 }: {
   report: Report; cached: boolean; onRetry: () => void; onRetryErrors?: () => void | Promise<void>;
-  preview?: string; serverTier?: Tier; serverCupo?: CupoInfo; generating?: boolean;
+  preview?: string; serverTier?: Tier; serverCupo?: CupoInfo; generating?: boolean; snapshot?: SnapshotInfo;
 }) {
   const router = useRouter();
   const v = report.vehicle;
@@ -532,21 +539,39 @@ function ReportView({
             </span>
             {v && <span className="font-body text-sm text-muted">· {summary}</span>}
           </div>
-          <div className="ml-auto flex items-center gap-2.5">
+          <div className="ml-auto flex flex-wrap items-center gap-2.5 print:hidden">
             {report.status === 'PARTIAL' && (
               <Badge tone="warning" size="sm">
                 Reporte parcial
               </Badge>
             )}
-            <Button variant="secondary" size="sm" icon="refresh" onClick={onRetry}>
-              Actualizar
-            </Button>
+            {!preview && <ReportShareActions placa={report.placa} snap={snapshot?.id} />}
+            {!snapshot && (
+              <Button variant="secondary" size="sm" icon="refresh" onClick={onRetry}>
+                Actualizar
+              </Button>
+            )}
           </div>
         </div>
       </div>
 
+      {/* Copia CONGELADA del historial: así salió el reporte el día de la consulta. */}
+      {snapshot && (
+        <div className="mx-auto max-w-[1240px] px-4 pt-4 sm:px-7">
+          <div className="flex flex-wrap items-center gap-3 rounded-xl border border-azul-200 bg-azul-50 px-4 py-3">
+            <Icon name="history" className="text-[20px] text-primary" />
+            <p className="flex-1 font-body text-sm text-azul-700">
+              Reporte del {fmtDay(snapshot.createdAt)}, tal como salió ese día (no se actualiza). Disponible en tu historial hasta el {fmtDay(snapshot.expiresAt)}.
+            </p>
+            <Button variant="secondary" size="sm" href={`/reporte/${report.placa}`} icon="refresh" className="print:hidden">
+              Ver datos de hoy
+            </Button>
+          </div>
+        </div>
+      )}
+
       {/* Fuentes con error: el usuario puede reprocesar SOLO esas (el motor reusa las que sí salieron). */}
-      {failedVisible > 0 && (
+      {failedVisible > 0 && !snapshot && (
         <div className="mx-auto max-w-[1240px] px-4 pt-4 sm:px-7">
           <div className="flex flex-wrap items-center gap-3 rounded-xl border border-warning/40 bg-warning-bg px-4 py-3">
             <Icon name="warning" className="text-[20px] text-warning-fg" />
@@ -2387,5 +2412,39 @@ function PaidPanelLoading({ tier, finishing = false }: { tier: 'PRO' | 'ULTRA'; 
         </div>
       </div>
     </section>
+  );
+}
+
+const fmtDay = (iso: string) => new Date(iso).toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
+
+/* ── Descargar PDF (impresión del navegador → "Guardar como PDF") y enviar el enlace al correo de la cuenta ── */
+function ReportShareActions({ placa, snap }: { placa: string; snap?: string }) {
+  const [msg, setMsg] = useState<string | null>(null);
+  const [sending, setSending] = useState(false);
+  const enviar = async () => {
+    setSending(true);
+    setMsg(null);
+    try {
+      const r = await fetch(`/api/reporte/${encodeURIComponent(placa)}/enviar`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ snap }),
+      });
+      const d = (await r.json().catch(() => ({}))) as { to?: string; error?: string };
+      setMsg(r.ok ? `Enviado a ${d.to}` : d.error === 'espera_un_minuto' ? 'Espera un minuto para volver a enviarlo.' : 'No se pudo enviar. Inténtalo de nuevo.');
+    } catch {
+      setMsg('Sin conexión.');
+    } finally {
+      setSending(false);
+    }
+  };
+  return (
+    <>
+      <Button variant="secondary" size="sm" icon="picture_as_pdf" onClick={() => window.print()}>
+        Descargar PDF
+      </Button>
+      <Button variant="secondary" size="sm" icon="mail" onClick={enviar} disabled={sending}>
+        {sending ? 'Enviando…' : 'Enviar por correo'}
+      </Button>
+      {msg && <span className="font-body text-[12.5px] text-muted" role="status">{msg}</span>}
+    </>
   );
 }

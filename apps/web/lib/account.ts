@@ -170,14 +170,13 @@ export function onAccountChange(cb: (account: Account | null) => void): () => vo
   };
 }
 
+/** Una consulta del historial: copia CONGELADA del reporte entregado, visible 30 días. */
 export interface ReportHistoryItem {
   id: string;
   plate: string;
   tier: Tier;
-  status: string; // pending | paid | failed
-  amount: number;
   createdAt: string;
-  paidAt: string | null;
+  expiresAt: string;
 }
 
 /**
@@ -243,27 +242,16 @@ export async function buyReport(plate: string, tier: 'PRO' | 'ULTRA'): Promise<C
 }
 
 /**
- * Reportes comprados por el usuario (tabla `purchases`, RLS). Devuelve [] si
- * Supabase no está configurado o si la tabla aún no existe (migración 0002).
+ * Historial del usuario: sus consultas de los últimos 30 días, cada una CONGELADA tal como se entregó
+ * (tabla `reportes_usuario` vía /api/mis-reportes). [] si no hay sesión o la tabla aún no existe.
  */
 export async function getMyReports(): Promise<ReportHistoryItem[]> {
   if (!usingSupabase) return [];
   try {
-    const client = await sb();
-    const { data, error } = await client
-      .from('purchases')
-      .select('id, plate, tier, status, amount, created_at, paid_at')
-      .order('created_at', { ascending: false });
-    if (error || !data) return [];
-    return (data as Record<string, unknown>[]).map((r) => ({
-      id: String(r.id),
-      plate: String(r.plate),
-      tier: (r.tier as Tier) ?? 'PRO',
-      status: String(r.status),
-      amount: Number(r.amount ?? 0),
-      createdAt: String(r.created_at),
-      paidAt: r.paid_at ? String(r.paid_at) : null,
-    }));
+    const r = await fetch('/api/mis-reportes', { cache: 'no-store' });
+    if (!r.ok) return [];
+    const d = (await r.json()) as { items?: ReportHistoryItem[] };
+    return d.items ?? [];
   } catch {
     return [];
   }

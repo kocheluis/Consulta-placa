@@ -7,10 +7,12 @@ import type { Report } from '@app/shared';
 type Tier = 'BASIC' | 'PRO' | 'ULTRA';
 /** Cupo del usuario en sesión (si el admin se lo asignó): permite GENERAR con su cupo en vez de pagar. */
 export type CupoInfo = { enabled: boolean; tier: 'PRO' | 'ULTRA' } | null;
+/** Copia CONGELADA del historial del usuario (?snap=<id>): no se regenera ni se actualiza. */
+export type SnapshotInfo = { id: string; createdAt: string; expiresAt: string };
 
 type State =
   | { phase: 'loading'; report: null; error: null; generating: boolean }
-  | { phase: 'done'; report: Report | null; error: null; cached: boolean; generating: boolean; tier: Tier; cupo: CupoInfo }
+  | { phase: 'done'; report: Report | null; error: null; cached: boolean; generating: boolean; tier: Tier; cupo: CupoInfo; snapshot?: SnapshotInfo }
   | { phase: 'error'; report: null; error: string; needsPro: boolean; generating: false };
 
 type DoneState = Extract<State, { phase: 'done' }>;
@@ -29,7 +31,7 @@ function hasRealReport(s: State): s is DoneState & { report: Report } {
  * recortado por el nivel pagado). Hace polling cada 3 s mientras el motor del VPS lo
  * genera. `refreshToken` re-dispara la lectura (botón Actualizar).
  */
-export function useConsulta(placa: string, refreshToken = 0, enabled = true, preview?: string): State {
+export function useConsulta(placa: string, refreshToken = 0, enabled = true, preview?: string, snap?: string): State {
   const [state, setState] = useState<State>({ phase: 'loading', report: null, error: null, generating: false });
 
   useEffect(() => {
@@ -39,6 +41,22 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
     const qs = preview ? `?preview=${encodeURIComponent(preview)}` : '';
 
     const load = async () => {
+      if (snap) {
+        // Historial: el reporte tal como se entregó (sin polling, sin regenerar).
+        try {
+          const r = await fetch(`/api/mis-reportes/${encodeURIComponent(snap)}`, { cache: 'no-store' });
+          if (cancelled) return;
+          if (!r.ok) {
+            setState({ phase: 'error', report: null, error: r.status === 401 ? 'Inicia sesión para ver tu historial.' : 'Este reporte ya no está disponible: el historial guarda cada consulta por 30 días.', needsPro: false, generating: false });
+            return;
+          }
+          const d = (await r.json()) as { report: Report; tier: Tier; snapshot: SnapshotInfo };
+          if (!cancelled) setState({ phase: 'done', report: d.report, error: null, cached: true, generating: false, tier: d.tier, cupo: null, snapshot: d.snapshot });
+        } catch (e) {
+          if (!cancelled) setState({ phase: 'error', report: null, error: (e as Error).message, needsPro: false, generating: false });
+        }
+        return;
+      }
       try {
         const r = await fetch(`/api/reporte/${encodeURIComponent(placa)}${qs}`, { cache: 'no-store' });
         if (cancelled) return;
@@ -75,7 +93,7 @@ export function useConsulta(placa: string, refreshToken = 0, enabled = true, pre
     setState((prev) => (hasRealReport(prev) ? prev : { phase: 'loading', report: null, error: null, generating: false }));
     load();
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [placa, refreshToken, enabled, preview]);
+  }, [placa, refreshToken, enabled, preview, snap]);
 
   return state;
 }
