@@ -13,7 +13,7 @@ export async function GET() {
   if (!isAdminConfigured) return NextResponse.json({ authed: false, enabled: false });
   const cupo = await getSessionCupo();
   if (!cupo) return NextResponse.json({ authed: false, enabled: false });
-  if (!cupo.access.enabled) return NextResponse.json({ authed: true, enabled: false });
+  if (!cupo.access.enabled) return NextResponse.json({ authed: true, enabled: false, packExpired: !!cupo.access.packExpired, pack: cupo.access.pack });
   const status = await getCupoStatus(cupo.userId, cupo.access);
   return NextResponse.json({ authed: true, ...status });
 }

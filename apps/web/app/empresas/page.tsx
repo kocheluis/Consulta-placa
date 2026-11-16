@@ -56,8 +56,8 @@ const FEATURES = [
   },
   {
     icon: 'receipt_long',
-    title: 'Facturación con packs',
-    desc: 'Compra por volumen, factura con RUC y baja el costo por reporte mientras más verificas.',
+    title: 'Paquetes mensuales',
+    desc: 'Paquetes de 20 y 50 consultas al mes: el reporte Completo te sale desde S/ 1.00.',
   },
 ];
 
@@ -234,19 +234,19 @@ export default function EmpresasPage() {
                 <h2 className="font-heading text-[26px] font-extrabold tracking-tight">Precio por volumen</h2>
               </div>
               <p className="mt-2 text-[15px] leading-relaxed text-azul-200">
-                Desde <strong className="text-white">10 reportes</strong>, el costo por consulta baja hasta{' '}
-                <strong className="text-teal-300">S/ 9.90 (Pro)</strong> o{' '}
-                <strong className="text-teal-300">S/ 12.90 (Ultra)</strong>. Factura con RUC y vigencia de 12 meses.
+                Con un paquete mensual, cada reporte Completo cuesta{' '}
+                <strong className="text-teal-300">S/ 1.50</strong> (20 consultas por S/ 29.90) o{' '}
+                <strong className="text-teal-300">S/ 1.00</strong> (50 consultas por S/ 49.90). Se piden por WhatsApp y duran 30 días.
               </p>
               <div className="mt-4 flex flex-wrap gap-2">
-                {['10 / 25 / 50 reportes', 'Hasta −35%', 'Factura electrónica', 'Vigencia 12 meses'].map((t) => (
+                {['20 o 50 consultas', 'Reporte Completo con IA', 'Vigencia 30 días', 'No acumulable'].map((t) => (
                   <Tag key={t}>{t}</Tag>
                 ))}
               </div>
             </div>
             <div className="flex flex-col gap-3">
               <Button variant="accent" size="lg" iconRight="arrow_forward" href="/planes">
-                Ver packs por volumen
+                Ver paquetes
               </Button>
               <Button variant="secondary" size="lg" icon="mail" href="mailto:ventas@placape.pe">
                 Habla con ventas

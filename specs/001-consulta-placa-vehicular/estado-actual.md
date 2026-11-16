@@ -21,7 +21,17 @@ este documento, **manda este documento**.
 - **Identidad:** wordmark "placa**pe**" (azul + teal), logos en `apps/web/public/brand/`,
   favicons/OG recoloreados. Ver `design-system.md` (reescrito a la marca PlacaPe).
 
-## 2. Modelo de producto — 3 niveles (antes: único reporte gratis)
+## 2. Modelo de producto
+
+> **★ VIGENTE desde nov-2026 (manda sobre la tabla de abajo):** solo **Básico** (gratis) y **Completo**
+> (= Pro + Ultra unidos: todas las fuentes + IA + valorización; en la base sigue siendo el nivel `ULTRA`).
+> Venta: **Completo por placa S/ 9.90** (Yape, desde el reporte) · **paquetes mensuales** de 20 consultas
+> S/ 29.90 y 50 consultas S/ 49.90 (se piden por WhatsApp, el admin los activa en `/admin/usuarios`;
+> vencen a los 30 días, no acumulables) · **1 Completo gratis por cuenta y por dispositivo** (cookie +
+> localStorage + huella del navegador, tabla `trial_uses`). Precios y textos: `apps/web/lib/planes.ts`.
+> Migración `0012_planes_completo.sql`. Historial de consultas congelado 30 días (`0011`).
+
+### Histórico — 3 niveles (antes: único reporte gratis)
 
 | Nivel | Precio | Qué incluye |
 |------|--------|-------------|

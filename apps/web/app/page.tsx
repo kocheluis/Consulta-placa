@@ -2,6 +2,7 @@ import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
 import { HeroSearch } from '@/components/HeroSearch';
+import { PlanCards } from '@/components/PlanCards';
 
 const FAQ = [
   {
@@ -10,11 +11,11 @@ const FAQ = [
   },
   {
     q: '¿La consulta de placa es gratis?',
-    a: 'El nivel básico es gratuito y muestra la información común del vehículo. Los reportes Pro y Ultra, con más fuentes y análisis, son de pago por reporte.',
+    a: 'El reporte Básico es gratuito. El reporte Completo (todas las fuentes, análisis con IA y valorización) cuesta S/ 9.90 por placa, y tu primer reporte Completo es gratis al crear tu cuenta. Si revisas varios autos, hay paquetes mensuales de 20 y 50 consultas.',
   },
   {
     q: '¿Cómo saber si un vehículo tiene papeletas?',
-    a: 'Con la placa revisamos papeletas a nivel nacional (MTC) y de los SAT por jurisdicción (Lima, Callao, Piura, Ica, Huancayo, Chiclayo, Cajamarca, Arequipa, entre otros).',
+    a: 'Con la placa revisamos las papeletas de los SAT de Lima, Callao, Trujillo, Piura, Chiclayo, Cajamarca y Arequipa, y te mostramos el resultado de cada uno.',
   },
   {
     q: '¿Cómo saber si un auto tiene orden de captura?',
@@ -75,11 +76,6 @@ const FEATURES = [
 // como enlaces sugeridos en /portales). SIGM/FISE/Infogas/Callao también son reales.
 const SOURCES = ['SUNARP', 'SAT', 'SBS', 'MTC', 'APESEG', 'ATU', 'FISE'];
 
-const PLANS = [
-  { name: 'Basic', price: 'Gratis', desc: 'Vista general del vehículo por placa.', variant: 'secondary' as const, featured: false, tag: null },
-  { name: 'Pro', price: 'S/ 15.90', desc: 'Reporte completo de las fuentes + score de riesgo.', variant: 'primary' as const, featured: false, tag: 'Más popular' },
-  { name: 'Ultra', price: 'S/ 19.90', desc: 'Todo + análisis con IA y valor de compra de referencia.', variant: 'accent' as const, featured: true, tag: 'Recomendado' },
-];
 
 // Testimonios de personas reales que solicitaron su reporte durante la marcha blanca (corridas
 // atendidas por nosotros a pedido). Feedback real: los reportes fueron útiles y revelaron papeletas
@@ -97,7 +93,7 @@ const SPECIAL_CASES: { icon: string; sev: 'alert' | 'warn'; tag: string; title: 
   { icon: 'car_crash', sev: 'alert', tag: 'Siniestro', title: 'Pérdida total por siniestro', desc: 'Una aseguradora (Rímac, Pacífico, Mapfre, La Positiva, Qualitas…) figura como parte en el historial: el vehículo fue declarado pérdida total.', source: 'SUNARP · SPRL' },
   { icon: 'build', sev: 'alert', tag: 'Motor', title: 'Cambio de motor no inscrito', desc: 'El N.º de motor no coincide con el registrado en SUNARP: posible cambio sin inscribir.', source: 'SUNARP' },
   { icon: 'gavel', sev: 'alert', tag: 'Gravamen', title: 'Vehículo prendado', desc: 'Tiene una garantía mobiliaria vigente a favor de un banco o financiera.', source: 'SUNARP · SIGM' },
-  { icon: 'receipt_long', sev: 'alert', tag: 'Multas', title: 'Papeletas acumuladas', desc: 'Varias papeletas pendientes en SAT (Lima/Callao) y a nivel nacional (MTC).', source: 'SAT · MTC' },
+  { icon: 'receipt_long', sev: 'alert', tag: 'Multas', title: 'Papeletas acumuladas', desc: 'Varias papeletas pendientes en los SAT de Lima, Callao y provincias.', source: 'SAT' },
   { icon: 'block', sev: 'alert', tag: 'Captura', title: 'Orden de captura activa', desc: 'El SAT reporta orden de captura o internamiento por deuda impaga.', source: 'SAT' },
   { icon: 'local_gas_station', sev: 'warn', tag: 'GNV', title: 'Crédito de conversión GNV pendiente', desc: 'Deuda del crédito de conversión a gas (FISE) que no ha sido cancelada.', source: 'FISE' },
 ];
@@ -411,46 +407,13 @@ export default function HomePage() {
       <section id="planes" className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
         <div className="mb-10 text-center">
           <p className="mb-2 font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
-            Sin suscripción · pago por reporte
+            Por placa o en paquete mensual
           </p>
           <h2 className="font-heading text-[32px] font-bold tracking-tight text-foreground sm:text-[38px]">
             Precios claros
           </h2>
         </div>
-        <div className="grid items-stretch gap-5 md:grid-cols-3">
-          {PLANS.map((p) => (
-            <div
-              key={p.name}
-              className={`relative flex flex-col rounded-xl p-7 ${
-                p.featured
-                  ? 'border-2 border-teal-500 bg-azul-950 text-white shadow-lg'
-                  : 'border border-border bg-surface text-foreground shadow-sm'
-              }`}
-            >
-              {p.tag && (
-                <span
-                  className={`absolute -top-3 left-7 whitespace-nowrap rounded-full px-3 py-1 text-xs font-bold tracking-wide ${
-                    p.featured ? 'bg-teal-500 text-[#042D29]' : 'bg-primary text-white'
-                  }`}
-                >
-                  {p.tag}
-                </span>
-              )}
-              <h3 className={`font-heading text-[22px] font-extrabold ${p.featured ? 'text-white' : 'text-foreground'}`}>
-                {p.name}
-              </h3>
-              <p className={`mb-1 mt-2.5 font-heading text-4xl font-extrabold tracking-tight ${p.featured ? 'text-white' : 'text-foreground'}`}>
-                {p.price}
-              </p>
-              <p className={`mb-5 flex-1 font-body text-sm leading-normal ${p.featured ? 'text-azul-200' : 'text-muted'}`}>
-                {p.desc}
-              </p>
-              <Button variant={p.variant} block size="md" iconRight="arrow_forward" href="/cuenta">
-                Elegir {p.name}
-              </Button>
-            </div>
-          ))}
-        </div>
+        <PlanCards />
       </section>
 
       {/* ---------- Testimonios ---------- */}

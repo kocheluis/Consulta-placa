@@ -9,15 +9,15 @@ import { Card } from '@/components/ui/Card';
 import { Tag } from '@/components/ui/Tag';
 import { RiskGauge } from '@/components/RiskGauge';
 
-const PLAN_LEVEL = { basic: 1, pro: 2, ultra: 3 } as const;
+// Dos niveles: Básico (gratis) y Completo (todas las fuentes + IA). Las secciones de nivel 2 y 3 son del Completo.
+const PLAN_LEVEL = { basic: 1, completo: 3 } as const;
 type Plan = keyof typeof PLAN_LEVEL;
 
 const PLANS: { id: Plan; name: string; price: string; blurb: string }[] = [
-  { id: 'basic', name: 'Basic', price: 'Gratis', blurb: 'Vista general del vehículo' },
-  { id: 'pro', name: 'Pro', price: 'S/ 15.90', blurb: 'Reporte completo de las fuentes + score' },
-  { id: 'ultra', name: 'Ultra', price: 'S/ 19.90', blurb: 'Todo + IA y valorización de mercado' },
+  { id: 'basic', name: 'Básico', price: 'Gratis', blurb: 'Vista general del vehículo' },
+  { id: 'completo', name: 'Completo', price: 'S/ 9.90', blurb: 'Todas las fuentes + IA y valorización de mercado' },
 ];
-const neededName = (level: number) => (level === 3 ? 'Ultra' : 'Pro');
+const neededName = (_level: number) => 'Completo';
 
 function DefGrid({ items }: { items: [string, string][] }) {
   return (
@@ -114,7 +114,7 @@ function SectionCard({
                 variant="accent"
                 size="sm"
                 iconRight="arrow_forward"
-                onClick={() => onUpgrade(level === 3 ? 'ultra' : 'pro')}
+                onClick={() => onUpgrade('completo')}
               >
                 Mejorar a {needed}
               </Button>
@@ -127,7 +127,7 @@ function SectionCard({
 }
 
 export default function ReporteEjemploPage() {
-  const [plan, setPlan] = useState<Plan>('pro');
+  const [plan, setPlan] = useState<Plan>('completo');
   const lvl = PLAN_LEVEL[plan];
   const cur = PLANS.find((p) => p.id === plan)!;
 
@@ -159,7 +159,7 @@ export default function ReporteEjemploPage() {
                       on ? 'bg-surface text-primary shadow-sm' : 'text-muted hover:text-foreground'
                     }`}
                   >
-                    {p.id === 'ultra' && <Icon name="bolt" fill={on} className="text-[15px]" />}
+                    {p.id === 'completo' && <Icon name="bolt" fill={on} className="text-[15px]" />}
                     {p.name}
                   </button>
                 );
@@ -191,22 +191,22 @@ export default function ReporteEjemploPage() {
           <Card padded>
             <div className="flex items-center justify-between">
               <span className="font-body text-xs font-bold uppercase tracking-wider text-slate-400">Tu plan</span>
-              <Badge tone={plan === 'ultra' ? 'brand' : plan === 'pro' ? 'info' : 'neutral'} size="sm" icon={plan === 'ultra' ? 'bolt' : null}>
+              <Badge tone={plan === 'completo' ? 'brand' : 'neutral'} size="sm" icon={plan === 'completo' ? 'bolt' : null}>
                 {cur.name}
               </Badge>
             </div>
             <p className="mb-0.5 mt-2.5 font-heading text-[26px] font-extrabold text-foreground">{cur.price}</p>
             <p className="font-body text-[13px] leading-normal text-muted">{cur.blurb}</p>
-            {plan !== 'ultra' && (
+            {plan !== 'completo' && (
               <Button
                 variant="accent"
                 size="sm"
                 block
                 iconRight="arrow_forward"
                 className="mt-3.5"
-                onClick={() => setPlan(plan === 'basic' ? 'pro' : 'ultra')}
+                onClick={() => setPlan('completo')}
               >
-                Mejorar a {plan === 'basic' ? 'Pro' : 'Ultra'}
+                Mejorar a Completo
               </Button>
             )}
           </Card>
@@ -242,11 +242,11 @@ export default function ReporteEjemploPage() {
             <p className="mt-1.5 font-body text-[13px] text-muted">Último cambio: feb 2023 · Lima</p>
           </SectionCard>
 
-          <SectionCard title="SOAT" icon="health_and_safety" level={2} plan={plan} badge={<Badge tone="success" size="sm">Vigente</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="SOAT" icon="health_and_safety" level={3} plan={plan} badge={<Badge tone="success" size="sm">Vigente</Badge>} onUpgrade={setPlan}>
             <DefGrid items={[['Estado', 'Vigente'], ['Aseguradora', 'La Positiva'], ['Póliza', 'N° 4471882'], ['Vence', '12 ago 2026']]} />
           </SectionCard>
 
-          <SectionCard title="Papeletas y multas" icon="receipt_long" level={2} plan={plan} badge={<Badge tone="warning" size="sm">2 · S/ 480</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="Papeletas y multas" icon="receipt_long" level={3} plan={plan} badge={<Badge tone="warning" size="sm">2 · S/ 480</Badge>} onUpgrade={setPlan}>
             <PapeletaRow label="Exceso de velocidad" place="SAT Lima · 2024" amount="S/ 336" />
             <PapeletaRow label="Estacionamiento prohibido" place="SAT Lima · 2023" amount="S/ 144" />
             <div className="flex justify-between pt-2.5 font-bold">
@@ -255,15 +255,15 @@ export default function ReporteEjemploPage() {
             </div>
           </SectionCard>
 
-          <SectionCard title="Revisión técnica (MTC)" icon="fact_check" level={2} plan={plan} badge={<Badge tone="warning" size="sm">Vencida</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="Revisión técnica (MTC)" icon="fact_check" level={3} plan={plan} badge={<Badge tone="warning" size="sm">Vencida</Badge>} onUpgrade={setPlan}>
             <DefGrid items={[['Estado', 'Vencida'], ['Última', 'mar 2025'], ['Vigencia', 'mar 2026'], ['Resultado', 'Aprobado']]} />
           </SectionCard>
 
-          <SectionCard title="Siniestralidad (SBS)" icon="car_crash" level={2} plan={plan} badge={<Badge tone="danger" size="sm">1 siniestro</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="Siniestralidad (SBS)" icon="car_crash" level={3} plan={plan} badge={<Badge tone="danger" size="sm">1 siniestro</Badge>} onUpgrade={setPlan}>
             <ReportItem status="danger" label="Choque con daños" value="Reportado a la SBS · jun 2022" icon="car_crash" />
           </SectionCard>
 
-          <SectionCard title="Orden de captura (SAT)" icon="gavel" level={2} plan={plan} badge={<Badge tone="success" size="sm">Sin órdenes</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="Orden de captura (SAT)" icon="gavel" level={3} plan={plan} badge={<Badge tone="success" size="sm">Sin órdenes</Badge>} onUpgrade={setPlan}>
             <ReportItem status="success" label="Sin órdenes de captura vigentes" icon="verified" />
           </SectionCard>
 
@@ -287,7 +287,7 @@ export default function ReporteEjemploPage() {
             <p className="mt-1 font-body text-[13px] text-muted">Rango estimado: S/ 39,800 – 45,100</p>
           </SectionCard>
 
-          <SectionCard title="Análisis con IA" icon="auto_awesome" level={3} plan={plan} wide badge={<Badge tone="brand" size="sm" icon="bolt">Ultra</Badge>} onUpgrade={setPlan}>
+          <SectionCard title="Análisis con IA" icon="auto_awesome" level={3} plan={plan} wide badge={<Badge tone="brand" size="sm" icon="bolt">Con IA</Badge>} onUpgrade={setPlan}>
             <div className="flex items-start gap-3.5">
               <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-teal-50">
                 <Icon name="auto_awesome" fill className="text-[22px] text-teal-700" />

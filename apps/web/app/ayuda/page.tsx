@@ -18,7 +18,7 @@ const CATS = [
 const FAQS = [
   {
     q: '¿Qué información incluye un reporte?',
-    a: 'Identidad del vehículo, propietarios, SOAT, papeletas, siniestralidad, órdenes de captura, revisión técnica y —en Ultra— gravámenes, valorización de mercado y análisis con IA. Todo desde +10 fuentes nacionales.',
+    a: 'Identidad del vehículo, propietarios, SOAT, papeletas, siniestralidad, órdenes de captura, revisión técnica (Básico, gratis) y, en el reporte Completo, historial de dueños y precios, papeletas de los SAT, gravámenes, orden de captura, siniestralidad, valorización de mercado y análisis con IA. Todo desde más de 10 fuentes oficiales.',
   },
   {
     q: '¿De dónde provienen los datos?',
@@ -26,7 +26,7 @@ const FAQS = [
   },
   {
     q: '¿Cuánto demora la consulta?',
-    a: 'El reporte se genera en unos segundos. Recibirás el resultado en pantalla y una copia en tu correo.',
+    a: 'El reporte Básico sale en segundos. El Completo consulta más de 10 portales y está listo en 3 a 10 minutos; te avisamos por correo cuando termina.',
   },
   {
     q: '¿Qué pasa si la placa no aparece?',
@@ -34,11 +34,11 @@ const FAQS = [
   },
   {
     q: '¿Puedo pagar con Yape?',
-    a: 'Sí. Aceptaremos Yape y tarjetas Visa/Mastercard/Amex/Diners a través de IziPay. El pago será seguro y el acceso al reporte inmediato. (Los pagos en línea se están activando.)',
+    a: 'Sí. El reporte Completo (S/ 9.90) se paga con Yape desde el mismo reporte, y los paquetes mensuales se piden por WhatsApp. Por ahora no aceptamos tarjeta.',
   },
   {
-    q: '¿Los packs por volumen vencen?',
-    a: 'Los packs (Pro y Ultra) tienen una vigencia de 12 meses desde la compra. Ideal para concesionarias que verifican varios vehículos.',
+    q: '¿Los paquetes de consultas vencen?',
+    a: 'Sí. Los paquetes de 20 consultas (S/ 29.90) y 50 consultas (S/ 49.90) duran 30 días desde que se activan y no son acumulables: las consultas que no uses no pasan al mes siguiente, y un paquete nuevo reemplaza al anterior.',
   },
 ];
 

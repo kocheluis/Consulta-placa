@@ -116,11 +116,11 @@ export default function ConsultasPage() {
     <div className="mx-auto max-w-[820px] px-6 py-12 sm:px-8">
       <div className="mb-2 flex items-center gap-2">
         <span className="rounded-md bg-azul-50 px-2 py-0.5 font-mono text-[11.5px] font-bold tracking-wide text-primary">MI CUPO</span>
-        <span className="rounded-md border border-border px-2 py-0.5 font-mono text-[11px] text-muted">nivel {estado.tier}</span>
+        <span className="rounded-md border border-border px-2 py-0.5 font-mono text-[11px] text-muted">reporte Completo</span>
       </div>
       <h1 className="font-heading text-[28px] font-extrabold tracking-tight text-foreground sm:text-[34px]">Consulta de placas</h1>
       <p className="mt-2 max-w-[60ch] text-[15px] leading-relaxed text-muted">
-        Cada consulta genera un reporte <b>{estado.tier}</b> y descuenta 1 de tu cupo. Volver a ver un
+        Cada consulta genera un reporte <b>Completo</b> y descuenta 1 de tu cupo. Volver a ver un
         reporte ya generado no consume cupo.
       </p>
 

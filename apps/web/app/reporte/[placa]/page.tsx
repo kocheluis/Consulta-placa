@@ -43,6 +43,8 @@ import { Tag } from '@/components/ui/Tag';
 import { RiskGauge } from '@/components/RiskGauge';
 import { StateScreen } from '@/components/StateScreen';
 import { AuthGate } from '@/components/AuthGate';
+import { PRECIO_INDIVIDUAL, PAQUETES, soles } from '@/lib/planes';
+import { deviceSignals } from '@/lib/device';
 
 // Activo por defecto (el pipeline ya está vivo). Kill-switch: NEXT_PUBLIC_PRO_ENABLED=false.
 const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED !== 'false';
@@ -286,14 +288,14 @@ function CupoConsultCTA({ placa, tier, onStarted }: { placa: string; tier: 'PRO'
     }
     setLoading(false);
   };
-  const nivel = tier === 'ULTRA' ? 'Ultra' : 'Pro';
+  void tier; // un solo reporte de pago (Completo); el nivel del cupo ya no se muestra
   return (
     <div className="flex flex-col items-center gap-2 text-center">
       <Button variant="accent" size="lg" icon="workspace_premium" onClick={run} disabled={loading}>
-        {loading ? 'Generando…' : `Consultar con mi cupo · ${nivel}`}
+        {loading ? 'Generando…' : 'Generar reporte Completo con mi paquete'}
       </Button>
       <p className="max-w-sm font-body text-[12.5px] leading-snug text-muted">
-        Usa 1 de tu cupo asignado (no se cobra). El reporte {nivel} se procesa en unos minutos.
+        Usa 1 consulta de tu paquete (no se cobra). El reporte Completo se procesa en unos minutos.
       </p>
       {err && <p className="font-body text-sm text-danger">{err}</p>}
     </div>
@@ -332,8 +334,8 @@ function FreeConsultaGate({ placa, onStarted, cupo }: { placa: string; onStarted
         <StateScreen
           tone="brand"
           icon="workspace_premium"
-          title="Consulta con tu cupo"
-          description={`Tu cuenta tiene un cupo ${cupo.tier === 'ULTRA' ? 'Ultra' : 'Pro'} asignado. Genera el reporte completo sin pagar; se descuenta 1 de tu cupo.`}
+          title="Consulta con tu paquete"
+          description="Tu cuenta tiene un paquete de consultas activo. Genera el reporte Completo sin pagar; se descuenta 1 consulta."
           footer={`Placa ${formatPlateDisplay(placa)}`}
         >
           <CupoConsultCTA placa={placa} tier={cupo.tier} onStarted={onStarted} />
@@ -696,14 +698,14 @@ const TIER_PANEL_META: Record<string, { name: string; short: string; icon: strin
     accent: 'bg-azul-50 text-primary',
   },
   [ReportTier.PRO]: {
-    name: 'Reporte Pro', short: 'Pro', icon: 'workspace_premium', price: '15.90',
+    name: 'Reporte Completo', short: 'Completo', icon: 'workspace_premium', price: '9.90',
     desc: 'Historial de dueños y precios, papeletas, orden de captura, gravámenes y siniestralidad.',
     accent: 'bg-teal-50 text-teal-700',
   },
   [ReportTier.ULTRA]: {
-    name: 'Reporte Ultra', short: 'Ultra', icon: 'auto_awesome', price: '19.90',
-    desc: 'Todo lo de Pro + valorización de mercado y recomendación de compra con IA.',
-    accent: 'bg-violet-50 text-violet-700',
+    name: 'Reporte Completo', short: 'Completo', icon: 'auto_awesome', price: '9.90',
+    desc: 'Todas las fuentes + valorización de mercado y recomendación de compra con IA.',
+    accent: 'bg-teal-50 text-teal-700',
   },
 };
 
@@ -868,12 +870,12 @@ function PaidPanel({
             <Icon name="workspace_premium" className="text-[24px]" />
           </div>
           <div className="min-w-0 flex-1">
-            <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte completo con tu cupo</h2>
+            <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte Completo con tu paquete</h2>
             <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
-              Tu cuenta tiene un cupo {cupo.tier === 'ULTRA' ? 'Ultra' : 'Pro'}. Genera el reporte completo sin pagar.
+              Tu cuenta tiene un paquete de consultas activo. Genera el reporte Completo sin pagar.
             </p>
           </div>
-          <Badge tone="info" size="sm" icon="workspace_premium">Cupo {cupo.tier}</Badge>
+          <Badge tone="info" size="sm" icon="workspace_premium">Paquete</Badge>
         </div>
         <div className="p-5">
           <div className="rounded-xl border border-dashed border-border bg-background px-4 py-6">
@@ -886,7 +888,7 @@ function PaidPanel({
 
   // Aún no desbloqueado (BASIC): un solo panel oculto con dos pasos (Desbloquear → elegir nivel).
   if (!unlockedPro) {
-    return <LockedPaidPanel proEntries={proEntries} ultraEntries={ultraEntries} onActivate={onActivate} buying={buying} />;
+    return <LockedPaidPanel placa={report.placa} proEntries={proEntries} ultraEntries={ultraEntries} onActivate={onActivate} buying={buying} onTrialStarted={onRefetch ?? onRetry} />;
   }
 
   // Desbloqueado (Pro o Ultra): muestra las secciones Pro; ULTRA muestra además IA, o upsell si es Pro.
@@ -898,7 +900,7 @@ function PaidPanel({
         </div>
         <div className="min-w-0 flex-1">
           <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">
-            Reporte PRO/ULTRA
+            Reporte Completo
           </h2>
           <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
             {unlockedUltra
@@ -922,16 +924,17 @@ function PaidPanel({
   );
 }
 
-/** Panel bloqueado (usuario BASIC): teaser + dos pasos (Desbloquear → Pro/Ultra). */
+/** Panel bloqueado (usuario BASIC): qué trae el Completo + prueba gratis (si aplica) + compra S/ 9.90. */
 function LockedPaidPanel({
-  proEntries, ultraEntries, onActivate, buying,
+  placa, proEntries, ultraEntries, onActivate, buying, onTrialStarted,
 }: {
+  placa: string;
   proEntries: readonly SectionCatalogEntry[];
   ultraEntries: readonly SectionCatalogEntry[];
   onActivate: (tier: 'PRO' | 'ULTRA') => void;
   buying: 'PRO' | 'ULTRA' | null;
+  onTrialStarted: () => void;
 }) {
-  const [revealed, setRevealed] = useState(false);
   const all = [...proEntries, ...ultraEntries];
   return (
     <section className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm">
@@ -940,7 +943,7 @@ function LockedPaidPanel({
           <Icon name="workspace_premium" className="text-[24px]" />
         </div>
         <div className="min-w-0 flex-1">
-          <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte completo (Pro y Ultra)</h2>
+          <h2 className="font-heading text-lg font-extrabold tracking-tight text-foreground">Reporte Completo</h2>
           <p className="mt-0.5 font-body text-[13px] leading-snug text-muted">
             Historial de dueños y precios, papeletas, gravámenes, orden de captura, siniestralidad y análisis con IA.
           </p>
@@ -955,7 +958,7 @@ function LockedPaidPanel({
               <div className="min-w-0">
                 <p className="flex items-center gap-1.5 font-body text-[14px] font-semibold text-foreground">
                   {e.label}
-                  {e.tier === ReportTier.ULTRA && <Badge tone="info" size="sm" icon={null}>Ultra</Badge>}
+                  {e.tier === ReportTier.ULTRA && <Badge tone="info" size="sm" icon={null}>Con IA</Badge>}
                 </p>
                 <p className="font-body text-[12.5px] leading-snug text-muted">{e.blurb}</p>
               </div>
@@ -963,59 +966,98 @@ function LockedPaidPanel({
           ))}
         </div>
 
-        <div className="mt-5 rounded-xl border border-dashed border-border bg-background px-4 py-5">
-          {!revealed ? (
-            <div className="flex flex-col items-center gap-2 text-center">
-              <Button variant="accent" size="lg" icon="lock_open" onClick={() => setRevealed(true)}>
-                Desbloquear reporte completo
-              </Button>
-              <p className="max-w-sm font-body text-[12.5px] leading-snug text-muted">
-                Elige tu nivel. Nuestros especialistas procesan el reporte y estará listo en 3 a 10 minutos.
-              </p>
-            </div>
-          ) : (
-            <div className="flex flex-col items-center gap-3 text-center">
-              <p className="font-body text-[13px] font-semibold text-foreground">Elige tu nivel</p>
-              <div className="flex flex-col items-stretch gap-2.5 sm:flex-row sm:justify-center">
-                <Button variant="secondary" size="lg" onClick={() => onActivate('PRO')} disabled={!!buying}>
-                  {buying === 'PRO' ? 'Procesando…' : 'Activar Pro · S/ 15.90'}
-                </Button>
-                <div className="relative">
-                  <Button variant="accent" size="lg" icon="auto_awesome" onClick={() => onActivate('ULTRA')} disabled={!!buying}>
-                    {buying === 'ULTRA' ? 'Procesando…' : 'Activar Ultra · S/ 19.90'}
-                  </Button>
-                  <span className="pointer-events-none absolute -top-2.5 right-2 rounded-full bg-teal-600 px-2 py-0.5 font-body text-[10px] font-bold uppercase tracking-wide text-white shadow">
-                    Con IA
-                  </span>
-                </div>
-              </div>
-              <p className="max-w-md font-body text-[12.5px] leading-snug text-muted">
-                <strong className="text-foreground">Ultra</strong> incluye recomendación de compra con IA y valorización de mercado.
-                Al activar, el reporte se procesa y estará listo en 3 a 10 minutos.
-              </p>
-            </div>
-          )}
+        <TrialCTA placa={placa} onStarted={onTrialStarted} />
+
+        <div className="mt-4 rounded-xl border border-dashed border-border bg-background px-4 py-5">
+          <div className="flex flex-col items-center gap-2.5 text-center">
+            <Button variant="accent" size="lg" icon="lock_open" onClick={() => onActivate('ULTRA')} disabled={!!buying}>
+              {buying ? 'Procesando…' : `Activar reporte Completo · ${soles(PRECIO_INDIVIDUAL)}`}
+            </Button>
+            <p className="max-w-md font-body text-[12.5px] leading-snug text-muted">
+              Incluye todas las fuentes, la recomendación de compra con IA y la valorización de mercado. Estará listo en 3 a 10 minutos.
+            </p>
+            <a href="/planes" className="font-body text-[13px] font-semibold text-primary hover:underline">
+              ¿Consultas seguido? Paquetes de {PAQUETES.map((p) => p.consultas).join(' y ')} consultas al mes desde {soles(PAQUETES[0]!.precio)}
+            </a>
+          </div>
         </div>
       </div>
     </section>
   );
 }
 
-/** Upsell a Ultra dentro del panel Pro ya desbloqueado. */
+/** Compras Pro ANTIGUAS (antes de unir Pro+Ultra): ofrece completar con IA y valorización. */
 function UltraUpsell({ busy, onActivate }: { busy: boolean; onActivate: () => void }) {
   return (
     <div className="rounded-xl border border-dashed border-teal-300 bg-teal-50/60 p-4">
       <div className="mb-2 flex items-center gap-2">
         <Icon name="auto_awesome" className="text-[20px] text-teal-700" />
-        <h4 className="font-heading text-[15px] font-bold text-foreground">Sube a Ultra</h4>
+        <h4 className="font-heading text-[15px] font-bold text-foreground">Agrega el análisis con IA</h4>
         <Badge tone="info" size="sm" icon={null}>Con IA</Badge>
       </div>
       <p className="mb-3 font-body text-[13px] leading-snug text-muted">
         Recomendación de compra con IA a partir de todo el reporte y valorización de mercado.
       </p>
       <Button variant="accent" size="md" icon="auto_awesome" onClick={onActivate} disabled={busy}>
-        {busy ? 'Procesando…' : 'Activar Ultra · S/ 19.90'}
+        {busy ? 'Procesando…' : `Activar reporte Completo · ${soles(PRECIO_INDIVIDUAL)}`}
       </Button>
+    </div>
+  );
+}
+
+/** Prueba gratis del reporte Completo (1 por cuenta y por dispositivo; ver /api/prueba-completa). */
+function TrialCTA({ placa, onStarted }: { placa: string; onStarted: () => void }) {
+  const [eligible, setEligible] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState<string | null>(null);
+  const signals = useRef<{ localId: string; fp: string } | null>(null);
+
+  useEffect(() => {
+    let alive = true;
+    (async () => {
+      try {
+        const s = await deviceSignals();
+        signals.current = s;
+        const r = await fetch(`/api/prueba-completa?l=${encodeURIComponent(s.localId)}&f=${encodeURIComponent(s.fp)}`, { cache: 'no-store' });
+        const d = (await r.json().catch(() => ({}))) as { eligible?: boolean };
+        if (alive) setEligible(Boolean(d.eligible));
+      } catch { /* sin prueba visible */ }
+    })();
+    return () => { alive = false; };
+  }, []);
+
+  if (!eligible) return null;
+  const usar = async () => {
+    setBusy(true);
+    setErr(null);
+    try {
+      const s = signals.current ?? (await deviceSignals());
+      const r = await fetch('/api/prueba-completa', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ placa, localId: s.localId, fp: s.fp }),
+      });
+      const d = (await r.json().catch(() => ({}))) as { ok?: boolean; error?: string };
+      if (r.ok && d.ok) { setEligible(false); onStarted(); return; }
+      if (d.error === 'prueba_usada') { setEligible(false); return; }
+      setErr(d.error === 'placa_no_registrada' ? 'Esta placa no está registrada en SUNARP.' : 'No pudimos activar tu prueba. Inténtalo de nuevo.');
+    } catch {
+      setErr('Sin conexión. Inténtalo de nuevo.');
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="mt-5 flex flex-col items-center gap-2 rounded-xl border border-teal-300 bg-teal-50/70 px-4 py-5 text-center">
+      <p className="flex items-center gap-1.5 font-heading text-[16px] font-bold text-foreground">
+        <Icon name="redeem" className="text-[20px] text-teal-700" /> Tu primer reporte Completo es gratis
+      </p>
+      <p className="max-w-md font-body text-[12.5px] leading-snug text-muted">
+        Una prueba por cuenta y por dispositivo. Úsala en esta placa: tendrás todas las fuentes, el análisis con IA y la valorización.
+      </p>
+      <Button variant="accent" size="lg" icon="redeem" onClick={usar} disabled={busy}>
+        {busy ? 'Activando…' : 'Usar mi prueba gratis en esta placa'}
+      </Button>
+      {err && <p className="font-body text-[12.5px] text-danger-fg" role="alert">{err}</p>}
     </div>
   );
 }
@@ -1036,7 +1078,8 @@ function YapeModal({
 }) {
   const number = process.env.NEXT_PUBLIC_YAPE_NUMBER ?? '';
   const name = process.env.NEXT_PUBLIC_YAPE_NAME ?? 'PlacaPe';
-  const price = tier === 'ULTRA' ? '19.90' : '15.90';
+  const price = PRECIO_INDIVIDUAL.toFixed(2);
+  void tier;
   const ref = (orderId ?? '').slice(0, 8).toUpperCase();
   const [checking, setChecking] = useState(false);
   const [notYet, setNotYet] = useState(false);
@@ -1059,7 +1102,7 @@ function YapeModal({
           </button>
         </div>
         <p className="mb-4 font-body text-sm text-muted">
-          Desbloquea tu reporte <strong className="text-foreground">{tier === 'ULTRA' ? 'Ultra' : 'Pro'}</strong> de la placa{' '}
+          Desbloquea tu reporte <strong className="text-foreground">Completo</strong> de la placa{' '}
           <span className="font-mono font-bold text-foreground">{plate}</span>.
         </p>
         <div className="mb-4 rounded-xl border border-border bg-background p-4">
@@ -2396,7 +2439,8 @@ function LoadingView({ placa, finishing = false }: { placa: string; finishing?: 
  *  reúne las fuentes de pago. El resto del reporte (gratis) sigue visible; al terminar, se retira
  *  y aparecen las secciones completas. */
 function PaidPanelLoading({ tier, finishing = false }: { tier: 'PRO' | 'ULTRA'; finishing?: boolean }) {
-  const tierName = tier === 'ULTRA' ? 'Ultra' : 'Pro';
+  const tierName = 'Completo';
+  void tier;
   const pct = useSimulatedProgress(240, 2, finishing);
   const tip = useBuyingTip();
   return (

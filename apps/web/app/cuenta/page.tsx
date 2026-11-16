@@ -18,6 +18,7 @@ import { Input } from '@/components/ui/Input';
 import { Icon } from '@/components/ui/Icon';
 import { Badge } from '@/components/ui/Badge';
 import { safeNext, rememberNext, takeNext } from '@/lib/next-path';
+import { PAQUETES, PRECIO_INDIVIDUAL, mensajePaquete, pedirPorWhatsApp, soles } from '@/lib/planes';
 
 type View = 'login' | 'register' | 'forgot';
 
@@ -148,7 +149,7 @@ function ReportRow({ r }: { r: ReportHistoryItem }) {
         <div className="flex items-center gap-2">
           <span className="font-mono text-sm font-bold tracking-wide text-foreground">{r.plate}</span>
           <Badge tone={r.tier === 'ULTRA' ? 'brand' : r.tier === 'PRO' ? 'info' : 'neutral'} size="sm" icon={r.tier === 'ULTRA' ? 'bolt' : null}>
-            {r.tier === 'ULTRA' ? 'Ultra' : r.tier === 'PRO' ? 'Pro' : 'Básico'}
+            {r.tier === 'BASIC' ? 'Básico' : 'Completo'}
           </Badge>
         </div>
         <p className="mt-0.5 font-body text-[13px] text-muted">
@@ -158,6 +159,53 @@ function ReportRow({ r }: { r: ReportHistoryItem }) {
       <Button variant="ghost" size="sm" iconRight="arrow_forward" href={`/reporte/${r.plate}?snap=${r.id}`}>
         Ver
       </Button>
+    </div>
+  );
+}
+
+/** Plan de la cuenta: paquete mensual activo (quedan N, vence el…), vencido, o sin paquete (pide uno). */
+function PlanStatus({ email }: { email: string | null }) {
+  type Estado = {
+    enabled?: boolean;
+    packExpired?: boolean;
+    pack?: { name: string; total: number; expiresAt: string; remaining?: number } | null;
+  };
+  const [st, setSt] = useState<Estado | null>(null);
+  useEffect(() => {
+    fetch('/api/cupo/estado', { cache: 'no-store' })
+      .then((r) => (r.ok ? r.json() : {}))
+      .then((d: Estado) => setSt(d))
+      .catch(() => setSt({}));
+  }, []);
+  if (!st) return null;
+  const vence = st.pack?.expiresAt ? new Date(st.pack.expiresAt).toLocaleDateString('es-PE', { day: 'numeric', month: 'long' }) : null;
+  return (
+    <div className="mt-3 flex flex-col gap-2">
+      {st.enabled && st.pack ? (
+        <>
+          <Badge tone="success" icon="workspace_premium">Paquete {st.pack.name}</Badge>
+          <p className="font-body text-[13px] leading-snug text-muted">
+            Te quedan <strong className="text-foreground">{st.pack.remaining ?? st.pack.total}</strong> consultas Completo. Vence el {vence}; no se acumula.
+          </p>
+        </>
+      ) : st.enabled ? (
+        <Badge tone="success" icon="workspace_premium">Cupo de consultas activo</Badge>
+      ) : (
+        <>
+          <Badge tone="neutral" icon={null}>{st.packExpired ? `Tu paquete venció el ${vence}` : 'Cuenta gratuita'}</Badge>
+          <p className="font-body text-[13px] leading-snug text-muted">
+            Básico gratis en cualquier placa. El reporte Completo cuesta {soles(PRECIO_INDIVIDUAL)} por placa (el primero es gratis), o pide un paquete mensual.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {PAQUETES.map((p) => (
+              <a key={p.id} href={pedirPorWhatsApp(mensajePaquete(p, email))} target="_blank" rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 rounded-md border border-border px-2.5 py-1 font-body text-[12.5px] font-semibold text-primary hover:bg-azul-50">
+                <Icon name="chat" className="text-[15px]" /> {p.consultas} consultas · {soles(p.precio)}
+              </a>
+            ))}
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -236,14 +284,7 @@ function AccountView({ account, onLogout }: { account: Account; onLogout: () => 
             )}
             <p className="font-body text-xs font-semibold uppercase tracking-wide text-slate-400">Correo</p>
             <p className="break-all font-body font-semibold text-foreground">{account.email}</p>
-            <div className="mt-3">
-              <Badge tone="neutral" icon={null}>
-                Cuenta Basic (gratis)
-              </Badge>
-            </div>
-            <p className="mt-3 font-body text-[13px] leading-snug text-muted">
-              El acceso a Pro/Ultra es por reporte: se desbloquea al comprar la placa que consultas.
-            </p>
+            <PlanStatus email={account.email} />
             <button
               onClick={onLogout}
               className="mt-4 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-accent hover:underline cursor-pointer"
@@ -279,10 +320,10 @@ function AccountView({ account, onLogout }: { account: Account; onLogout: () => 
                 <p className="font-heading text-sm font-bold text-foreground">Gestión de usuarios</p>
               </div>
               <p className="mb-3 font-body text-[13px] leading-snug text-muted">
-                Asigna a una cuenta un nivel (Pro/Ultra) y su cupo de consultas por hora, día y semana.
+                Activa los paquetes mensuales (20 o 50 consultas) que te piden por WhatsApp.
               </p>
               <Button variant="primary" size="sm" block href="/admin/usuarios" iconRight="arrow_forward">
-                Gestionar cupos
+                Activar paquetes
               </Button>
             </div>
           )}

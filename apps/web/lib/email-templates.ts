@@ -98,10 +98,10 @@ export function reportReadyEmail(input: ReportReadyInput): { subject: string; ht
       : '';
 
   const html = emailLayout({
-    preheader: `Tu reporte ${tier} de la placa ${plate} ya está listo.`,
+    preheader: `Tu reporte ${tierName(tier)} de la placa ${plate} ya está listo.`,
     heading: `Tu reporte de la placa ${plate} está listo`,
     bodyHtml: `
-      <p style="margin:0 0 6px 0">Ya procesamos tu consulta <strong style="color:${C.fg}">${tier}</strong> del vehículo con placa <strong style="color:${C.fg}">${plate}</strong>.</p>
+      <p style="margin:0 0 6px 0">Ya procesamos tu consulta <strong style="color:${C.fg}">${tierName(tier)}</strong> del vehículo con placa <strong style="color:${C.fg}">${plate}</strong>.</p>
       ${scoreBlock}
       <p style="margin:10px 0 0 0">Abre el reporte completo para ver identidad registral, SOAT, papeletas y más.</p>
       ${button(reportUrl, 'Ver mi reporte')}
@@ -153,11 +153,11 @@ export function purchasePaidEmail(input: PurchasePaidInput): { subject: string; 
       </td></tr></table>`;
 
   const html = emailLayout({
-    preheader: `Recibimos tu pago. Tu reporte ${tier} de la placa ${plate} ya está desbloqueado.`,
-    heading: `¡Listo! Tu reporte ${tier} está desbloqueado`,
+    preheader: `Recibimos tu pago. Tu reporte ${tierName(tier)} de la placa ${plate} ya está desbloqueado.`,
+    heading: `¡Listo! Tu reporte ${tierName(tier)} está desbloqueado`,
     bodyHtml: `
       ${badge}
-      <p style="margin:0 0 4px 0">Recibimos tu pago correctamente. Tu reporte <strong style="color:${C.fg}">${tier}</strong> de la placa <strong style="color:${C.fg}">${plate}</strong> ya está disponible con toda la información ampliada.</p>
+      <p style="margin:0 0 4px 0">Recibimos tu pago correctamente. Tu reporte <strong style="color:${C.fg}">${tierName(tier)}</strong> de la placa <strong style="color:${C.fg}">${plate}</strong> ya está disponible con toda la información ampliada.</p>
       ${dataRows([
         ['Plan', tier],
         ['Placa', plate],
@@ -193,10 +193,10 @@ export function yapeReceivedEmail(input: YapeReceivedInput): { subject: string; 
       </td></tr></table>`;
 
   const html = emailLayout({
-    preheader: `Recibimos tu pedido del reporte ${tier} de la placa ${plate}. Completa el pago con Yape.`,
+    preheader: `Recibimos tu pedido del reporte ${tierName(tier)} de la placa ${plate}. Completa el pago con Yape.`,
     heading: `Recibimos tu pedido de la placa ${plate}`,
     bodyHtml: `
-      <p style="margin:0 0 6px 0">Estás a un paso de desbloquear tu reporte <strong style="color:${C.fg}">${tier}</strong> de la placa <strong style="color:${C.fg}">${plate}</strong>.</p>
+      <p style="margin:0 0 6px 0">Estás a un paso de desbloquear tu reporte <strong style="color:${C.fg}">${tierName(tier)}</strong> de la placa <strong style="color:${C.fg}">${plate}</strong>.</p>
       ${payBox}
       <p style="margin:14px 0 4px 0">Importante: escribe esta <strong style="color:${C.fg}">referencia</strong> en el mensaje del Yape para identificar tu pago:</p>
       ${dataRows([
@@ -238,4 +238,9 @@ export function socialOnlyAccountEmail(input: { providers: string[]; loginUrl: s
         <p style="margin:0;font-size:13px">Si no lo pediste, ignora este correo.</p>`,
     }),
   };
+}
+
+/** Nombre comercial del nivel: desde nov-2026 solo hay Básico (gratis) y Completo (antes Pro/Ultra). */
+function tierName(tier: string | undefined): string {
+  return tier === 'BASIC' || !tier ? 'Básico' : 'Completo';
 }
