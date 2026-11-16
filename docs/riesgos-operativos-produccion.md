@@ -28,7 +28,7 @@ Estados: `ABIERTO` · `MITIGADO` (parcial) · `CONTROLADO` (con plan vivo) · `C
 
 ## 1. Estado de infraestructura verificado (2026-06-28)
 
-Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los riesgos de infra:
+Hechos comprobados en el VPS anterior (LightNode Lima), base de los riesgos de infra:
 
 | Punto | Estado real | Lectura |
 |---|---|---|
@@ -163,7 +163,7 @@ Hechos comprobados en el VPS `149.104.66.122` (LightNode Lima), base de los ries
 
 #### L-04 · Tributario / SUNAT 🟠
 - **Causa:** cobro por reporte sin **comprobante de pago electrónico**; uso de **Yape
-  personal** (930261260) para ingresos del negocio; RUC + Nuevo RUS pendientes de formalizar.
+  personal** para ingresos del negocio; RUC + Nuevo RUS pendientes de formalizar.
 - **Impacto:** contingencia tributaria, multas SUNAT, el banco puede marcar el Yape personal
   por uso comercial.
 - **Mitigación:** RUC + Nuevo RUS (~S/20/mes, ya planificado); migrar a **Yape negocio**

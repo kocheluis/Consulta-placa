@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 // SEMILLA de sesión SPRL: abre el Chrome de UN slot (perfil/puerto propios) y hace UN login para
 // dejar la sesión ESTABLECIDA en el perfil persistente. Después el keep-alive la mantiene viva
-// (refresca cada ~8 min por re-auth OAuth). Úsalo una vez por cuenta nueva (p. ej. `laurabravo`) o
+// (refresca cada ~8 min por re-auth OAuth). Úsalo una vez por cuenta nueva (p. ej. la 2ª cuenta) o
 // para re-sembrar tras un lockout que YA se enfrió.
 //
 // Uso:  DISPLAY=:99 npx tsx packages/scrapers/src/seed-sprl-slot.ts [índice]

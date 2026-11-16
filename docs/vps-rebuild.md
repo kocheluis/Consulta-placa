@@ -80,7 +80,7 @@ Checklist de dónde recuperar cada secreto:
 | `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY` | Supabase → Settings → API Keys: la **service_role** (`eyJ…`, en "Legacy API keys") o una **Secret key** (`sb_secret_…`). **NUNCA la anon/publishable**: con ella RLS bloquea la cola en silencio (historial vacío en la consola + `42501 new row violates row-level security`) |
 | `RESEND_API_KEY` + `HEALTH_ALERT_EMAIL` | la API key de Resend (la misma que usa la web en Vercel) + el correo que recibe el aviso diario de salud |
 | `CAPTCHA_API_KEY` | panel de CapSolver |
-| `SPRL_USER/PASS` (y `_2`, `_3`) | tus cuentas SPRL (saintagain1, laurabravo, 3ª) |
+| `SPRL_USER/PASS` (y `_2`, `_3`) | tus cuentas SPRL (las 3 cuentas del gestor de contraseñas) |
 | `OPERATOR_PREVIEW_TOKEN` | **cópialo de Vercel** (Settings → Env Vars) — debe COINCIDIR con la web; no lo regeneres |
 | `WEB_REPORT_URL` | la URL base de la web (https://placape.pe) |
 | `ANTHROPIC_API_KEY` | IA del reporte ULTRA (Claude): console.anthropic.com → API Keys. Verifica con `placape-ops ia-check`. `OPENAI_API_KEY` queda solo como respaldo |
