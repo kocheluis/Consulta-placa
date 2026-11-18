@@ -671,6 +671,11 @@ function ReportView({
       </div>
 
       <div className="mx-auto max-w-[1240px] px-4 pb-12 sm:px-7">
+        {!preview && (
+          <div className="mb-6">
+            <ReportShareActions placa={report.placa} snap={snapshot?.id} variant="card" />
+          </div>
+        )}
         <p className="border-t border-border pt-4 font-body text-xs text-muted">{report.disclaimer}</p>
         <Link href="/" className="mt-4 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-primary hover:underline">
           <Icon name="arrow_back" className="text-[18px]" /> Nueva consulta
@@ -2478,10 +2483,35 @@ function PaidPanelLoading({ tier, finishing = false }: { tier: 'PRO' | 'ULTRA'; 
 
 const fmtDay = (iso: string) => new Date(iso).toLocaleDateString('es-PE', { day: 'numeric', month: 'long', year: 'numeric' });
 
-/* ── Descargar PDF (impresión del navegador → "Guardar como PDF") y enviar el enlace al correo de la cuenta ── */
-function ReportShareActions({ placa, snap }: { placa: string; snap?: string }) {
+/* ── Descargar PDF (impresión del navegador → "Guardar como PDF") y enviar el enlace al correo de la cuenta ──
+   Dos presentaciones: `bar` (barra superior, compacta en celular) y `card` (tarjeta al final del reporte,
+   visible en celular sin buscar). Los navegadores INTERNOS de WhatsApp/Facebook/Instagram/TikTok ignoran
+   window.print() → ahí se explica cómo abrirlo en Chrome/Safari y se ofrece el correo. */
+const IN_APP_UA = /FBAN|FBAV|FB_IAB|Instagram|WhatsApp|musical_ly|TikTok|Line\/|; wv\)/i;
+
+function ReportShareActions({ placa, snap, variant = 'bar' }: { placa: string; snap?: string; variant?: 'bar' | 'card' }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
+  const descargar = () => {
+    if (typeof navigator !== 'undefined' && IN_APP_UA.test(navigator.userAgent)) {
+      setMsg('Este navegador (el de la app desde la que abriste el enlace) no permite guardar PDF. Toca ⋮ o ··· → «Abrir en Chrome/Safari» y vuelve a pulsar «Descargar PDF», o usa «Enviar por correo».');
+      return;
+    }
+    setMsg(null);
+    try {
+      window.print();
+    } catch {
+      setMsg('Tu navegador no permitió abrir la impresión. Usa «Enviar por correo».');
+    }
+  };
+  const compartir = async () => {
+    const url = window.location.href;
+    try {
+      if (navigator.share) { await navigator.share({ title: `Reporte PlacaPe ${placa}`, url }); return; }
+      await navigator.clipboard.writeText(url);
+      setMsg('Enlace copiado.');
+    } catch { /* el usuario canceló */ }
+  };
   const enviar = async () => {
     setSending(true);
     setMsg(null);
@@ -2497,15 +2527,45 @@ function ReportShareActions({ placa, snap }: { placa: string; snap?: string }) {
       setSending(false);
     }
   };
+  if (variant === 'card') {
+    return (
+      <section className="rounded-2xl border border-border bg-surface p-5 print:hidden" aria-labelledby="guardar-reporte">
+        <div className="flex items-start gap-3">
+          <div className="grid h-10 w-10 flex-none place-items-center rounded-xl bg-azul-50">
+            <Icon name="download" className="text-[22px] text-primary" />
+          </div>
+          <div className="min-w-0">
+            <h2 id="guardar-reporte" className="font-display text-base font-bold text-foreground">Guarda o comparte este reporte</h2>
+            <p className="mt-0.5 font-body text-[13px] text-muted">
+              «Descargar PDF» abre la impresión de tu teléfono o PC: elige «Guardar como PDF».
+            </p>
+          </div>
+        </div>
+        <div className="mt-4 grid gap-2.5 sm:grid-cols-3">
+          <Button variant="primary" size="md" icon="picture_as_pdf" onClick={descargar} block>
+            Descargar PDF
+          </Button>
+          <Button variant="secondary" size="md" icon="mail" onClick={enviar} disabled={sending} block>
+            {sending ? 'Enviando…' : 'Enviar por correo'}
+          </Button>
+          <Button variant="secondary" size="md" icon="share" onClick={compartir} block>
+            Compartir enlace
+          </Button>
+        </div>
+        {msg && <p className="mt-3 font-body text-[13px] text-muted" role="status">{msg}</p>}
+      </section>
+    );
+  }
   return (
     <>
-      <Button variant="secondary" size="sm" icon="picture_as_pdf" onClick={() => window.print()}>
-        Descargar PDF
+      <Button variant="secondary" size="sm" icon="picture_as_pdf" onClick={descargar}>
+        <span className="sm:hidden">PDF</span>
+        <span className="hidden sm:inline">Descargar PDF</span>
       </Button>
       <Button variant="secondary" size="sm" icon="mail" onClick={enviar} disabled={sending}>
-        {sending ? 'Enviando…' : 'Enviar por correo'}
+        {sending ? 'Enviando…' : <><span className="sm:hidden">Correo</span><span className="hidden sm:inline">Enviar por correo</span></>}
       </Button>
-      {msg && <span className="font-body text-[12.5px] text-muted" role="status">{msg}</span>}
+      {msg && <span className="basis-full font-body text-[12.5px] text-muted" role="status">{msg}</span>}
     </>
   );
 }
