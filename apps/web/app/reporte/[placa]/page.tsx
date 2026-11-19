@@ -576,7 +576,7 @@ function ReportView({
                 Reporte parcial
               </Badge>
             )}
-            {!preview && <ReportShareActions placa={report.placa} snap={snapshot?.id} />}
+            <ReportShareActions placa={report.placa} snap={snapshot?.id} pdfOnly={!!preview} />
             {!snapshot && (
               <Button variant="secondary" size="sm" icon="refresh" onClick={onRetry}>
                 Actualizar
@@ -700,11 +700,9 @@ function ReportView({
       </div>
 
       <div className="mx-auto max-w-[1240px] px-4 pb-12 sm:px-7">
-        {!preview && (
-          <div className="mb-6">
-            <ReportShareActions placa={report.placa} snap={snapshot?.id} variant="card" />
-          </div>
-        )}
+        <div className="mb-6">
+          <ReportShareActions placa={report.placa} snap={snapshot?.id} variant="card" pdfOnly={!!preview} />
+        </div>
         <p className="border-t border-border pt-4 font-body text-xs text-muted">{report.disclaimer}</p>
         <Link href="/" className="mt-4 inline-flex items-center gap-1.5 font-body text-sm font-semibold text-primary hover:underline">
           <Icon name="arrow_back" className="text-[18px]" /> Nueva consulta
@@ -2519,7 +2517,9 @@ const fmtDay = (iso: string) => new Date(iso).toLocaleDateString('es-PE', { day:
    window.print() → ahí se explica cómo abrirlo en Chrome/Safari y se ofrece el correo. */
 const IN_APP_UA = /FBAN|FBAV|FB_IAB|Instagram|WhatsApp|musical_ly|TikTok|Line\/|; wv\)/i;
 
-function ReportShareActions({ placa, snap, variant = 'bar' }: { placa: string; snap?: string; variant?: 'bar' | 'card' }) {
+// `pdfOnly` (vista del operador con ?preview=TOKEN): solo «Descargar PDF». Sin correo (iría a la cuenta de
+// quien mira, no al cliente) ni compartir (el enlace llevaría el token del operador).
+function ReportShareActions({ placa, snap, variant = 'bar', pdfOnly = false }: { placa: string; snap?: string; variant?: 'bar' | 'card'; pdfOnly?: boolean }) {
   const [msg, setMsg] = useState<string | null>(null);
   const [sending, setSending] = useState(false);
   const descargar = () => {
@@ -2571,16 +2571,20 @@ function ReportShareActions({ placa, snap, variant = 'bar' }: { placa: string; s
             </p>
           </div>
         </div>
-        <div className="mt-4 grid gap-2.5 sm:grid-cols-3">
+        <div className={`mt-4 grid gap-2.5 ${pdfOnly ? "sm:max-w-xs" : "sm:grid-cols-3"}`}>
           <Button variant="primary" size="md" icon="picture_as_pdf" onClick={descargar} block>
             Descargar PDF
           </Button>
-          <Button variant="secondary" size="md" icon="mail" onClick={enviar} disabled={sending} block>
-            {sending ? 'Enviando…' : 'Enviar por correo'}
-          </Button>
-          <Button variant="secondary" size="md" icon="share" onClick={compartir} block>
-            Compartir enlace
-          </Button>
+          {!pdfOnly && (
+            <>
+              <Button variant="secondary" size="md" icon="mail" onClick={enviar} disabled={sending} block>
+                {sending ? 'Enviando…' : 'Enviar por correo'}
+              </Button>
+              <Button variant="secondary" size="md" icon="share" onClick={compartir} block>
+                Compartir enlace
+              </Button>
+            </>
+          )}
         </div>
         {msg && <p className="mt-3 font-body text-[13px] text-muted" role="status">{msg}</p>}
       </section>
@@ -2592,9 +2596,11 @@ function ReportShareActions({ placa, snap, variant = 'bar' }: { placa: string; s
         <span className="sm:hidden">PDF</span>
         <span className="hidden sm:inline">Descargar PDF</span>
       </Button>
-      <Button variant="secondary" size="sm" icon="mail" onClick={enviar} disabled={sending}>
-        {sending ? 'Enviando…' : <><span className="sm:hidden">Correo</span><span className="hidden sm:inline">Enviar por correo</span></>}
-      </Button>
+      {!pdfOnly && (
+        <Button variant="secondary" size="sm" icon="mail" onClick={enviar} disabled={sending}>
+          {sending ? 'Enviando…' : <><span className="sm:hidden">Correo</span><span className="hidden sm:inline">Enviar por correo</span></>}
+        </Button>
+      )}
       {msg && <span className="basis-full font-body text-[12.5px] text-muted" role="status">{msg}</span>}
     </>
   );
