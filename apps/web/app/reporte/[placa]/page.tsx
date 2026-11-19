@@ -45,6 +45,7 @@ import { StateScreen } from '@/components/StateScreen';
 import { AuthGate } from '@/components/AuthGate';
 import { PRECIO_INDIVIDUAL, PAQUETES, soles } from '@/lib/planes';
 import { deviceSignals } from '@/lib/device';
+import { ReportPdf, PdfSection, sectionFinding } from '@/components/ReportPdf';
 
 // Activo por defecto (el pipeline ya está vivo). Kill-switch: NEXT_PUBLIC_PRO_ENABLED=false.
 const PRO_ENABLED = process.env.NEXT_PUBLIC_PRO_ENABLED !== 'false';
@@ -516,8 +517,36 @@ function ReportView({
   const scoredConcepts = score.concepts.filter((c) => c.score != null);
   const summary = v ? [v.brand, v.model, v.year, v.color].filter(Boolean).join(' · ') : 'Vehículo';
 
+  // ── Documento PDF (solo al imprimir): diseño "Reporte PDF" del design system (Claude Design). Solo las
+  // secciones del nivel que el usuario TIENE (lo bloqueado no se imprime) y sin las "próximamente".
+  const pdfRank = preview ? TIER_RANK[ReportTier.ULTRA] : rankNow;
+  const pdfEntries = SECTION_CATALOG.filter((e) => !e.comingSoon && (TIER_RANK[e.tier] ?? 1) <= pdfRank);
+  const pdfSection = (kind: string | null) => (kind ? report.sections.find((s) => s.kind === kind) : undefined);
+  const pdfFindings = pdfEntries
+    .map((entry) => ({ entry, finding: sectionFinding(entry, pdfSection(entry.dataKind), report) }))
+    .filter((x): x is { entry: SectionCatalogEntry; finding: NonNullable<typeof x.finding> } => x.finding != null);
+  const pdfFolio = `PP-${new Date(snapshot?.createdAt ?? report.generatedAt).getFullYear() || ''}-${(snapshot?.id ?? report.id ?? report.placa).replace(/[^a-zA-Z0-9]/g, '').slice(0, 6).toUpperCase()}`;
+  const pdfDoc = (
+    <ReportPdf
+      report={report}
+      score={score}
+      complete={pdfRank >= TIER_RANK[ReportTier.PRO]}
+      issuedAt={snapshot?.createdAt ?? new Date().toISOString()}
+      folio={pdfFolio}
+      sources={sources.map(String)}
+      findings={pdfFindings}
+      details={pdfFindings.map(({ entry, finding }) => (
+        <PdfSection key={entry.key} icon={entry.icon} title={entry.label} finding={finding}>
+          <SectionBody entry={entry} section={pdfSection(entry.dataKind)} vehicle={v} onRetry={() => {}} />
+        </PdfSection>
+      ))}
+    />
+  );
+
   return (
-    <div className="bg-background">
+    <>
+    {pdfDoc}
+    <div className="bg-background print:hidden">
       {/* Alerta de robo (máxima jerarquía) */}
       {v?.stolenAlert && (
         <div
@@ -692,6 +721,7 @@ function ReportView({
         />
       )}
     </div>
+    </>
   );
 }
 
@@ -1282,7 +1312,7 @@ function ValorizacionBody({ section, onRetry }: { section: SectionResult; onRetr
           <span className="font-body text-xs font-bold uppercase tracking-wide text-muted">Precio estimado (uso promedio)</span>
           <Badge tone={confTone[v.confidence] ?? 'neutral'} size="sm" icon={null}>confianza {v.confidence}</Badge>
         </div>
-        <p className="mt-1 font-display text-[26px] font-bold text-foreground">{soles(v.netMin)} – {soles(v.netMax)}</p>
+        <p className="mt-1 font-heading text-[26px] font-bold text-foreground">{soles(v.netMin)} – {soles(v.netMax)}</p>
         {v.basis && <p className="mt-0.5 font-body text-[12px] text-muted">{v.basis}</p>}
       </div>
 
@@ -2535,7 +2565,7 @@ function ReportShareActions({ placa, snap, variant = 'bar' }: { placa: string; s
             <Icon name="download" className="text-[22px] text-primary" />
           </div>
           <div className="min-w-0">
-            <h2 id="guardar-reporte" className="font-display text-base font-bold text-foreground">Guarda o comparte este reporte</h2>
+            <h2 id="guardar-reporte" className="font-heading text-base font-bold text-foreground">Guarda o comparte este reporte</h2>
             <p className="mt-0.5 font-body text-[13px] text-muted">
               «Descargar PDF» abre la impresión de tu teléfono o PC: elige «Guardar como PDF».
             </p>
