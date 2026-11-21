@@ -3,6 +3,7 @@ import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
 import { HeroSearch } from '@/components/HeroSearch';
 import { PlanCards } from '@/components/PlanCards';
+import { HeroWaves } from '@/components/HeroWaves';
 
 const FAQ = [
   {
@@ -27,30 +28,24 @@ const FAQ = [
   },
 ];
 
-const TRUST_CHIPS: [string, string][] = [
-  ['bolt', 'Resultado en 30 seg'],
-  ['lock', 'Pago y datos cifrados'],
-  ['sell', 'Reporte básico gratis'],
-];
-
 const SOLUTIONS = [
   {
     icon: 'person',
-    title: 'Para compradores',
-    desc: 'Verifica el historial completo antes de pagar. Cero sorpresas, decisión tranquila.',
-    point: 'Reporte de confianza con semáforo de riesgo',
+    title: 'Si vas a comprar',
+    desc: 'Revisa el auto antes de pagar: deudas, prendas, siniestros y cuántos dueños tuvo.',
+    point: 'Score de 0 a 100 con lo que conviene revisar',
   },
   {
     icon: 'sell',
-    title: 'Para vendedores',
-    desc: 'Muestra un reporte limpio y cierra la venta más rápido, generando confianza.',
-    point: 'Certificado de transparencia para tu anuncio',
+    title: 'Si vas a vender',
+    desc: 'Comparte el reporte con quien esté interesado. Le ahorras la duda y a ti, tiempo.',
+    point: 'Descárgalo en PDF o envíalo por correo',
   },
   {
     icon: 'storefront',
-    title: 'Para empresas',
-    desc: 'Concesionarias y talleres verifican su flota por lote y por volumen.',
-    point: 'Packs de volumen y panel de flota',
+    title: 'Si revisas muchos autos',
+    desc: 'Concesionarias, talleres y compraventas que consultan varias placas al mes.',
+    point: 'Paquetes de 20 y 50 consultas',
   },
 ];
 
@@ -60,16 +55,16 @@ const CHECKS = [
 ];
 
 const STEPS = [
-  { icon: 'search', t: 'Ingresa la placa', d: 'Solo los dígitos. Sin registros largos.' },
-  { icon: 'analytics', t: 'Analizamos las fuentes', d: 'SUNARP, SAT, SBS, MTC y más, en minutos.' },
-  { icon: 'description', t: 'Recibe tu reporte', d: 'Semáforo de riesgo y veredicto claro.' },
+  { icon: 'search', t: 'Escribe la placa', d: 'De cualquier auto, camioneta o moto.' },
+  { icon: 'analytics', t: 'Consultamos por ti', d: 'SUNARP, los SAT, la SBS, el MTC y más.' },
+  { icon: 'description', t: 'Lee el reporte', d: 'Con un score y lo que conviene revisar.' },
 ];
 
 const FEATURES = [
-  { icon: 'account_balance', title: 'Fuentes oficiales', desc: 'Datos directos de los registros públicos nacionales.' },
-  { icon: 'lock', title: 'Seguridad de datos', desc: 'Conexión cifrada (HTTPS) y datos de terceros enmascarados.' },
-  { icon: 'bolt', title: 'Reporte en minutos', desc: 'Consolidación automática; te avisamos por correo cuando está listo.' },
-  { icon: 'support_agent', title: 'Soporte dedicado', desc: 'Te acompañamos antes y después de tu compra.' },
+  { icon: 'account_balance', title: 'Fuentes públicas', desc: 'Cada dato indica de qué portal salió, para que lo puedas comprobar.' },
+  { icon: 'lock', title: 'Datos de terceros protegidos', desc: 'Ocultamos parte de los nombres y documentos de otras personas.' },
+  { icon: 'mail', title: 'Te avisamos', desc: 'Si el reporte tarda unos minutos, te escribimos cuando esté listo.' },
+  { icon: 'support_agent', title: 'Personas reales', desc: 'Si algo no cuadra en tu reporte, lo revisamos contigo.' },
 ];
 
 // Solo fuentes que el motor REALMENTE consulta (SUTRAN/ONPE NO se scrapean; aparecen únicamente
@@ -146,7 +141,7 @@ export default function HomePage() {
           style={{
             inset: '-12%',
             background:
-              'radial-gradient(40% 44% at 50% 80%, rgba(12,111,100,.5), transparent 60%), radial-gradient(48% 60% at 4% 92%, rgba(10,90,82,.55), transparent 60%), radial-gradient(48% 60% at 96% 92%, rgba(10,90,82,.55), transparent 60%), radial-gradient(40% 48% at 84% 70%, rgba(13,120,108,.4), transparent 60%), radial-gradient(40% 48% at 16% 70%, rgba(13,120,108,.4), transparent 60%)',
+              'radial-gradient(40% 44% at 50% 80%, rgba(12,111,100,.3), transparent 60%), radial-gradient(48% 60% at 4% 92%, rgba(10,90,82,.34), transparent 60%), radial-gradient(48% 60% at 96% 92%, rgba(10,90,82,.34), transparent 60%), radial-gradient(40% 48% at 84% 70%, rgba(13,120,108,.24), transparent 60%), radial-gradient(40% 48% at 16% 70%, rgba(13,120,108,.24), transparent 60%)',
           }}
         />
         <div
@@ -158,57 +153,30 @@ export default function HomePage() {
             maskImage: 'linear-gradient(to bottom, rgba(0,0,0,.5), transparent 55%)',
           }}
         />
-        <div className="relative mx-auto max-w-[880px] px-6 pb-32 pt-20 text-center sm:px-8">
-          <span className="inline-flex items-center gap-2 rounded-full border border-azul-200 bg-white/70 px-3.5 py-1.5 font-mono text-[12.5px] font-semibold uppercase tracking-wide text-primary backdrop-blur">
-            <Icon name="verified_user" className="text-[16px] text-teal-600" /> Inspección vehicular oficial
-          </span>
-          <h1 className="mt-6 text-balance font-heading text-[clamp(2.4rem,10.4vw,2.75rem)] font-extrabold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px]">
+        <HeroWaves />
+        <div className="relative mx-auto max-w-[880px] px-6 pb-32 pt-16 text-center sm:px-8 sm:pt-24">
+          <h1 className="text-balance font-heading text-[clamp(2.4rem,10.4vw,2.75rem)] font-extrabold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px]">
             Conoce el historial{" "}
             <br className="hidden sm:block" />
             antes de comprar
           </h1>
-          <p className="mx-auto mt-5 max-w-[560px] font-body text-lg leading-relaxed text-slate-700">
-            Consolidamos las fuentes nacionales en un solo reporte de confianza. Papeletas, SOAT,
-            siniestros y órdenes de captura en segundos.
+          <p className="mx-auto mt-5 max-w-[520px] font-body text-lg leading-relaxed text-slate-700">
+            Escribe la placa y revisa papeletas, SOAT, siniestros, prendas y órdenes de captura en un solo reporte.
           </p>
           <div className="mt-8">
             <HeroSearch />
           </div>
-          <div className="mt-5 flex flex-wrap justify-center gap-5">
-            {TRUST_CHIPS.map(([ic, t]) => (
-              <span key={t} className="inline-flex items-center gap-1.5 font-body text-[13.5px] text-slate-600">
-                <Icon name={ic} className="text-[16px] text-teal-700" /> {t}
-              </span>
-            ))}
-          </div>
-          <div className="mt-6">
-            <Link
-              href="/reporte/ejemplo"
-              className="inline-flex items-center gap-1.5 font-body text-sm font-semibold text-primary hover:underline"
-            >
-              Ver un reporte de ejemplo <Icon name="arrow_forward" className="text-[16px]" />
+          <div className="mt-2 flex flex-wrap items-center justify-center gap-x-6 gap-y-2 font-body text-[15px]">
+            <span className="text-slate-600">El reporte básico es gratis.</span>
+            <Link href="/reporte/ejemplo" className="inline-flex items-center gap-0.5 font-semibold text-primary hover:underline">
+              Ver un ejemplo <Icon name="chevron_right" className="text-[18px]" />
             </Link>
-          </div>
-        </div>
-        {/* Placa gigante difuminada */}
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute -bottom-12 left-1/2 hidden -translate-x-1/2 select-none opacity-30 sm:block"
-        >
-          <div className="inline-flex items-stretch overflow-hidden rounded-[30px] border-[6px] border-white/50 bg-white/30">
-            <div className="flex flex-col items-center justify-center gap-1.5 bg-azul-700/30 px-6 font-body font-bold text-white/80">
-              <span className="text-3xl tracking-wide">PE</span>
-              <span className="text-[13px] tracking-[0.14em] opacity-80">PERÚ</span>
-            </div>
-            <div className="px-8 py-1 font-mono text-[128px] font-bold leading-[1.18] tracking-[0.06em] text-azul-800/40">
-              PLACAPE
-            </div>
           </div>
         </div>
       </section>
 
       {/* ---------- Resultados de la marcha blanca (cifras reales) ---------- */}
-      <section className="border-y border-border bg-surface">
+      <section className="border-b border-border bg-surface">
         <div className="mx-auto max-w-[1180px] px-6 py-8 sm:px-8">
           <p className="mb-5 text-center font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
             Lo que encontramos en nuestra marcha blanca
@@ -237,11 +205,8 @@ export default function HomePage() {
       {/* ---------- Soluciones ---------- */}
       <section id="empresas" className="mx-auto max-w-[1180px] px-6 pb-6 pt-20 sm:px-8">
         <div className="mb-11 text-center">
-          <p className="mb-2 font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
-            Una solución para cada caso
-          </p>
           <h2 className="font-heading text-[32px] font-bold tracking-tight text-foreground sm:text-[38px]">
-            Pensado para tu decisión
+            ¿Compras, vendes o revisas flotas?
           </h2>
         </div>
         <div className="grid gap-4 md:grid-cols-3">
@@ -280,8 +245,7 @@ export default function HomePage() {
                 Todo el historial, en un reporte
               </h2>
               <p className="mb-6 max-w-[420px] font-body text-base leading-relaxed text-azul-200">
-                Cruzamos las fuentes nacionales para darte una imagen completa y un veredicto claro
-                del vehículo.
+                Lo que hoy te tomaría una tarde entrando portal por portal.
               </p>
               <div className="flex flex-wrap gap-2">
                 {CHECKS.map((c) => (
@@ -318,7 +282,7 @@ export default function HomePage() {
       <section id="fuentes" className="mx-auto max-w-[1180px] px-6 pt-14 sm:px-8">
         <div className="mb-9 text-center">
           <h2 className="font-heading text-[28px] font-bold tracking-tight text-foreground sm:text-[34px]">
-            Confianza de nivel institucional
+            Cómo trabajamos
           </h2>
         </div>
         <div className="mb-7 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -350,15 +314,11 @@ export default function HomePage() {
       {/* ---------- Casos especiales (ejemplos ilustrativos) ---------- */}
       <section className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
         <div className="mb-9 text-center">
-          <p className="mb-2 font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
-            Lo que un reporte puede revelar
-          </p>
           <h2 className="font-heading text-[28px] font-bold tracking-tight text-foreground sm:text-[34px]">
-            Hallazgos que cambian una compra
+            Lo que hemos encontrado
           </h2>
           <p className="mx-auto mt-2 max-w-[560px] font-body text-[15px] leading-relaxed text-muted">
-            Ejemplos ilustrativos de cómo se ve un hallazgo en el reporte. Casos reales que hemos
-            detectado en nuestros reportes.
+            Situaciones que aparecieron en reportes reales. Ninguna se ve a simple vista.
           </p>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
@@ -392,9 +352,9 @@ export default function HomePage() {
             );
           })}
           <div className="flex flex-col justify-center rounded-lg border border-dashed border-border bg-background p-5">
-            <p className="font-heading text-[16px] font-bold text-foreground">¿Qué esconde tu placa?</p>
+            <p className="font-heading text-[16px] font-bold text-foreground">Revisa una placa</p>
             <p className="mt-1 mb-3 font-body text-[13.5px] leading-normal text-muted">
-              Verifica antes de comprar o vender. El básico es gratis.
+              El reporte básico es gratis.
             </p>
             <Button variant="accent" size="sm" iconRight="arrow_forward" href="/">
               Verificar placa
@@ -406,12 +366,12 @@ export default function HomePage() {
       {/* ---------- Planes ---------- */}
       <section id="planes" className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
         <div className="mb-10 text-center">
-          <p className="mb-2 font-body text-[12.5px] font-bold uppercase tracking-widest text-teal-700">
-            Por placa o en paquete mensual
-          </p>
           <h2 className="font-heading text-[32px] font-bold tracking-tight text-foreground sm:text-[38px]">
-            Precios claros
+            Cuánto cuesta
           </h2>
+          <p className="mx-auto mt-2 max-w-[520px] font-body text-[15px] leading-relaxed text-muted">
+            Por placa o con un paquete mensual.
+          </p>
         </div>
         <PlanCards />
       </section>
@@ -420,17 +380,12 @@ export default function HomePage() {
       <section className="mx-auto max-w-[1180px] px-6 pt-16 sm:px-8">
         <div className="mb-11 text-center">
           <h2 className="font-heading text-[28px] font-bold tracking-tight text-foreground sm:text-[34px]">
-            Compras protegidas, de verdad
+            Lo que nos contaron
           </h2>
         </div>
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
           {TESTIMONIALS.map((t) => (
             <div key={t.name} className="rounded-lg border border-border bg-surface p-6 shadow-sm">
-              <div className="mb-3 flex gap-0.5">
-                {[0, 1, 2, 3, 4].map((i) => (
-                  <Icon key={i} name="star" fill className="text-[17px] text-[#F0A91C]" />
-                ))}
-              </div>
               <p className="mb-[18px] font-body text-[15px] leading-relaxed text-slate-700">“{t.text}”</p>
               <div className="flex items-center gap-3">
                 <Avatar name={t.name} />
@@ -473,13 +428,13 @@ export default function HomePage() {
           />
           <div className="relative">
             <h2 className="font-heading text-[34px] font-extrabold tracking-tight text-white sm:text-[42px]">
-              Protege tu próxima compra
+              Antes de pagar, revisa la placa
             </h2>
             <p className="mx-auto mb-7 mt-3.5 max-w-[520px] font-body text-lg text-azul-200">
-              Verifica el historial completo de cualquier vehículo antes de cerrar el trato.
+              El reporte básico es gratis y sale en segundos.
             </p>
             <Button variant="accent" size="lg" iconRight="arrow_forward" href="/">
-              Verificar un vehículo
+              Revisar una placa
             </Button>
           </div>
         </div>
