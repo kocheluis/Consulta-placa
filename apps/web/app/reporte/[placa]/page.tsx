@@ -624,7 +624,7 @@ function ReportView({
 
       <div className="mx-auto grid max-w-[1240px] items-start gap-6 px-4 py-7 sm:px-7 lg:grid-cols-[300px_1fr]">
         {/* Sidebar */}
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-20">
+        <aside className="pp-stagger flex flex-col gap-4 lg:sticky lg:top-20">
           <Card padded>
             <div className="mb-3.5 flex items-center gap-3">
               <div className="grid h-12 w-12 place-items-center rounded-xl bg-azul-50">
@@ -687,7 +687,7 @@ function ReportView({
         </aside>
 
         {/* BASIC (gratis) arriba; PRO+ULTRA en UN solo panel abajo (oculto → desbloquear → elegir nivel). */}
-        <main className="flex flex-col gap-6">
+        <main className="pp-stagger flex flex-col gap-6" style={{ ["--pp-base" as string]: "120ms" }}>
           {/* El "Reintentar" de cada sección fallida dispara el reintento REAL (backend re-corre las
               fuentes con error), no solo el refetch del reporte cacheado. */}
           <TierPanel tierKey={ReportTier.BASIC} report={report} vehicle={v} currentTier={currentTier} onActivate={comprar} buying={buying} onRetry={retrySections} />
@@ -1125,12 +1125,35 @@ function YapeModal({
     if (t === 'BASIC') setNotYet(true);
   };
 
+  // Entra y sale por el MISMO camino (regla de Apple): en el celular es una hoja que sube desde abajo
+  // (donde está el pulgar); en PC aparece centrada con fundido + escala. El velo oscurece para enfocar.
+  const [shown, setShown] = useState(false);
+  const dismiss = () => { setShown(false); setTimeout(onClose, 320); };
+  useEffect(() => {
+    const raf = requestAnimationFrame(() => setShown(true));
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => { if (e.key === 'Escape') dismiss(); };
+    window.addEventListener('keydown', onKey);
+    return () => { cancelAnimationFrame(raf); document.body.style.overflow = prev; window.removeEventListener('keydown', onKey); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div className="fixed inset-0 z-50 grid place-items-center bg-black/50 p-4" role="dialog" aria-modal="true">
-      <div className="w-full max-w-[420px] rounded-2xl bg-surface p-6 shadow-xl">
+    <div className="fixed inset-0 z-50 grid items-end sm:place-items-center sm:p-4" role="dialog" aria-modal="true" aria-label="Pagar con Yape">
+      <div
+        onClick={dismiss}
+        className={`absolute inset-0 bg-azul-950/50 transition-opacity duration-300 ${shown ? 'opacity-100' : 'opacity-0'}`}
+      />
+      <div
+        className={`relative w-full rounded-t-3xl bg-surface p-6 pb-[max(1.5rem,env(safe-area-inset-bottom))] shadow-xl transition-[transform,opacity] duration-[420ms] ease-[cubic-bezier(0.32,0.72,0,1)] sm:max-w-[420px] sm:rounded-2xl sm:pb-6 ${
+          shown ? 'translate-y-0 opacity-100 sm:scale-100' : 'translate-y-full sm:translate-y-2 sm:scale-[0.96] sm:opacity-0'
+        }`}
+      >
+        <div aria-hidden className="mx-auto -mt-2 mb-4 h-1.5 w-10 rounded-full bg-slate-200 sm:hidden" />
         <div className="mb-4 flex items-center justify-between">
           <h3 className="font-heading text-lg font-bold text-foreground">Paga con Yape</h3>
-          <button onClick={onClose} aria-label="Cerrar" className="text-muted hover:text-foreground">
+          <button onClick={dismiss} aria-label="Cerrar" className="text-muted transition-transform hover:text-foreground active:scale-90">
             <Icon name="close" className="text-[22px]" />
           </button>
         </div>
@@ -1167,7 +1190,7 @@ function YapeModal({
           <Button variant="accent" block size="md" icon="check" onClick={check} disabled={checking}>
             {checking ? 'Verificando…' : 'Ya yapeé'}
           </Button>
-          <Button variant="secondary" size="md" onClick={onClose}>
+          <Button variant="secondary" size="md" onClick={dismiss}>
             Cerrar
           </Button>
         </div>

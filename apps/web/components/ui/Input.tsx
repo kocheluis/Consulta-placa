@@ -52,7 +52,8 @@ export function Input({
           type={inputType}
           aria-invalid={error ? true : undefined}
           className={[
-            'w-full rounded-md border bg-surface py-3 font-body text-[15px] text-foreground',
+            // 16 px en el celular: por debajo, Safari iOS hace zoom a la página al tocar el campo.
+            'w-full rounded-md border bg-surface py-3 font-body text-base text-foreground sm:text-[15px]',
             'placeholder:text-slate-400 transition-colors',
             'focus:outline-none focus:ring-2 focus:ring-accent/30',
             error ? 'border-danger focus:border-danger' : 'border-border focus:border-accent',

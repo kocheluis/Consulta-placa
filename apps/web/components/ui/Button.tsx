@@ -19,7 +19,10 @@ const SIZE: Record<Size, string> = {
 
 function classesFor(variant: Variant, size: Size, block?: boolean): string {
   return [
-    'inline-flex items-center justify-center border font-body font-semibold transition-colors cursor-pointer',
+    // Respuesta al PRESIONAR (no al soltar): se hunde 3 % al instante y vuelve con desaceleración tipo iOS.
+    'inline-flex items-center justify-center border font-body font-semibold cursor-pointer select-none',
+    'transition-[transform,background-color,border-color,color] duration-150 ease-[cubic-bezier(0.32,0.72,0,1)]',
+    'active:scale-[0.97] active:duration-75 disabled:active:scale-100',
     'focus:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2',
     'disabled:cursor-not-allowed disabled:opacity-50',
     VARIANT[variant],

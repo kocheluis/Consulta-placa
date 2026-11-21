@@ -75,10 +75,10 @@ export default function PlanesPage() {
         <h2 className="mb-5 font-heading text-[24px] font-bold tracking-tight text-foreground">Preguntas frecuentes</h2>
         <div className="flex flex-col divide-y divide-border rounded-xl border border-border bg-surface">
           {DUDAS.map((d) => (
-            <details key={d.q} className="group px-5 py-4">
+            <details key={d.q} className="pp-acc group px-5 py-4">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-body text-[15px] font-semibold text-foreground">
                 {d.q}
-                <Icon name="expand_more" className="text-[22px] text-muted transition-transform group-open:rotate-180" />
+                <Icon name="expand_more" className="text-[22px] text-muted transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] group-open:rotate-180" />
               </summary>
               <p className="mt-2 font-body text-[14px] leading-relaxed text-muted">{d.a}</p>
             </details>

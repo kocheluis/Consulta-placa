@@ -8,6 +8,8 @@ import type { Config } from 'tailwindcss';
  */
 const config: Config = {
   content: ['./app/**/*.{ts,tsx}', './components/**/*.{ts,tsx}'],
+  // hover: solo en dispositivos con mouse (en el celular el hover se quedaba "pegado" tras tocar).
+  future: { hoverOnlyWhenSupported: true },
   theme: {
     extend: {
       colors: {

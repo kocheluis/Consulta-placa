@@ -1,3 +1,6 @@
+'use client';
+
+import { useEffect, useState } from 'react';
 import { Icon } from './ui/Icon';
 
 type Level = 'limpio' | 'revisar' | 'alerta';
@@ -11,6 +14,9 @@ const LEVELS: Record<Level, { color: string; label: string; icon: string; desc: 
 /**
  * Medidor de riesgo (0–100) del design system. Consume el resultado del motor
  * de score (overall + nivel). `level` se deriva del score si no se pasa.
+ *
+ * El anillo se LLENA una vez al aparecer (0 → score, 800 ms, desaceleración) y el número cuenta a la par:
+ * es el momento del veredicto. Con «reducir movimiento» se muestra lleno de inmediato.
  */
 export function RiskGauge({
   score = 80,
@@ -30,6 +36,7 @@ export function RiskGauge({
   const r = (size - 12) / 2;
   const circumference = 2 * Math.PI * r;
   const pct = Math.max(0, Math.min(100, score));
+  const shown = useFill(pct);
   return (
     <div className="flex items-center gap-4 rounded-lg border border-border bg-surface px-5 py-[18px] shadow-sm">
       <div className="relative grid flex-none place-items-center" style={{ width: size, height: size }}>
@@ -44,12 +51,12 @@ export function RiskGauge({
             strokeWidth="10"
             strokeLinecap="round"
             strokeDasharray={circumference}
-            strokeDashoffset={circumference - (pct / 100) * circumference}
+            strokeDashoffset={circumference - (shown / 100) * circumference}
           />
         </svg>
         <div className="absolute flex flex-col items-center leading-none">
           <b className="font-heading font-extrabold" style={{ fontSize: size * 0.3, color: cfg.color }}>
-            {Math.round(pct)}
+            {Math.round(shown)}
           </b>
           <small className="mt-0.5 text-[10px] tracking-wide text-muted">/ 100</small>
         </div>
@@ -63,4 +70,25 @@ export function RiskGauge({
       </div>
     </div>
   );
+}
+
+/** Valor animado 0 → target al montar (y al cambiar el target), con requestAnimationFrame. */
+function useFill(target: number): number {
+  const [v, setV] = useState(target);
+  useEffect(() => {
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) { setV(target); return; }
+    let raf = 0;
+    const t0 = performance.now() + 120;
+    const dur = 800;
+    const ease = (t: number) => 1 - Math.pow(1 - t, 3);
+    setV(0);
+    const tick = (t: number) => {
+      const k = ease(Math.min(1, Math.max(0, (t - t0) / dur)));
+      setV(target * k);
+      if (k < 1) raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [target]);
+  return v;
 }

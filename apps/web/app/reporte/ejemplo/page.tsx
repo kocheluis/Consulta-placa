@@ -148,15 +148,25 @@ export default function ReporteEjemploPage() {
             <span className="font-body text-sm text-muted">· Toyota Yaris 2021</span>
           </div>
           <div className="ml-auto flex items-center gap-3">
-            <div className="flex gap-0.5 rounded-full bg-slate-100 p-1">
+            {/* Selector con UN indicador que se desliza (continuo e interrumpible), en vez de saltar. */}
+            <div className="relative grid rounded-full bg-slate-100 p-1" style={{ gridTemplateColumns: `repeat(${PLANS.length}, minmax(0, 1fr))` }}>
+              <span
+                aria-hidden
+                className="absolute inset-y-1 left-1 rounded-full bg-surface shadow-sm transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)]"
+                style={{
+                  width: `calc((100% - 8px) / ${PLANS.length})`,
+                  transform: `translateX(${Math.max(0, PLANS.findIndex((p) => p.id === plan)) * 100}%)`,
+                }}
+              />
               {PLANS.map((p) => {
                 const on = p.id === plan;
                 return (
                   <button
                     key={p.id}
                     onClick={() => setPlan(p.id)}
-                    className={`flex items-center gap-1.5 rounded-full px-4 py-1.5 font-body text-[13px] font-bold transition-colors ${
-                      on ? 'bg-surface text-primary shadow-sm' : 'text-muted hover:text-foreground'
+                    aria-pressed={on}
+                    className={`relative z-10 flex items-center justify-center gap-1.5 rounded-full px-4 py-1.5 font-body text-[13px] font-bold transition-colors ${
+                      on ? 'text-primary' : 'text-muted hover:text-foreground'
                     }`}
                   >
                     {p.id === 'completo' && <Icon name="bolt" fill={on} className="text-[15px]" />}
@@ -174,7 +184,7 @@ export default function ReporteEjemploPage() {
 
       <div className="mx-auto grid max-w-[1240px] items-start gap-6 px-4 py-7 sm:px-7 lg:grid-cols-[300px_1fr]">
         {/* Sidebar */}
-        <aside className="flex flex-col gap-4 lg:sticky lg:top-20">
+        <aside className="pp-stagger flex flex-col gap-4 lg:sticky lg:top-20">
           <Card padded>
             <div className="mb-3.5 flex items-center gap-3">
               <div className="grid h-12 w-12 place-items-center rounded-xl bg-azul-50">
@@ -224,7 +234,7 @@ export default function ReporteEjemploPage() {
         </aside>
 
         {/* Secciones */}
-        <main className="grid items-start gap-4 sm:grid-cols-2">
+        <main key={plan} className="pp-stagger grid items-start gap-4 sm:grid-cols-2" style={{ ["--pp-base" as string]: "60ms" }}>
           <SectionCard title="Identidad del vehículo" icon="directions_car" level={1} plan={plan} wide badge={<Badge tone="success" size="sm">Verificado</Badge>} onUpgrade={setPlan}>
             <DefGrid
               items={[

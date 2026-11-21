@@ -11,16 +11,65 @@
   line-height: 1;
 }
 
-/* Deriva suave del mesh del hero (landing) */
-@keyframes pk-mesh-drift {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-14px); }
+/* ── Movimiento (reglas de interfaz fluida de Apple) ─────────────────────────────────────────────
+   Curva de desaceleración tipo iOS (sin rebote: los resultados no rebotan, solo los gestos con impulso).
+   Todo anima transform/opacity/filter (compositor). prefers-reduced-motion lo apaga (regla de abajo). */
+:root { --ease-ios: cubic-bezier(0.32, 0.72, 0, 1); }
+
+/* Mesh del hero: entra UNA vez al cargar. Antes oscilaba en bucle infinito de 16 s — Apple desaconseja
+   fondos grandes con oscilación lenta (vestibular). */
+@keyframes pk-mesh-in {
+  from { opacity: 0; transform: translateY(18px); }
+  to { opacity: 1; transform: none; }
 }
-.hero-mesh { animation: pk-mesh-drift 16s ease-in-out infinite; }
+.hero-mesh { animation: pk-mesh-in 1.2s var(--ease-ios) both; }
+
+/* El reporte se MATERIALIZA (opacidad + escala + desenfoque juntos) en vez de aparecer de golpe.
+   Escalonado con --pp-d (60 ms entre bloques). */
+@keyframes pp-materialize {
+  from { opacity: 0; transform: translateY(8px) scale(0.985); filter: blur(4px); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+.pp-rise { animation: pp-materialize 0.55s var(--ease-ios) both; animation-delay: var(--pp-d, 0ms); }
+
+/* Sacudida de "dato inválido" (como el código de desbloqueo del iPhone). */
+@keyframes pp-nudge {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-7px); }
+  45% { transform: translateX(6px); }
+  70% { transform: translateX(-3px); }
+}
+.pp-nudge { animation: pp-nudge 0.38s var(--ease-ios); }
+
+/* Preguntas frecuentes (<details class="pp-acc">): abren con su altura real donde el navegador lo
+   soporta (interpolate-size); en el resto abren al instante como antes. */
+:root { interpolate-size: allow-keywords; }
+details.pp-acc::details-content {
+  block-size: 0;
+  overflow: hidden;
+  transition: block-size 0.38s var(--ease-ios), content-visibility 0.38s allow-discrete;
+}
+details.pp-acc[open]::details-content { block-size: auto; }
+
+/* Barra superior: el borde/sombra aparece solo cuando el contenido pasa por debajo (scroll edge). */
+.site-header { transition: box-shadow 0.25s, background-color 0.25s, border-color 0.25s; }
+html[data-scrolled] .site-header {
+  border-bottom-color: rgba(215, 223, 228, 0.7);
+  box-shadow: 0 8px 18px -14px rgba(14, 27, 34, 0.35);
+}
+@media (prefers-reduced-transparency: reduce) {
+  .site-header, .pp-glass { background-color: #F5F8FA !important; backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }
+}
 
 @layer base {
   body {
     @apply bg-background text-foreground font-body antialiased;
+    /* Sin el destello gris del navegador al tocar: cada control tiene su propio estado presionado. */
+    -webkit-tap-highlight-color: transparent;
+  }
+  /* Sin la espera de doble toque: el toque responde al instante. */
+  a, button, [role='button'], input, label, select, summary, textarea {
+    touch-action: manipulation;
   }
   h1,
   h2,
@@ -53,3 +102,12 @@
   .pdf-doc .pdf-body > * { break-inside: auto; }
   .pdf-doc p, .pdf-doc li { orphans: 3; widows: 3; }
 }
+
+/* Entrada escalonada del reporte: cada bloque se materializa 60 ms después del anterior (solo al montar;
+   el sondeo cada 4 s no la repite). --pp-base desplaza una columna entera. */
+.pp-stagger > * { animation: pp-materialize 0.55s var(--ease-ios) both; animation-delay: var(--pp-base, 0ms); }
+.pp-stagger > *:nth-child(2) { animation-delay: calc(var(--pp-base, 0ms) + 60ms); }
+.pp-stagger > *:nth-child(3) { animation-delay: calc(var(--pp-base, 0ms) + 120ms); }
+.pp-stagger > *:nth-child(4) { animation-delay: calc(var(--pp-base, 0ms) + 180ms); }
+.pp-stagger > *:nth-child(n + 5) { animation-delay: calc(var(--pp-base, 0ms) + 240ms); }
+@media print { .pp-stagger > *, .pp-rise { animation: none !important; } }

@@ -1,12 +1,16 @@
-import type { Metadata } from 'next';
+import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
 import { Analytics } from '@vercel/analytics/react';
 import { Button } from '@/components/ui/Button';
 import { HeaderAccount } from '@/components/HeaderAccount';
 import { MobileMenu } from '@/components/MobileMenu';
+import { ScrollEdge } from '@/components/ScrollEdge';
 import './globals.css';
 
 const SITE_URL = process.env.NEXT_PUBLIC_SITE_URL ?? 'https://placape.pe';
+
+// Barra de estado del celular del mismo color que la web (antes quedaba de otro color).
+export const viewport: Viewport = { themeColor: '#F5F8FA' };
 
 export const metadata: Metadata = {
   metadataBase: new URL(SITE_URL),
@@ -114,7 +118,9 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         />
 
         {/* Nav (frosted, claro) */}
-        <header className="sticky top-0 z-20 border-b border-border bg-background/80 backdrop-blur-md print:hidden">
+        <ScrollEdge />
+        {/* Barra de vidrio: borde/sombra solo con contenido debajo (html[data-scrolled], ver globals.css). */}
+        <header className="site-header sticky top-0 z-20 border-b border-transparent bg-background/75 backdrop-blur-xl backdrop-saturate-[1.8] print:hidden">
           <div className="mx-auto flex max-w-[1180px] items-center gap-8 px-6 py-3.5 sm:px-8">
             <Link href="/" aria-label="PlacaPe — inicio" className="flex items-center">
               {/* eslint-disable-next-line @next/next/no-img-element */}

@@ -162,9 +162,9 @@ export default function HomePage() {
           <span className="inline-flex items-center gap-2 rounded-full border border-azul-200 bg-white/70 px-3.5 py-1.5 font-mono text-[12.5px] font-semibold uppercase tracking-wide text-primary backdrop-blur">
             <Icon name="verified_user" className="text-[16px] text-teal-600" /> Inspección vehicular oficial
           </span>
-          <h1 className="mt-6 font-heading text-[44px] font-extrabold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px]">
-            Conoce el historial
-            <br />
+          <h1 className="mt-6 text-balance font-heading text-[clamp(2.4rem,10.4vw,2.75rem)] font-extrabold leading-[1.02] tracking-[-0.045em] text-foreground sm:text-[60px]">
+            Conoce el historial{" "}
+            <br className="hidden sm:block" />
             antes de comprar
           </h1>
           <p className="mx-auto mt-5 max-w-[560px] font-body text-lg leading-relaxed text-slate-700">
@@ -453,8 +453,11 @@ export default function HomePage() {
         </div>
         <div className="space-y-3">
           {FAQ.map((f) => (
-            <details key={f.q} className="rounded-lg border border-border bg-surface p-4 shadow-sm">
-              <summary className="cursor-pointer font-body font-semibold text-foreground">{f.q}</summary>
+            <details key={f.q} className="pp-acc group rounded-lg border border-border bg-surface p-4 shadow-sm">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-3 font-body font-semibold text-foreground [&::-webkit-details-marker]:hidden">
+                {f.q}
+                <Icon name="expand_more" className="text-[22px] text-muted transition-transform duration-[380ms] ease-[cubic-bezier(0.32,0.72,0,1)] group-open:rotate-180" />
+              </summary>
               <p className="mt-2 font-body text-sm text-muted">{f.a}</p>
             </details>
           ))}
