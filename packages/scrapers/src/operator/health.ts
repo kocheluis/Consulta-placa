@@ -14,6 +14,7 @@
  */
 
 import type { ClientsSummary } from './alerts.js';
+import { remediationHtml, remediationText, remediationCounts, type Remediation } from './remediate.js';
 
 export type SourceVerdict ='ok' | 'intermitente' | 'falla' | 'dependencia' | 'sin-dato';
 
@@ -28,6 +29,8 @@ export interface HealthSourceRow {
   errors: Array<{ placa: string; summary: string }>;
   /** Últimas líneas del log de la fuente (las agrega el server para las que fallan). */
   logTail?: string[];
+  /** Falló en el chequeo pero el mantenimiento automático la recuperó al reintentar (veredicto original). */
+  recoveredFrom?: SourceVerdict;
 }
 
 export type InfraSeverity = 'ok' | 'warn' | 'fail';
@@ -50,6 +53,8 @@ export interface HealthRun {
   clients?: ClientsSummary;
   /** Auditoría de seguridad del VPS (solo Linux). */
   security?: InfraCheck[];
+  /** Mantenimiento automático posterior (reintentos, probes, reinicios) y lo que quedó pendiente. */
+  remediation?: Remediation;
 }
 
 const norm = (s: string): string => s.toLowerCase().replace(/_/g, '-');
@@ -157,6 +162,10 @@ export function dailyHeadline(run: HealthRun): string {
   if (c && (c.conError || c.sinReporte)) parts.push(`clientes: ${c.sinReporte ? `${c.sinReporte} SIN reporte, ` : ''}${c.conError} con error de ${c.total}`);
   if (secFail.length) parts.push(`seguridad: ${secFail.join(', ')}`);
   parts.push(run.headline);
+  if (run.remediation?.items.length) {
+    const r = remediationCounts(run.remediation);
+    parts.push(r.pending ? `mantenimiento: ${r.fixed}/${r.total} resueltas, ${r.pending} pendiente(s)` : `mantenimiento: las ${r.total} falla(s) se resolvieron solas`);
+  }
   return parts.join(' · ');
 }
 
@@ -166,6 +175,7 @@ export function renderHealthEmail(run: HealthRun): { subject: string; text: stri
   const subject = `${icon} PlacaPe · reporte diario · ${head}`;
   const lines: string[] = [head, `Placas testigo: ${run.plates.join(', ') || '(ninguna)'} · ${run.startedAt}`, ''];
   if (run.note) lines.push(run.note, '');
+  if (run.remediation && (run.remediation.items.length || run.remediation.actions.length)) lines.push(...remediationText(run.remediation), '');
   const c = run.clients;
   if (c) {
     lines.push('CLIENTES (24 h)', `  ${c.total} entrega(s) · ${c.ok} completas · ${c.conError} con error · ${c.sinReporte} sin reporte · pagadas ${c.pagados} (${c.pagadosConProblema} con problema)`);
@@ -181,7 +191,7 @@ export function renderHealthEmail(run: HealthRun): { subject: string; text: stri
   }
   lines.push('', 'FUENTES');
   for (const s of run.sources) {
-    lines.push(`  [${VERDICT_LABEL[s.verdict]}] ${s.source} (ok ${s.ok} · error ${s.err})`);
+    lines.push(`  [${VERDICT_LABEL[s.verdict]}${s.recoveredFrom ? ' · recuperada al reintentar' : ''}] ${s.source} (ok ${s.ok} · error ${s.err})`);
     for (const e of s.errors.slice(0, 2)) lines.push(`      ${e.placa}: ${e.summary}`);
     for (const l of (s.logTail ?? []).slice(-3)) lines.push(`      log> ${l}`);
   }
@@ -191,6 +201,7 @@ export function renderHealthEmail(run: HealthRun): { subject: string; text: stri
 <h2 style="margin:0 0 4px">${icon} ${esc(head)}</h2>
 <div style="color:#5D6B7E;font-size:12px">Placas testigo: ${esc(run.plates.join(', ') || '(ninguna)')} · ${esc(run.startedAt)}</div>
 ${run.note ? `<p style="background:#FEF3C7;padding:8px 10px;border-radius:8px">${esc(run.note)}</p>` : ''}
+${run.remediation && (run.remediation.items.length || run.remediation.actions.length) ? remediationHtml(run.remediation) : ''}
 ${c ? `<h3 style="margin:16px 0 6px">Clientes (últimas 24 h)</h3>
 <div style="font-size:13px"><b>${c.total}</b> entregas · <span style="color:#15803D">${c.ok} completas</span> · <span style="color:#B45309">${c.conError} con error</span> · <span style="color:#B91C1C">${c.sinReporte} sin reporte</span> · pagadas ${c.pagados} (${c.pagadosConProblema} con problema)</div>
 ${c.top.length ? `<div style="font-size:13px;color:#5D6B7E">Fuentes que más fallaron a clientes: ${esc(c.top.map((t) => `${t.source} ×${t.count}`).join(', '))}</div>` : ''}
@@ -200,7 +211,7 @@ ${c.problemas.length ? `<ul style="font-size:13px;padding-left:18px;margin:6px 0
 ${run.security?.length ? `<h3 style="margin:16px 0 6px">Seguridad del VPS</h3>
 <table style="border-collapse:collapse;font-size:13px">${run.security.map((x) => `<tr><td style="padding:2px 8px;color:${sevColor[x.severity]};font-weight:700">${SEV_ICON[x.severity]}</td><td style="padding:2px 8px"><b>${esc(x.label)}</b></td><td style="padding:2px 8px;color:#5D6B7E">${esc(x.detail)}</td></tr>`).join('')}</table>` : ''}
 <h3 style="margin:16px 0 6px">Fuentes</h3>
-<table style="border-collapse:collapse;font-size:13px;width:100%">${run.sources.map((s) => `<tr style="border-top:1px solid #DCE2EC"><td style="padding:5px 8px;white-space:nowrap"><b>${esc(s.source)}</b></td><td style="padding:5px 8px;color:${color[s.verdict]};font-weight:700;white-space:nowrap">${VERDICT_LABEL[s.verdict]}</td><td style="padding:5px 8px;color:#5D6B7E;font-size:12px">${s.errors.slice(0, 2).map((e) => `${esc(e.placa)}: ${esc(e.summary)}`).join('<br>')}${(s.logTail ?? []).length ? `<pre style="margin:4px 0 0;font-size:11px;white-space:pre-wrap;color:#475569">${esc((s.logTail ?? []).slice(-3).join('\n'))}</pre>` : ''}</td></tr>`).join('')}</table>
+<table style="border-collapse:collapse;font-size:13px;width:100%">${run.sources.map((s) => `<tr style="border-top:1px solid #DCE2EC"><td style="padding:5px 8px;white-space:nowrap"><b>${esc(s.source)}</b></td><td style="padding:5px 8px;color:${color[s.verdict]};font-weight:700;white-space:nowrap">${VERDICT_LABEL[s.verdict]}${s.recoveredFrom ? '<div style="font-size:11px;font-weight:400;color:#15803D">recuperada al reintentar</div>' : ''}</td><td style="padding:5px 8px;color:#5D6B7E;font-size:12px">${s.errors.slice(0, 2).map((e) => `${esc(e.placa)}: ${esc(e.summary)}`).join('<br>')}${(s.logTail ?? []).length ? `<pre style="margin:4px 0 0;font-size:11px;white-space:pre-wrap;color:#475569">${esc((s.logTail ?? []).slice(-3).join('\n'))}</pre>` : ''}</td></tr>`).join('')}</table>
 <p style="color:#5D6B7E;font-size:12px;margin-top:16px">Detalle, capturas y logs: consola del operador → pestaña "Salud de fuentes".</p></div>`;
   return { subject, text: lines.join('\n'), html };
 }

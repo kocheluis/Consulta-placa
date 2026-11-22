@@ -25,6 +25,7 @@ import {
   evaluateSources, overallDaily, headlineOf, supabaseKeyKind, shouldRunDaily, limaDateKey, renderHealthEmail,
   type HealthRun, type InfraCheck,
 } from './operator/health.js';
+import { classifyFailure, firstUrl, type Remediation, type RemediationAction, type RemediationItem, type RemediationProbe } from './operator/remediate.js';
 import { outcomeOf, levelOf, isClientOrigin, renderClientAlertEmail, summarizeClients, shouldFlush, type ClientOutcome } from './operator/alerts.js';
 import { evaluateSecurity, parseAccepted, type SecurityRaw } from './operator/vps-audit.js';
 import { SectionKind, SectionStatus, type Report } from '@app/shared';
@@ -963,7 +964,7 @@ async function collectSecurityRaw(): Promise<SecurityRaw> {
   };
   if (!raw.keysBaseline && raw.keysNow?.length) metaSet('ssh_keys_baseline', raw.keysNow);
   try {
-    const procs = JSON.parse(pm2 || '[]') as Array<{ name: string; pm2_env?: { status?: string; restart_time?: number } }>;
+    const procs = JSON.parse(pm2 || '[]') as Array<{ name: string; pm2_env?: { status?: string; restart_time?: number; cron_restart?: string } }>;
     const prev = metaGet<Record<string, number>>('pm2_restarts') ?? {};
     const nowR: Record<string, number> = {};
     raw.pm2RestartsDelta = {};
@@ -971,7 +972,10 @@ async function collectSecurityRaw(): Promise<SecurityRaw> {
       nowR[p.name] = p.pm2_env?.restart_time ?? 0;
       raw.pm2RestartsDelta[p.name] = Math.max(0, nowR[p.name]! - (prev[p.name] ?? nowR[p.name]!));
     }
-    raw.pm2Down = procs.filter((p) => p.pm2_env?.status !== 'online').map((p) => `${p.name} (${p.pm2_env?.status ?? '?'})`);
+    // Un proceso que corre por cron (p. ej. sprl-keepalive: --cron-restart y --no-autorestart) queda "stopped"
+    // entre corridas POR DISEÑO: no es una caída.
+    raw.pm2Down = procs.filter((p) => p.pm2_env?.status !== 'online' && !(p.pm2_env?.status === 'stopped' && p.pm2_env?.cron_restart))
+      .map((p) => `${p.name} (${p.pm2_env?.status ?? '?'})`);
     metaSet('pm2_restarts', nowR);
   } catch { /* sin pm2 */ }
   try {
@@ -1037,8 +1041,109 @@ async function runHealthCheck(trigger: HealthRun['trigger']): Promise<HealthRun>
     hist.unshift({ at: run.startedAt, overall: run.overall, headline: run.headline, v: Object.fromEntries(run.sources.map((s) => [s.source, s.verdict])) });
     metaSet('health_history', hist.slice(0, 30));
   } finally { healthCurrent = null; }
+  if (REMEDIATE_ON) {
+    try {
+      await remediateAfterHealth(run);
+      metaSet('health_last', run);
+      const hist = metaGet<Array<Record<string, unknown>>>('health_history') ?? [];
+      if (hist[0] && hist[0].at === run.startedAt) {
+        hist[0] = { at: run.startedAt, overall: run.overall, headline: run.headline, v: Object.fromEntries(run.sources.map((s) => [s.source, s.verdict])) };
+        metaSet('health_history', hist);
+      }
+    } catch (e) { console.warn('[mantenimiento] falló:', (e as Error).message); }
+  }
   await sendHealthAlert(run);
   return run;
+}
+
+// ── MANTENIMIENTO AUTOMÁTICO (agente de mantenimiento, niveles 1 y 3) ─────────────────────────────
+// Tras el chequeo: reinicia procesos pm2 caídos (lista blanca), clasifica cada fuente que falló, prueba si
+// su portal responde desde el VPS y la REINTENTA (ronda inmediata + otra tras HEALTH_REMEDIATE_GAP_MIN).
+// Lo que se recupera se marca "recuperada"; lo que no, va al correo con la causa probable y qué hacer.
+// En SERIE y con la placa testigo: no compite con los pedidos de clientes. HEALTH_REMEDIATE=0 lo apaga.
+const REMEDIATE_ON = process.env.HEALTH_REMEDIATE !== '0';
+const REMEDIATE_ROUNDS = Math.min(3, Math.max(0, Number(process.env.HEALTH_REMEDIATE_RETRIES ?? 2)));
+const REMEDIATE_GAP_MS = Math.max(60_000, Number(process.env.HEALTH_REMEDIATE_GAP_MIN ?? 15) * 60_000);
+const PM2_HEALABLE = new Set(['xvfb', 'sprl-keepalive']); // nunca 'operador' (es este mismo proceso)
+
+async function probeUrl(url: string): Promise<RemediationProbe> {
+  const t0 = Date.now();
+  try {
+    const r = await fetch(url, { method: 'GET', redirect: 'manual', signal: AbortSignal.timeout(15_000) });
+    return { url, reachable: r.status < 500, detail: `HTTP ${r.status} en ${Date.now() - t0} ms` };
+  } catch (e) {
+    const err = e as Error & { cause?: { code?: string; message?: string } };
+    const code = String(err.cause?.code ?? err.cause?.message ?? err.message);
+    // Portales del Estado con cadena TLS incompleta: el servidor SÍ responde (los scrapers lo toleran).
+    if (/CERT|SELF_SIGNED|UNABLE_TO_VERIFY|ERR_TLS/i.test(code)) return { url, reachable: true, detail: 'responde (certificado incompleto)' };
+    return { url, reachable: false, detail: code.slice(0, 80) };
+  }
+}
+
+async function healPm2(): Promise<RemediationAction[]> {
+  if (process.platform !== 'linux') return [];
+  const out: RemediationAction[] = [];
+  type Proc = { name: string; pm2_env?: { status?: string; cron_restart?: string } };
+  const list = async (): Promise<Proc[]> => JSON.parse((await sh('pm2 jlist 2>/dev/null || true')) || '[]') as Proc[];
+  try {
+    for (const p of await list()) {
+      const st = p.pm2_env?.status;
+      if (st === 'online' || !PM2_HEALABLE.has(p.name)) continue;
+      if (st === 'stopped' && p.pm2_env?.cron_restart) continue; // de cron: detenido entre corridas por diseño
+      await sh(`pm2 restart ${p.name} 2>&1 || true`, 30_000); // nombre de la lista blanca, sin entrada externa
+      await sleep(5_000);
+      const after = (await list()).find((x) => x.name === p.name)?.pm2_env?.status;
+      out.push({ label: `Reinicio de ${p.name}`, ok: after === 'online', detail: `estaba ${st ?? '?'} → ahora ${after ?? '?'}` });
+    }
+  } catch (e) { out.push({ label: 'Revisión de procesos pm2', ok: false, detail: (e as Error).message.slice(0, 120) }); }
+  return out;
+}
+
+async function remediateAfterHealth(run: HealthRun): Promise<void> {
+  const rem: Remediation = { startedAt: new Date().toISOString(), items: [], actions: [] };
+  run.remediation = rem;
+  rem.actions.push(...await healPm2());
+
+  for (const src of run.sources.filter((x) => x.verdict === 'falla' || x.verdict === 'intermitente')) {
+    const e = src.errors[0];
+    if (!e) continue;
+    const text = `${e.summary}\n${(src.logTail ?? []).join('\n')}`;
+    const kind = classifyFailure(text);
+    const url = firstUrl(text);
+    const item: RemediationItem = { source: src.source, placa: e.placa, kind, attempts: [], fixed: false,
+      probe: url && kind === 'portal-caido' ? await probeUrl(url) : null };
+    rem.items.push(item);
+  }
+  if (rem.items.length) console.log(`[mantenimiento] ${rem.items.length} fuente(s) a reintentar: ${rem.items.map((i) => `${i.source}(${i.kind})`).join(', ')}`);
+
+  for (let round = 1; round <= REMEDIATE_ROUNDS; round++) {
+    const pending = rem.items.filter((i) => !i.fixed);
+    if (!pending.length) break;
+    if (round > 1) await sleep(REMEDIATE_GAP_MS);
+    for (const it of pending) {
+      const at = new Date().toISOString();
+      try {
+        const r = await runSingleSource(it.placa, it.source, baseOpts(it.placa, it.source));
+        const ok = r.status === 'ENCONTRADO' || r.status === 'SIN_REGISTRO';
+        it.attempts.push({ at, ok, status: r.status, summary: String(r.summary ?? '').slice(0, 200) });
+        if (ok) it.fixed = true;
+        else if (it.kind === 'desconocido') it.kind = classifyFailure(String(r.summary ?? ''));
+      } catch (err) {
+        it.attempts.push({ at, ok: false, status: 'ERROR', summary: (err as Error).message.slice(0, 200) });
+      }
+      console.log(`[mantenimiento] ronda ${round} · ${it.source}: ${it.fixed ? 'RECUPERADA' : 'sigue fallando'}`);
+    }
+  }
+
+  for (const it of rem.items.filter((i) => i.fixed)) {
+    const row = run.sources.find((x) => x.source === it.source);
+    if (row && row.verdict !== 'ok') { row.recoveredFrom = row.verdict; row.verdict = 'ok'; }
+  }
+  rem.finishedAt = new Date().toISOString();
+  run.headline = headlineOf(overallDaily({ infra: run.infra, sources: run.sources }), run.infra, run.sources);
+  run.overall = overallDaily(run);
+  const left = rem.items.filter((i) => !i.fixed).length;
+  console.log(`[mantenimiento] fin · ${rem.items.length - left}/${rem.items.length} recuperadas · ${rem.actions.length} acción(es) · ${run.overall.toUpperCase()}`);
 }
 
 function startHealthScheduler(): void {
