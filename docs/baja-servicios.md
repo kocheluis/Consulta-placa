@@ -27,6 +27,10 @@ tarjeta en algo nuevo**.
 | 14 | **GitHub** | Código (repo público) | $0 | No | Archivar o privatizar el repo |
 | 15 | **Cuentas SPRL (SUNARP)** | Historial registral — saldo PREPAGO (no tarjeta) | recargas de saldo | No (se recarga manual) | Gastar el saldo restante; no hay tarjeta que quitar |
 | 16 | **Yape / Izipay** (cobro a clientes) | Recepción de pagos | comisión por venta | No es tarjeta nuestra; Izipay tiene contrato (si se llegó a firmar) | Confirmar compras pendientes → cerrar contrato Izipay si existe; Yape personal no requiere baja |
+| 17 | **Google Analytics 4** (pendiente de crear) | Medición de visitas de la web; se activa con `NEXT_PUBLIC_GA_ID` en Vercel | $0 | No | Quitar `NEXT_PUBLIC_GA_ID` de Vercel → Redeploy → borrar la propiedad en analytics.google.com |
+| 18 | **Google Search Console** (pendiente de verificar) | Indexación y búsquedas de placape.pe; verificación por registro TXT en el DNS de Cloudflare | $0 | No | Quitar la propiedad en search.google.com/search-console → borrar el TXT `google-site-verification` en Cloudflare |
+| 19 | **Google Business Profile / Mi Negocio** (pendiente) | Ficha de PlacaPe en Google Maps y búsqueda (negocio de área de servicio, sin dirección pública) | $0 | No | business.google.com → Eliminar perfil |
+| 20 | **Vercel Web Analytics** (activar en el panel) | Conteo de visitas sin cookies (`@vercel/analytics` ya está en el código) | incluido en Hobby | No | Vercel → proyecto → Analytics → Disable |
 
 ## Orden de apagado recomendado (si se da de baja el proyecto)
 
