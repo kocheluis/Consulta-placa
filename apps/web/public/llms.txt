@@ -1,0 +1,26 @@
+# PlacaPe
+
+> PlacaPe (placape.pe) es un servicio peruano para revisar el historial de un vehículo con su número de placa antes de comprarlo. Reúne en un solo reporte lo que hoy hay que consultar portal por portal: SUNARP, los SAT, la SBS, el MTC y otras fuentes públicas.
+
+## Qué trae el reporte
+
+- Reporte Básico (gratis): identidad del vehículo y estado registral en SUNARP (marca, modelo, año, color, serie, VIN, motor, anotación de robo), titular, SOAT vigente y revisión técnica (MTC).
+- Reporte Completo (S/ 9.90 por placa): todo lo anterior más historial de dueños y transferencias con precios declarados (SUNARP), papeletas de los SAT de Lima, Callao, Trujillo, Piura, Chiclayo, Cajamarca y Arequipa, orden de captura, impuesto vehicular, prendas y garantías mobiliarias (SIGM), siniestralidad (SBS), uso como transporte público (ATU), crédito de conversión a GNV (FISE), un score de riesgo de 0 a 100, una valorización referencial y una recomendación de compra hecha con IA.
+- El primer reporte Completo es gratis al crear una cuenta (uno por persona y dispositivo).
+- Paquetes mensuales para quien revisa varios autos: 20 consultas por S/ 29.90 o 50 por S/ 49.90, válidos 30 días y no acumulables.
+- El Básico sale en segundos; el Completo, entre 3 y 10 minutos. Se puede descargar en PDF.
+
+## Páginas principales
+
+- [Inicio y buscador de placa](https://placape.pe/): escribe la placa y obtén el reporte.
+- [Reporte de ejemplo](https://placape.pe/reporte/ejemplo): cómo se ve un reporte completo.
+- [Planes y precios](https://placape.pe/planes): Básico, Completo y paquetes mensuales.
+- [Portales oficiales](https://placape.pe/portales): enlaces a SUNARP, SAT, SBS, MTC, SUTRAN, ATU y APESEG para consultar gratis por tu cuenta.
+- [Ayuda](https://placape.pe/ayuda): preguntas frecuentes.
+- [Empresas](https://placape.pe/empresas): paquetes para concesionarias, talleres y compraventas.
+
+## Notas
+
+- La información es referencial y proviene de portales públicos; no es un certificado oficial ni reemplaza una inspección mecánica.
+- Los datos personales de terceros se muestran enmascarados (Ley 29733 de Protección de Datos Personales).
+- [Política de privacidad](https://placape.pe/legal/privacidad) · [Términos de uso](https://placape.pe/legal/terminos)

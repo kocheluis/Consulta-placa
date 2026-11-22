@@ -6,9 +6,10 @@ export default function robots(): MetadataRoute.Robots {
   return {
     rules: {
       userAgent: '*',
-      allow: '/',
-      // Las páginas de herramienta (resultados por placa) no aportan contenido indexable.
-      disallow: ['/guiada/', '/reporte/', '/cuenta'],
+      // El reporte de ejemplo SÍ se indexa (muestra el producto); la regla más específica gana.
+      allow: ['/', '/reporte/ejemplo'],
+      // Resultados por placa, áreas privadas y API: no aportan contenido indexable.
+      disallow: ['/guiada/', '/reporte/', '/cuenta', '/consultas', '/onboarding', '/admin', '/auth/', '/api/'],
     },
     sitemap: `${SITE_URL}/sitemap.xml`,
     host: SITE_URL,

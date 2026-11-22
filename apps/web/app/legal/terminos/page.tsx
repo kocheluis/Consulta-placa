@@ -1,4 +1,4 @@
-export const metadata = { title: 'Términos de uso — PlacaPe' };
+export const metadata = { title: 'Términos de uso', alternates: { canonical: '/legal/terminos' } };
 
 export default function TerminosPage() {
   return (

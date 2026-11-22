@@ -43,7 +43,7 @@ export async function generateMetadata({
   const { placa } = await params;
   const display = formatPlateDisplay(normalize(placa));
   return {
-    title: `Consulta guiada de la placa ${display} — portales oficiales | PlacaPe`,
+    title: `Consulta guiada de la placa ${display} — portales oficiales`,
     description: `Enlaces oficiales (SUNARP, SAT, SBS, MTC, SUTRAN, ATU, APESEG) para consultar tú mismo la placa ${display}, o pide tu reporte completo.`,
   };
 }

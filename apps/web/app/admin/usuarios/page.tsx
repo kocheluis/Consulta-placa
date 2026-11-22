@@ -10,7 +10,7 @@ import { AdminUsuariosClient } from './AdminUsuariosClient';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
-  title: 'Cupos de consulta · Admin · PlacaPe',
+  title: 'Cupos de consulta · Admin',
   robots: { index: false, follow: false },
 };
 

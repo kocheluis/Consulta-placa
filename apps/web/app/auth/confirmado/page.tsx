@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/Button';
 import { ContinuarReporte } from '@/components/ContinuarReporte';
 
 export const metadata: Metadata = {
-  title: 'Cuenta confirmada — PlacaPe',
+  title: 'Cuenta confirmada',
   robots: { index: false, follow: false },
 };
 

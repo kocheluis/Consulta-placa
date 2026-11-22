@@ -6,9 +6,10 @@ import { Tag } from '@/components/ui/Tag';
 import { Icon } from '@/components/ui/Icon';
 
 export const metadata: Metadata = {
-  title: 'PlacaPe Empresas — verifica tu flota completa',
+  title: 'Para empresas: concesionarias, talleres y compraventas',
   description:
-    'Panel para concesionarias y talleres: consulta por lote, salud de flota, roles de equipo y precio por volumen desde S/ 12.90 por reporte.',
+    'Si revisas varias placas al mes, usa un paquete: 20 consultas por S/ 29.90 o 50 por S/ 49.90, cada una con el reporte Completo.',
+  alternates: { canonical: '/empresas' },
 };
 
 const VERDICT = {

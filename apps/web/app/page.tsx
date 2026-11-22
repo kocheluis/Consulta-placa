@@ -1,9 +1,12 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
 import { Icon } from '@/components/ui/Icon';
 import { Button } from '@/components/ui/Button';
 import { HeroSearch } from '@/components/HeroSearch';
 import { PlanCards } from '@/components/PlanCards';
 import { HeroWaves } from '@/components/HeroWaves';
+
+export const metadata: Metadata = { alternates: { canonical: '/' } };
 
 const FAQ = [
   {

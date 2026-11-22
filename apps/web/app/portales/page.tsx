@@ -15,7 +15,8 @@ import { HeroSearch } from '@/components/HeroSearch';
  * (`/guiada/[placa]`) con los enlaces listos. Es el gancho gratuito enlazado desde el menú.
  */
 export const metadata: Metadata = {
-  title: 'Portales oficiales sugeridos — consulta tu placa gratis | PlacaPe',
+  title: 'Portales oficiales para consultar tu placa gratis',
+  alternates: { canonical: '/portales' },
   description:
     'Directorio de portales oficiales (SUNARP, SAT, SBS, MTC, SUTRAN, ATU, APESEG) para consultar tu vehículo por placa, gratis. Ingresa tu placa para la guía completa.',
 };

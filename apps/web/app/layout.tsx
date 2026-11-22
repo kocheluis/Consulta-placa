@@ -1,6 +1,7 @@
 import type { Metadata, Viewport } from 'next';
 import Link from 'next/link';
 import { Analytics } from '@vercel/analytics/react';
+import { GoogleAnalytics } from '@/components/GoogleAnalytics';
 import { Button } from '@/components/ui/Button';
 import { HeaderAccount } from '@/components/HeaderAccount';
 import { MobileMenu } from '@/components/MobileMenu';
@@ -19,7 +20,7 @@ export const metadata: Metadata = {
     template: '%s | PlacaPe',
   },
   description:
-    'Consulta gratis por placa el historial de un vehículo en Perú: datos de SUNARP, papeletas (SAT), SOAT, siniestros, GNV, impuesto vehicular y orden de captura. Enlaces oficiales en un solo lugar.',
+    'Revisa el historial de un vehículo en Perú con su placa: SUNARP, papeletas de los SAT, SOAT, siniestros, prendas, orden de captura, GNV e impuesto vehicular en un solo reporte. El reporte básico es gratis.',
   keywords: [
     'consultar placa',
     'consulta vehicular',
@@ -32,7 +33,6 @@ export const metadata: Metadata = {
     'orden de captura vehicular',
     'consulta GNV',
   ],
-  alternates: { canonical: '/' },
   openGraph: {
     type: 'website',
     locale: 'es_PE',
@@ -40,13 +40,13 @@ export const metadata: Metadata = {
     siteName: 'PlacaPe',
     title: 'PlacaPe — Consulta de placa y historial vehicular en Perú',
     description:
-      'Consulta gratis por placa: SUNARP, papeletas, SOAT, siniestros, GNV, impuesto vehicular y orden de captura. Enlaces oficiales en un solo lugar.',
+      'Revisa un vehículo con su placa antes de comprarlo: SUNARP, papeletas, SOAT, siniestros, prendas y orden de captura en un solo reporte.',
   },
   twitter: {
     card: 'summary_large_image',
     title: 'PlacaPe — Historial vehicular del Perú por placa',
     description:
-      'Consulta gratis por placa: SUNARP, papeletas, SOAT, siniestros, GNV e impuesto vehicular.',
+      'Revisa un vehículo con su placa: SUNARP, papeletas, SOAT, siniestros, prendas y orden de captura.',
   },
   robots: { index: true, follow: true },
 };
@@ -61,7 +61,7 @@ const jsonLd = {
       name: 'PlacaPe',
       inLanguage: 'es-PE',
       description:
-        'Consulta de placa e historial vehicular en Perú con enlaces oficiales (SUNARP, SAT, SBS, MTC).',
+        'Reporte del historial de un vehículo en Perú a partir de su placa (SUNARP, SAT, SBS, MTC y otras fuentes públicas).',
     },
     {
       '@type': 'Organization',
@@ -188,6 +188,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           </div>
         </footer>
         <Analytics />
+        <GoogleAnalytics />
       </body>
     </html>
   );

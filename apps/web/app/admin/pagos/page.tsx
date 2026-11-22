@@ -10,7 +10,7 @@ import { AdminPagosClient } from './AdminPagosClient';
 
 export const dynamic = 'force-dynamic';
 export const metadata = {
-  title: 'Pagos pendientes · Admin · PlacaPe',
+  title: 'Pagos pendientes · Admin',
   robots: { index: false, follow: false },
 };
 

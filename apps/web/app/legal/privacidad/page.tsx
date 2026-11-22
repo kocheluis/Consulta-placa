@@ -1,4 +1,4 @@
-export const metadata = { title: 'Política de privacidad — PlacaPe' };
+export const metadata = { title: 'Política de privacidad', alternates: { canonical: '/legal/privacidad' } };
 
 export default function PrivacidadPage() {
   return (
@@ -22,6 +22,12 @@ export default function PrivacidadPage() {
           código cifrado e irreversible calculado a partir de datos como la pantalla, la zona horaria y el
           navegador), junto con tu cuenta y la dirección IP. No guardamos esos datos técnicos por separado, solo
           el código resultante, y los usamos únicamente para evitar que la prueba se repita creando varias cuentas.
+        </p>
+        <p>
+          <strong className="text-foreground">Medición de visitas.</strong> Usamos Vercel Analytics (sin cookies) y
+          Google Analytics para saber cuántas personas visitan la web y qué páginas usan. Google Analytics guarda
+          cookies propias y recibe tu IP abreviada. No le enviamos las placas que consultas: en las páginas de
+          reporte, la placa se reemplaza antes de enviar la visita. Puedes bloquear estas cookies desde tu navegador.
         </p>
         <p>
           <strong className="text-foreground">Historial de reportes.</strong> Guardamos una copia de cada reporte

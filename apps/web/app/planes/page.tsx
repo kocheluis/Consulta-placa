@@ -5,7 +5,8 @@ import { PlanCards } from '@/components/PlanCards';
 import { PACK_DIAS, PAQUETES, PRECIO_INDIVIDUAL, soles } from '@/lib/planes';
 
 export const metadata: Metadata = {
-  title: 'Planes y precios — PlacaPe',
+  title: 'Planes y precios',
+  alternates: { canonical: '/planes' },
   description: `Reporte Básico gratis, reporte Completo a ${soles(PRECIO_INDIVIDUAL)} por placa y paquetes mensuales de ${PAQUETES.map((p) => p.consultas).join(' y ')} consultas.`,
 };
 
